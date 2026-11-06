@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { 
   Users, Plus, Search, Phone, FileText, 
-  Calendar, CreditCard, X, Printer, ArrowRight 
+  Calendar, CreditCard, X, Printer, ArrowRight,
+  FileSpreadsheet, Upload, Download
 } from 'lucide-react';
 import { 
   getCustomers, saveCustomer, getSales, 
@@ -9,6 +10,12 @@ import {
 } from '../../services/storage';
 import { Customer } from '../../types/erp';
 import { Badge } from '../common/Badge';
+import { 
+  exportCustomersToExcel, 
+  downloadCustomerImportTemplate, 
+  processCustomerExcelBuffer 
+} from '../../services/excelService';
+import { ExcelImportModal } from '../common/ExcelImportModal';
 
 export const CustomersView: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>(getCustomers());
@@ -21,6 +28,7 @@ export const CustomersView: React.FC = () => {
 
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [profileTab, setProfileTab] = useState<'Overview' | 'Sales' | 'Installments' | 'Ledger'>('Overview');
 
@@ -101,13 +109,33 @@ export const CustomersView: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition active:scale-98 shrink-0"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Add New Customer</span>
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => exportCustomersToExcel(filteredCustomers)}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition active:scale-98"
+            title="Export filtered customer list to Microsoft Excel (.xlsx)"
+          >
+            <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
+            <span>Export Excel</span>
+          </button>
+
+          <button
+            onClick={() => setShowImportModal(true)}
+            className="flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-100/80 px-3.5 py-2.5 text-xs font-bold text-emerald-800 shadow-2xs transition active:scale-98"
+            title="Upload completed customer spreadsheet"
+          >
+            <Upload className="h-4 w-4 text-emerald-700" />
+            <span>Import Excel</span>
+          </button>
+
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition active:scale-98"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Add New Customer</span>
+          </button>
+        </div>
       </div>
 
       {/* KPI Cards */}
@@ -500,6 +528,19 @@ export const CustomersView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Excel Import Modal */}
+      <ExcelImportModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        entityName="Customers"
+        onDownloadTemplate={downloadCustomerImportTemplate}
+        onProcessFile={processCustomerExcelBuffer}
+        onCommitImport={(validRows: Customer[]) => {
+          validRows.forEach(c => saveCustomer(c));
+          setCustomers(getCustomers());
+        }}
+      />
     </div>
   );
 };

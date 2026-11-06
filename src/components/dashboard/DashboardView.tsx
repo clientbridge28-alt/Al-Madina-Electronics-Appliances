@@ -1,14 +1,14 @@
 import React, { useState, useMemo } from 'react';
 import { 
-  TrendingUp, TrendingDown, ShoppingBag, CreditCard, 
-  Package, AlertTriangle, Users, Truck, UserCheck, 
-  UserPlus, DollarSign, ArrowUpRight, ArrowDownRight,
-  Calendar, CheckCircle, Clock, ChevronRight, Eye
+  TrendingUp, ShoppingBag, CreditCard, 
+  Package, AlertTriangle, UserPlus, DollarSign,
+  UserCheck, Clock, PlusCircle, Database, Sparkles
 } from 'lucide-react';
 import { 
   getSales, getPurchases, getProducts, getCustomers, 
   getSuppliers, getInstallmentAccounts, getAttendance, 
-  getVisitors, checkOutVisitor, getActiveUser, getSettings 
+  getVisitors, checkOutVisitor, getActiveUser, getSettings,
+  isDemoMode, seedDemoData
 } from '../../services/storage';
 
 interface DashboardViewProps {
@@ -38,7 +38,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Calculations
   const todayStr = new Date().toISOString().split('T')[0];
   const todaySales = sales.filter(s => s.date === todayStr || dateFilter === 'Year');
-  const todayPurchases = purchases.filter(p => p.date === todayStr || dateFilter === 'Year');
 
   const totalSalesRevenue = useMemo(() => 
     sales.reduce((sum, s) => sum + s.grandTotal, 0), [sales]);
@@ -55,8 +54,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const totalCustomerReceivables = useMemo(() => 
     customers.reduce((sum, c) => sum + c.currentBalance, 0), [customers]);
 
-  const totalSupplierPayables = useMemo(() => 
-    suppliers.reduce((sum, s) => sum + s.currentBalance, 0), [suppliers]);
+  const totalStockUnits = useMemo(() =>
+    products.reduce((sum, p) => sum + p.stockQuantity, 0), [products]);
 
   // Low stock products
   const lowStockItems = useMemo(() => 
@@ -76,6 +75,53 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     [attendance, todayStr]
   );
 
+  // Dynamic Monthly Sales & Purchases aggregation for past 6 months
+  const monthlyChartData = useMemo(() => {
+    const months: { month: string; yearMonth: string; sale: number; purchase: number }[] = [];
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const yearMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const monthLabel = d.toLocaleString('default', { month: 'short' });
+      months.push({ month: monthLabel, yearMonth, sale: 0, purchase: 0 });
+    }
+
+    sales.forEach(s => {
+      const ym = s.date.slice(0, 7);
+      const match = months.find(m => m.yearMonth === ym);
+      if (match) match.sale += s.grandTotal;
+    });
+
+    purchases.forEach(p => {
+      const ym = p.date.slice(0, 7);
+      const match = months.find(m => m.yearMonth === ym);
+      if (match) match.purchase += p.grandTotal;
+    });
+
+    // Find max for scaling
+    const maxVal = Math.max(...months.map(m => Math.max(m.sale, m.purchase)), 1000);
+    return { months, maxVal };
+  }, [sales, purchases]);
+
+  // Dynamic Category Breakdown for Inventory
+  const categoryBreakdown = useMemo(() => {
+    const map: Record<string, number> = {};
+    products.forEach(p => {
+      const cat = p.category || 'General';
+      map[cat] = (map[cat] || 0) + p.stockQuantity;
+    });
+    const total = Object.values(map).reduce((a, b) => a + b, 0) || 1;
+    const colors = ['#2563eb', '#06b6d4', '#a855f7', '#f59e0b', '#10b981', '#ec4899'];
+    return Object.entries(map).map(([name, count], idx) => ({
+      name,
+      count,
+      pct: Math.round((count / total) * 100),
+      color: colors[idx % colors.length]
+    }));
+  }, [products]);
+
+  const isEmptyDatabase = products.length === 0 && sales.length === 0 && purchases.length === 0;
+
   return (
     <div className="space-y-6">
       {/* Top Welcome Bar */}
@@ -87,6 +133,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </h2>
             <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
               {currentUser.role}
+            </span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+              isDemoMode() 
+                ? 'bg-amber-50 text-amber-800 border-amber-200' 
+                : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+            }`}>
+              {isDemoMode() ? 'Demo Mode Active' : 'Production Database'}
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
@@ -120,6 +173,49 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
+      {/* Empty Database Production Banner (Required by Part 2) */}
+      {isEmptyDatabase && (
+        <div className="p-6 rounded-2xl bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 text-blue-950 shadow-2xs">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Database className="h-5 w-5 text-blue-600 shrink-0" />
+                <h3 className="text-sm font-black text-slate-900">
+                  No business data available yet. Create your first transaction.
+                </h3>
+              </div>
+              <p className="text-xs text-slate-600">
+                This showroom database is in clean production mode. Begin by adding inventory items, registering customers, or issuing your first sales invoice.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={onOpenQuickSale}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs transition"
+              >
+                <PlusCircle className="h-4 w-4" />
+                <span>Create Sale</span>
+              </button>
+              <button
+                onClick={() => onNavigate('inventory')}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 font-bold text-xs transition"
+              >
+                <Package className="h-4 w-4" />
+                <span>Add Product</span>
+              </button>
+              <button
+                onClick={() => { seedDemoData(); window.location.reload(); }}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs transition"
+                title="Populate test data for evaluation"
+              >
+                <Sparkles className="h-4 w-4" />
+                <span>Load Demo Data</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Low Stock Banner (Retaillet Screenshot style) */}
       {lowStockItems.length > 0 && (
         <div className="flex items-center justify-between p-3.5 rounded-2xl bg-amber-50/90 border border-amber-200/80 text-amber-900 text-xs shadow-2xs">
@@ -139,7 +235,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       )}
 
-      {/* Top KPI Cards (Compreo & ShopExpress Screenshot style) */}
+      {/* Top KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Card 1: Today Sales */}
         <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-2">
@@ -153,9 +249,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <p className="text-2xl font-black text-slate-900 font-mono tracking-tight">
               ₨ {todaySalesAmount.toLocaleString()}
             </p>
-            <div className="flex items-center gap-1.5 text-xs mt-1 text-emerald-600 font-semibold">
+            <div className="flex items-center gap-1.5 text-xs mt-1 text-blue-700 font-semibold">
               <TrendingUp className="h-3.5 w-3.5" />
-              <span>+18.4% vs yesterday</span>
+              <span>{todaySales.length} invoice(s) today</span>
             </div>
           </div>
         </div>
@@ -188,10 +284,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div>
             <p className="text-2xl font-black text-slate-900 font-mono tracking-tight">
-              ₨ {(totalInventoryValuation / 1000000).toFixed(2)}M
+              ₨ {totalInventoryValuation > 1000000 ? `${(totalInventoryValuation / 1000000).toFixed(2)}M` : totalInventoryValuation.toLocaleString()}
             </p>
             <div className="flex items-center gap-1.5 text-xs mt-1 text-slate-500">
-              <span>{products.length} Products ({products.reduce((a,b)=>a+b.stockQuantity,0)} units)</span>
+              <span>{products.length} Products ({totalStockUnits} units)</span>
             </div>
           </div>
         </div>
@@ -215,14 +311,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* Main Charts & Analytics Row (ShopExpress & Compreo Style) */}
+      {/* Main Charts & Analytics Row (Dynamic Real Data) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Sales & Purchases Trend Bar Chart (2 Cols) */}
         <div className="lg:col-span-2 rounded-2xl bg-white p-5 border border-slate-200 shadow-2xs space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-bold text-slate-900">Sales Volume & Purchases Trend</h3>
-              <p className="text-xs text-slate-400">Monthly showroom trade figures (₨ in Lakhs)</p>
+              <p className="text-xs text-slate-400">Actual showroom trade ledger figures</p>
             </div>
             <div className="flex items-center gap-3 text-xs">
               <div className="flex items-center gap-1.5">
@@ -236,51 +332,53 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
 
-          {/* SVG Bar Chart */}
+          {/* SVG Bar Chart with Real Data */}
           <div className="h-64 w-full flex items-end justify-between gap-4 pt-6 pb-2 px-2 border-b border-slate-100">
-            {[
-              { month: 'Jun', sale: 42, purchase: 35 },
-              { month: 'Jul', sale: 58, purchase: 45 },
-              { month: 'Aug', sale: 65, purchase: 50 },
-              { month: 'Sep', sale: 72, purchase: 60 },
-              { month: 'Oct', sale: 84, purchase: 68 },
-              { month: 'Nov', sale: 95, purchase: 74 }
-            ].map((bar, idx) => (
-              <div key={idx} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end group">
-                <div className="w-full flex items-end justify-center gap-1.5 h-48">
-                  {/* Sale Bar */}
-                  <div 
-                    style={{ height: `${(bar.sale / 100) * 100}%` }}
-                    className="w-1/2 max-w-[24px] rounded-t-md bg-blue-600 hover:bg-blue-700 transition relative group-hover:shadow-sm"
-                  >
-                    <span className="opacity-0 group-hover:opacity-100 absolute -top-7 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] py-0.5 px-1.5 rounded font-mono pointer-events-none transition">
-                      ₨{bar.sale}L
-                    </span>
+            {monthlyChartData.months.map((bar, idx) => {
+              const saleHeightPct = monthlyChartData.maxVal > 0 ? (bar.sale / monthlyChartData.maxVal) * 100 : 0;
+              const purchHeightPct = monthlyChartData.maxVal > 0 ? (bar.purchase / monthlyChartData.maxVal) * 100 : 0;
+
+              return (
+                <div key={idx} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end group">
+                  <div className="w-full flex items-end justify-center gap-1.5 h-48">
+                    {/* Sale Bar */}
+                    <div 
+                      style={{ height: `${Math.max(saleHeightPct, bar.sale > 0 ? 4 : 0)}%` }}
+                      className="w-1/2 max-w-[24px] rounded-t-md bg-blue-600 hover:bg-blue-700 transition relative group-hover:shadow-sm"
+                    >
+                      {bar.sale > 0 && (
+                        <span className="opacity-0 group-hover:opacity-100 absolute -top-7 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] py-0.5 px-1.5 rounded font-mono pointer-events-none transition whitespace-nowrap z-10">
+                          ₨{bar.sale.toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+                    {/* Purchase Bar */}
+                    <div 
+                      style={{ height: `${Math.max(purchHeightPct, bar.purchase > 0 ? 4 : 0)}%` }}
+                      className="w-1/2 max-w-[24px] rounded-t-md bg-amber-400 hover:bg-amber-500 transition relative group-hover:shadow-sm"
+                    >
+                      {bar.purchase > 0 && (
+                        <span className="opacity-0 group-hover:opacity-100 absolute -top-7 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] py-0.5 px-1.5 rounded font-mono pointer-events-none transition whitespace-nowrap z-10">
+                          ₨{bar.purchase.toLocaleString()}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  {/* Purchase Bar */}
-                  <div 
-                    style={{ height: `${(bar.purchase / 100) * 100}%` }}
-                    className="w-1/2 max-w-[24px] rounded-t-md bg-amber-400 hover:bg-amber-500 transition relative group-hover:shadow-sm"
-                  >
-                    <span className="opacity-0 group-hover:opacity-100 absolute -top-7 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] py-0.5 px-1.5 rounded font-mono pointer-events-none transition">
-                      ₨{bar.purchase}L
-                    </span>
-                  </div>
+                  <span className="text-[11px] font-medium text-slate-500">{bar.month}</span>
                 </div>
-                <span className="text-[11px] font-medium text-slate-500">{bar.month}</span>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
-            <span>Showroom Turnover: <strong>₨ 4.16 Crore</strong> Year to Date</span>
+            <span>Showroom Turnover: <strong>₨ {totalSalesRevenue.toLocaleString()}</strong> Total Cumulative Sales</span>
             <button onClick={() => onNavigate('reports')} className="text-blue-600 font-bold hover:underline">
               View Detailed Analytics →
             </button>
           </div>
         </div>
 
-        {/* Category Distribution Donut Chart (ShopExpress Screenshot) */}
+        {/* Category Distribution Donut Chart with Dynamic Real Data */}
         <div className="rounded-2xl bg-white p-5 border border-slate-200 shadow-2xs space-y-4 flex flex-col justify-between">
           <div>
             <h3 className="text-sm font-bold text-slate-900">Inventory Distribution</h3>
@@ -291,38 +389,50 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             {/* SVG Donut */}
             <svg className="h-44 w-44 transform -rotate-90" viewBox="0 0 100 100">
               <circle cx="50" cy="50" r="38" stroke="#f1f5f9" strokeWidth="16" fill="transparent" />
-              {/* Air Conditioners (35%) */}
-              <circle cx="50" cy="50" r="38" stroke="#2563eb" strokeWidth="16" strokeDasharray="83.5 155.5" strokeDashoffset="0" fill="transparent" />
-              {/* Refrigerators (28%) */}
-              <circle cx="50" cy="50" r="38" stroke="#06b6d4" strokeWidth="16" strokeDasharray="66.8 172.2" strokeDashoffset="-83.5" fill="transparent" />
-              {/* LEDs & Mobiles (22%) */}
-              <circle cx="50" cy="50" r="38" stroke="#a855f7" strokeWidth="16" strokeDasharray="52.5 186.5" strokeDashoffset="-150.3" fill="transparent" />
-              {/* Home Appliances (15%) */}
-              <circle cx="50" cy="50" r="38" stroke="#f59e0b" strokeWidth="16" strokeDasharray="35.8 203.2" strokeDashoffset="-202.8" fill="transparent" />
+              {categoryBreakdown.length > 0 ? (
+                (() => {
+                  let accumulatedPct = 0;
+                  const circumference = 2 * Math.PI * 38; // ~238.76
+                  return categoryBreakdown.map((cat, i) => {
+                    const strokeDash = (cat.pct / 100) * circumference;
+                    const strokeOffset = -(accumulatedPct / 100) * circumference;
+                    accumulatedPct += cat.pct;
+                    return (
+                      <circle
+                        key={i}
+                        cx="50"
+                        cy="50"
+                        r="38"
+                        stroke={cat.color}
+                        strokeWidth="16"
+                        strokeDasharray={`${strokeDash} ${circumference - strokeDash}`}
+                        strokeDashoffset={strokeOffset}
+                        fill="transparent"
+                      />
+                    );
+                  });
+                })()
+              ) : (
+                <circle cx="50" cy="50" r="38" stroke="#e2e8f0" strokeWidth="16" fill="transparent" />
+              )}
             </svg>
             <div className="absolute text-center">
               <span className="text-xs font-bold text-slate-400 block uppercase">Warehouse</span>
-              <span className="text-base font-extrabold text-slate-900">51 Units</span>
+              <span className="text-base font-extrabold text-slate-900">{totalStockUnits} Units</span>
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
-              <span className="text-slate-600">Air Conditioners (35%)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-cyan-500" />
-              <span className="text-slate-600">Refrigerators (28%)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-purple-500" />
-              <span className="text-slate-600">LEDs & Phones (22%)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
-              <span className="text-slate-600">Appliances (15%)</span>
-            </div>
+            {categoryBreakdown.length > 0 ? (
+              categoryBreakdown.slice(0, 4).map((c, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
+                  <span className="text-slate-600 truncate">{c.name} ({c.pct}%)</span>
+                </div>
+              ))
+            ) : (
+              <p className="col-span-2 text-center text-slate-400 py-2">No category stock registered</p>
+            )}
           </div>
         </div>
       </div>
@@ -395,21 +505,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           <div className="divide-y divide-slate-100 max-h-56 overflow-y-auto">
-            {attendance.slice(0, 4).map(a => (
-              <div key={a.id} className="py-2.5 flex items-center justify-between text-xs">
-                <div>
-                  <p className="font-bold text-slate-800">{a.employeeName}</p>
-                  <p className="text-[11px] text-slate-400">{a.notes || 'Duty shift'}</p>
+            {attendance.length === 0 ? (
+              <p className="text-xs text-slate-400 py-6 text-center">No attendance records today.</p>
+            ) : (
+              attendance.slice(0, 4).map(a => (
+                <div key={a.id} className="py-2.5 flex items-center justify-between text-xs">
+                  <div>
+                    <p className="font-bold text-slate-800">{a.employeeName}</p>
+                    <p className="text-[11px] text-slate-400">{a.notes || 'Duty shift'}</p>
+                  </div>
+                  <div className="text-right">
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                      a.status === 'Present' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                    }`}>
+                      {a.status} ({a.checkInTime})
+                    </span>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                    a.status === 'Present' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
-                  }`}>
-                    {a.status} ({a.checkInTime})
-                  </span>
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
 

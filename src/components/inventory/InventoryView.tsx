@@ -2,11 +2,19 @@ import React, { useState, useMemo } from 'react';
 import { 
   Package, Plus, Search, Filter, AlertTriangle, 
   CheckCircle, SlidersHorizontal, ShieldCheck, 
-  Barcode, Layers, X, Edit, ArrowDown, ArrowUp
+  Barcode, Layers, X, Edit, ArrowDown, ArrowUp,
+  FileSpreadsheet, Upload, Download, Globe, RefreshCw
 } from 'lucide-react';
 import { getProducts, saveProduct, adjustProductStock, getSuppliers } from '../../services/storage';
 import { Product, SerialUnit } from '../../types/erp';
 import { Badge } from '../common/Badge';
+import { 
+  exportProductsToExcel, 
+  downloadProductImportTemplate, 
+  processProductExcelBuffer 
+} from '../../services/excelService';
+import { ExcelImportModal } from '../common/ExcelImportModal';
+import { syncProductToWooCommerce, getWordPressSettings } from '../../services/wordpressService';
 
 export const InventoryView: React.FC = () => {
   const [products, setProducts] = useState<Product[]>(getProducts());
@@ -21,7 +29,10 @@ export const InventoryView: React.FC = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [showSerialModal, setShowSerialModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  const [syncingWoo, setSyncingWoo] = useState(false);
 
   // New Product form fields
   const [newProdName, setNewProdName] = useState('');
@@ -132,6 +143,31 @@ export const InventoryView: React.FC = () => {
     setNewSerialNo('');
   };
 
+  const handleSyncToWooCommerce = async () => {
+    const wpSettings = getWordPressSettings();
+    if (!wpSettings.consumerKey || !wpSettings.siteUrl) {
+      setSyncNotice('WooCommerce API not configured yet. Please configure credentials in Settings.');
+      setTimeout(() => setSyncNotice(null), 5000);
+      return;
+    }
+
+    setSyncingWoo(true);
+    setSyncNotice('Syncing showroom catalog to WooCommerce...');
+    try {
+      let synced = 0;
+      for (const p of filteredProducts.slice(0, 10)) {
+        await syncProductToWooCommerce(p);
+        synced++;
+      }
+      setSyncNotice(`Successfully synchronized ${synced} products with online WooCommerce store.`);
+    } catch (err: any) {
+      setSyncNotice(`WooCommerce Sync: ${err.message}`);
+    } finally {
+      setSyncingWoo(false);
+      setTimeout(() => setSyncNotice(null), 6000);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Top Header & Actions */}
@@ -145,14 +181,56 @@ export const InventoryView: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition active:scale-98 shrink-0"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Add New Product</span>
-        </button>
+        <div className="flex items-center flex-wrap gap-2 shrink-0">
+          <button
+            onClick={() => exportProductsToExcel(filteredProducts)}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 px-3.5 py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition active:scale-98"
+            title="Export products to Microsoft Excel (.xlsx)"
+          >
+            <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
+            <span>Export Excel</span>
+          </button>
+
+          <button
+            onClick={() => setShowImportModal(true)}
+            className="flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-100/80 px-3.5 py-2.5 text-xs font-bold text-emerald-800 shadow-2xs transition active:scale-98"
+            title="Import products from Excel template"
+          >
+            <Upload className="h-4 w-4 text-emerald-700" />
+            <span>Import Excel</span>
+          </button>
+
+          <button
+            onClick={handleSyncToWooCommerce}
+            disabled={syncingWoo}
+            className="flex items-center gap-1.5 rounded-xl border border-purple-200 bg-purple-50 hover:bg-purple-100/80 px-3 py-2.5 text-xs font-bold text-purple-700 shadow-2xs transition active:scale-98 disabled:opacity-50"
+            title="Push showroom catalog stock & prices to WooCommerce"
+          >
+            <Globe className="h-4 w-4 text-purple-600" />
+            <span>{syncingWoo ? 'Syncing...' : 'Sync WooCommerce'}</span>
+          </button>
+
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition active:scale-98"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Add New Product</span>
+          </button>
+        </div>
       </div>
+
+      {syncNotice && (
+        <div className="p-3.5 rounded-xl bg-purple-50 border border-purple-200 text-purple-900 text-xs font-bold flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-2">
+            {syncingWoo ? <RefreshCw className="h-4 w-4 animate-spin text-purple-600" /> : <Globe className="h-4 w-4 text-purple-600" />}
+            <span>{syncNotice}</span>
+          </div>
+          <button onClick={() => setSyncNotice(null)} className="text-purple-400 hover:text-purple-600">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* KPI Stats Bar (Inventario Screenshot style) */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -667,6 +745,19 @@ export const InventoryView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Excel Import Modal for Products */}
+      <ExcelImportModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        entityName="Products & Appliances"
+        onDownloadTemplate={downloadProductImportTemplate}
+        onProcessFile={processProductExcelBuffer}
+        onCommitImport={(validRows: Product[]) => {
+          validRows.forEach(p => saveProduct(p));
+          setProducts(getProducts());
+        }}
+      />
     </div>
   );
 };

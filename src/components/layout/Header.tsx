@@ -4,8 +4,12 @@ import {
   UserPlus, Shield, ChevronDown, Check,
   AlertTriangle, Store
 } from 'lucide-react';
-import { getActiveUser, switchRole, getSettings, getProducts, getInstallmentAccounts, getVisitors } from '../../services/storage';
+import { 
+  getActiveUser, switchRole, getSettings, getProducts, 
+  getInstallmentAccounts, getVisitors, isDemoMode, setDemoMode, seedDemoData 
+} from '../../services/storage';
 import { UserRole } from '../../types/erp';
+import { Sparkles, ShieldCheck } from 'lucide-react';
 
 interface HeaderProps {
   onOpenSearch: () => void;
@@ -69,9 +73,25 @@ export const Header: React.FC<HeaderProps> = ({
             <h1 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight leading-tight">
               {settings.showroomName}
             </h1>
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-              Live Cloud ERP
-            </span>
+            {isDemoMode() ? (
+              <button
+                onClick={() => { setDemoMode(false); window.location.reload(); }}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100 transition cursor-pointer"
+                title="Click to switch to clean Production Mode (Empty database)"
+              >
+                <Sparkles className="h-3 w-3 text-amber-600" />
+                <span>Demo Mode</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => { seedDemoData(); setDemoMode(true); window.location.reload(); }}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 transition cursor-pointer"
+                title="Click to load sample showroom dataset for testing"
+              >
+                <ShieldCheck className="h-3 w-3 text-emerald-600" />
+                <span>Production Mode</span>
+              </button>
+            )}
           </div>
           <p className="text-[11px] text-slate-500 hidden sm:block">
             {settings.city} • Fiscal Year 2026-27 • Currency: {settings.currency} (₨)

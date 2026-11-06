@@ -4,9 +4,9 @@ import {
   Calendar, Users, Truck, UserCheck, 
   UserPlus, BookOpen, Layers, CreditCard, 
   Target, BarChart3, ShieldAlert, Settings,
-  LogOut, Tv, ChevronRight
+  LogOut, Tv, ChevronRight, CheckSquare
 } from 'lucide-react';
-import { getActiveUser, getProducts, getInstallmentAccounts, getVisitors } from '../../services/storage';
+import { getActiveUser, getProducts, getInstallmentAccounts, getVisitors, getTasks } from '../../services/storage';
 
 interface SidebarProps {
   currentModule: string;
@@ -25,6 +25,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const lowStockCount = getProducts().filter(p => p.stockQuantity <= p.minStockLevel).length;
   const overdueCount = getInstallmentAccounts().filter(a => a.status === 'Overdue').length;
   const insideVisitors = getVisitors().filter(v => v.status === 'Inside').length;
+  const pendingTasksCount = getTasks().filter(t => t.status !== 'Completed').length;
 
   const navGroups = [
     {
@@ -43,6 +44,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         { id: 'customers', label: 'Customers Directory', icon: Users },
         { id: 'suppliers', label: 'Suppliers & Vendors', icon: Truck },
         { id: 'attendance', label: 'Staff Attendance', icon: UserCheck },
+        { id: 'tasks', label: 'Daily Staff Tasks', icon: CheckSquare, badge: pendingTasksCount > 0 ? `${pendingTasksCount} Tasks` : undefined, badgeColor: 'blue' },
         { id: 'visitors', label: 'Visitors Register', icon: UserPlus, badge: insideVisitors > 0 ? `${insideVisitors} In` : undefined, badgeColor: 'emerald' }
       ]
     },

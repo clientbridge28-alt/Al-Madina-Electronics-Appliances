@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { Search, Package, Users, FileText, Calendar, X, ArrowRight, UserCheck } from 'lucide-react';
-import { getProducts, getCustomers, getSales, getInstallmentAccounts, getVisitors } from '../../services/storage';
+import { Search, Package, Users, FileText, Calendar, X, ArrowRight, UserCheck, CheckSquare } from 'lucide-react';
+import { getProducts, getCustomers, getSales, getInstallmentAccounts, getVisitors, getTasks } from '../../services/storage';
 
 interface GlobalSearchModalProps {
   isOpen: boolean;
@@ -20,10 +20,11 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
   const sales = useMemo(() => getSales(), [isOpen]);
   const installments = useMemo(() => getInstallmentAccounts(), [isOpen]);
   const visitors = useMemo(() => getVisitors(), [isOpen]);
+  const tasks = useMemo(() => getTasks(), [isOpen]);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return { products: [], customers: [], sales: [], installments: [], visitors: [] };
+    if (!q) return { products: [], customers: [], sales: [], installments: [], visitors: [], tasks: [] };
 
     return {
       products: products.filter(p => 
@@ -56,9 +57,15 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
         v.name.toLowerCase().includes(q) ||
         v.phone.includes(q) ||
         v.purpose.toLowerCase().includes(q)
+      ).slice(0, 3),
+
+      tasks: tasks.filter(t =>
+        t.title.toLowerCase().includes(q) ||
+        t.assignedTo.toLowerCase().includes(q) ||
+        (t.description && t.description.toLowerCase().includes(q))
       ).slice(0, 3)
     };
-  }, [query, products, customers, sales, installments, visitors]);
+  }, [query, products, customers, sales, installments, visitors, tasks]);
 
   if (!isOpen) return null;
 
@@ -239,6 +246,34 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
                             </p>
                           </div>
                           <ArrowRight className="h-4 w-4 text-slate-300 group-hover:text-amber-600 transition" />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Tasks */}
+                {results.tasks.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                      <CheckSquare className="h-3.5 w-3.5 text-blue-500" /> Daily Staff Tasks
+                    </div>
+                    <div className="space-y-1.5">
+                      {results.tasks.map(t => (
+                        <div
+                          key={t.id}
+                          onClick={() => { onNavigate('tasks', t.id); onClose(); }}
+                          className="flex items-center justify-between p-2.5 rounded-xl hover:bg-blue-50/70 border border-transparent hover:border-blue-100 cursor-pointer group transition"
+                        >
+                          <div>
+                            <p className="text-sm font-medium text-slate-800 group-hover:text-blue-700">
+                              {t.title}
+                            </p>
+                            <p className="text-xs text-slate-400">
+                              Assigned to: {t.assignedTo} • Priority: {t.priority} • Status: {t.status} ({t.progressPercent}%)
+                            </p>
+                          </div>
+                          <ArrowRight className="h-4 w-4 text-slate-300 group-hover:text-blue-600 transition" />
                         </div>
                       ))}
                     </div>

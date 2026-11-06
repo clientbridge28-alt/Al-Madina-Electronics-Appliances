@@ -1,12 +1,21 @@
 import React, { useState, useMemo } from 'react';
 import { 
   BarChart3, Download, Printer, Calendar, 
-  TrendingUp, DollarSign, Package, CreditCard, ArrowRight 
+  TrendingUp, DollarSign, Package, CreditCard, ArrowRight,
+  FileSpreadsheet, FileDown
 } from 'lucide-react';
 import { 
   getSales, getPurchases, getProducts, getInstallmentAccounts, 
   getChartOfAccounts, getSettings 
 } from '../../services/storage';
+import { 
+  exportToXLSX, exportSalesToExcel, 
+  exportProductsToExcel, exportInstallmentsToExcel 
+} from '../../services/excelService';
+import { 
+  exportSalesReportPDF, exportProfitLossPDF, 
+  exportInventorySummaryPDF, exportInstallmentsPDF 
+} from '../../services/pdfService';
 
 export const ReportsView: React.FC = () => {
   const sales = getSales();
@@ -38,33 +47,36 @@ export const ReportsView: React.FC = () => {
   const totalRetailValuation = products.reduce((sum, p) => sum + (p.retailPrice * p.stockQuantity), 0);
   const expectedGrossMargin = totalRetailValuation - totalStockValuation;
 
-  // CSV Export utility
-  const handleExportCSV = () => {
-    let csvContent = "data:text/csv;charset=utf-8,";
+  // Excel (.xlsx) Native Workbook Export
+  const handleExportExcel = () => {
     if (reportType === 'Sales') {
-      csvContent += "Invoice Number,Date,Customer,Sale Type,Grand Total (PKR),Paid (PKR),Remaining (PKR),Payment Method\n";
-      sales.forEach(s => {
-        csvContent += `"${s.invoiceNumber}","${s.date}","${s.customerName}","${s.saleType}",${s.grandTotal},${s.paidAmount},${s.remainingBalance},"${s.paymentMethod}"\n`;
-      });
+      exportSalesToExcel(sales);
     } else if (reportType === 'Stock') {
-      csvContent += "SKU,Product Name,Brand,Category,Stock Qty,Cost Price (PKR),Retail Price (PKR),Total Valuation (PKR)\n";
-      products.forEach(p => {
-        csvContent += `"${p.sku}","${p.name}","${p.brand}","${p.category}",${p.stockQuantity},${p.purchasePrice},${p.retailPrice},${p.purchasePrice * p.stockQuantity}\n`;
-      });
+      exportProductsToExcel(products);
     } else if (reportType === 'Recovery') {
-      csvContent += "Account #,Customer,Phone,Appliance,Monthly Due (PKR),Total Received (PKR),Remaining Balance (PKR),Status\n";
-      installments.forEach(i => {
-        csvContent += `"${i.accountNumber}","${i.customerName}","${i.customerPhone}","${i.productName}",${i.monthlyInstallment},${i.totalReceived},${i.remainingBalance},"${i.status}"\n`;
-      });
+      exportInstallmentsToExcel(installments);
+    } else if (reportType === 'ProfitLoss') {
+      exportToXLSX([
+        { Metric: 'Total Gross Sales Revenue', Amount_PKR: totalSalesRevenue },
+        { Metric: 'Cost of Goods Sold (COGS)', Amount_PKR: totalCostOfGoodsSold },
+        { Metric: 'Gross Profit', Amount_PKR: grossProfit },
+        { Metric: 'Operating Showroom Expenses', Amount_PKR: totalOperatingExpenses },
+        { Metric: 'Net Operating Profit', Amount_PKR: netProfit }
+      ], `ElectroERP_ProfitAndLoss_${new Date().toISOString().split('T')[0]}`);
     }
+  };
 
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `ElectroERP_${reportType}_Report.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  // PDF Download handler
+  const handleDownloadPDF = () => {
+    if (reportType === 'Sales') {
+      exportSalesReportPDF(sales, settings);
+    } else if (reportType === 'ProfitLoss') {
+      exportProfitLossPDF(totalSalesRevenue, totalCostOfGoodsSold, grossProfit, totalOperatingExpenses, netProfit, settings);
+    } else if (reportType === 'Stock') {
+      exportInventorySummaryPDF(products, settings);
+    } else if (reportType === 'Recovery') {
+      exportInstallmentsPDF(installments, settings);
+    }
   };
 
   return (
@@ -80,14 +92,25 @@ export const ReportsView: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center flex-wrap gap-2">
           <button
-            onClick={handleExportCSV}
-            className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-2xs transition"
+            onClick={handleDownloadPDF}
+            className="flex items-center gap-1.5 rounded-xl border border-rose-300 bg-rose-50 hover:bg-rose-100/80 px-3.5 py-2 text-xs font-bold text-rose-800 shadow-2xs transition active:scale-98"
+            title="Download audit-grade formatted PDF report"
           >
-            <Download className="h-4 w-4 text-slate-500" />
-            <span>Export to CSV</span>
+            <FileDown className="h-4 w-4 text-rose-600" />
+            <span>Download as PDF</span>
           </button>
+
+          <button
+            onClick={handleExportExcel}
+            className="flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 hover:bg-emerald-100/80 px-3.5 py-2 text-xs font-bold text-emerald-800 shadow-2xs transition active:scale-98"
+            title="Download formatted Microsoft Excel (.xlsx) financial workbook"
+          >
+            <FileSpreadsheet className="h-4 w-4 text-emerald-700" />
+            <span>Export to Excel (.xlsx)</span>
+          </button>
+
           <button
             onClick={() => window.print()}
             className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 px-3.5 py-2 text-xs font-bold text-white shadow-2xs transition active:scale-98"

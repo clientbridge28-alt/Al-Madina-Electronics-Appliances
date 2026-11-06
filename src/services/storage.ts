@@ -1,14 +1,15 @@
 import {
   Customer, Supplier, Employee, AttendanceRecord, VisitorRecord,
   Product, PurchaseInvoice, SalesInvoice, InstallmentAccount, 
-  Voucher, LedgerEntry, AccountHead, ChequeRecord, Target, AuditLog, ShowroomSettings, User, UserRole, SerialUnit
+  Voucher, LedgerEntry, AccountHead, ChequeRecord, Target, AuditLog, 
+  ShowroomSettings, User, UserRole, SerialUnit, StaffTask, TaskStatus, TaskPriority
 } from '../types/erp';
 
 import {
   initialSettings, initialUsers, initialCustomers, initialSuppliers,
   initialEmployees, initialAttendance, initialVisitors, initialProducts,
   initialPurchases, initialSales, initialInstallments, initialChartOfAccounts,
-  initialVouchers, initialCheques, initialTargets, initialAuditLogs
+  initialVouchers, initialCheques, initialTargets, initialAuditLogs, initialTasks
 } from './mockData';
 
 const DB_KEY = 'electro_erp_db_v1';
@@ -31,6 +32,7 @@ interface ErpDatabase {
   cheques: ChequeRecord[];
   targets: Target[];
   auditLogs: AuditLog[];
+  tasks: StaffTask[];
 }
 
 // Memory cache & subscribers for reactive updates
@@ -50,20 +52,23 @@ export function subscribeToDatabase(listener: () => void): () => void {
   };
 }
 
-function getDatabase(): ErpDatabase {
-  if (dbCache) return dbCache;
+const DEMO_MODE_KEY = 'electro_erp_demo_mode_v1';
 
-  try {
-    const raw = localStorage.getItem(DB_KEY);
-    if (raw) {
-      dbCache = JSON.parse(raw);
-      return dbCache!;
-    }
-  } catch (err) {
-    console.error('Failed to parse database from localStorage:', err);
+export function isDemoMode(): boolean {
+  return localStorage.getItem(DEMO_MODE_KEY) === 'true';
+}
+
+export function setDemoMode(enabled: boolean): void {
+  localStorage.setItem(DEMO_MODE_KEY, enabled ? 'true' : 'false');
+  if (enabled) {
+    seedDemoData();
+  } else {
+    clearToProductionEmpty();
   }
+}
 
-  // Fallback to fresh seed
+export function seedDemoData(): void {
+  localStorage.setItem(DEMO_MODE_KEY, 'true');
   dbCache = {
     settings: initialSettings,
     users: initialUsers,
@@ -80,11 +85,72 @@ function getDatabase(): ErpDatabase {
     vouchers: initialVouchers,
     cheques: initialCheques,
     targets: initialTargets,
-    auditLogs: initialAuditLogs
+    auditLogs: initialAuditLogs,
+    tasks: initialTasks
   };
-
   saveDatabase(dbCache);
-  return dbCache;
+}
+
+export function clearToProductionEmpty(): void {
+  localStorage.setItem(DEMO_MODE_KEY, 'false');
+  dbCache = {
+    settings: initialSettings,
+    users: initialUsers,
+    customers: [],
+    suppliers: [],
+    employees: initialEmployees.slice(0, 2),
+    attendance: [],
+    visitors: [],
+    products: [],
+    purchases: [],
+    sales: [],
+    installments: [],
+    accounts: initialChartOfAccounts.map(a => ({ ...a, currentBalance: 0 })),
+    vouchers: [],
+    cheques: [],
+    targets: [],
+    tasks: [],
+    auditLogs: [
+      {
+        id: `AUD-INIT-${Date.now()}`,
+        timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19),
+        userId: 'usr-1',
+        userName: 'System Administrator',
+        userRole: 'Owner',
+        module: 'System',
+        action: 'Production Mode Active',
+        details: 'Showroom database set to clean production mode. Ready for live business transactions.'
+      }
+    ]
+  };
+  saveDatabase(dbCache);
+}
+
+function getDatabase(): ErpDatabase {
+  if (dbCache) return dbCache;
+
+  try {
+    const raw = localStorage.getItem(DB_KEY);
+    if (raw) {
+      dbCache = JSON.parse(raw);
+      if (dbCache) {
+        dbCache.tasks = dbCache.tasks || [];
+      }
+      return dbCache!;
+    }
+  } catch (err) {
+    console.error('Failed to parse database from localStorage:', err);
+  }
+
+  // If no DB exists yet, check if demo mode was explicitly requested
+  if (isDemoMode()) {
+    seedDemoData();
+    return dbCache!;
+  }
+
+  // Default initial database is clean production database
+  clearToProductionEmpty();
+  return dbCache!;
 }
 
 function saveDatabase(db: ErpDatabase): void {
@@ -853,3 +919,52 @@ export function resetToDefaultData(): void {
   logAuditAction('Backup', 'Database Reset', 'Reset database to official Pakistani Electronics showroom template');
   notifySubscribers();
 }
+
+// ---------------- STAFF TASKS & TO-DO MANAGEMENT ----------------
+
+export function getTasks(): StaffTask[] {
+  const db = getDatabase();
+  return db.tasks || [];
+}
+
+export function saveTask(task: StaffTask): void {
+  const db = getDatabase();
+  if (!db.tasks) db.tasks = [];
+  const idx = db.tasks.findIndex(t => t.id === task.id);
+  if (idx >= 0) {
+    db.tasks[idx] = task;
+  } else {
+    db.tasks.unshift(task);
+  }
+  saveDatabase(db);
+  logAuditAction('Tasks', 'Task Saved', `Saved task: "${task.title}" assigned to ${task.assignedTo}`, task.id);
+}
+
+export function updateTaskStatus(taskId: string, status: TaskStatus, progressPercent?: number): void {
+  const db = getDatabase();
+  if (!db.tasks) db.tasks = [];
+  const task = db.tasks.find(t => t.id === taskId);
+  if (task) {
+    task.status = status;
+    if (progressPercent !== undefined) {
+      task.progressPercent = progressPercent;
+    } else if (status === 'Completed') {
+      task.progressPercent = 100;
+      task.completedAt = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    } else if (status === 'Pending') {
+      task.progressPercent = 0;
+      task.completedAt = undefined;
+    }
+    saveDatabase(db);
+    logAuditAction('Tasks', 'Task Status Updated', `Updated task ${task.id} to ${status} (${task.progressPercent}%)`, task.id);
+  }
+}
+
+export function deleteTask(taskId: string): void {
+  const db = getDatabase();
+  if (!db.tasks) db.tasks = [];
+  db.tasks = db.tasks.filter(t => t.id !== taskId);
+  saveDatabase(db);
+  logAuditAction('Tasks', 'Task Deleted', `Removed task ${taskId}`, taskId);
+}
+

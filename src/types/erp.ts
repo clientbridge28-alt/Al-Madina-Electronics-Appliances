@@ -369,3 +369,23 @@ export interface ShowroomSettings {
   printFormat: 'A4' | 'Thermal';
   invoiceFooterNote: string;
 }
+
+export type TaskPriority = 'Low' | 'Medium' | 'High' | 'Urgent';
+export type TaskStatus = 'Pending' | 'In Progress' | 'Completed' | 'Deferred';
+
+export interface StaffTask {
+  id: string;
+  title: string;
+  description?: string;
+  assignedTo: string; // Employee name or ID
+  assignedBy: string;
+  priority: TaskPriority;
+  status: TaskStatus;
+  category: 'Showroom Floor' | 'Stock & Warehouse' | 'Recovery & Calls' | 'Accounts & Banking' | 'Customer Support' | 'General';
+  dueDate: string;
+  completedAt?: string;
+  createdAt: string;
+  progressPercent: number; // 0 to 100
+  notes?: string;
+}
+

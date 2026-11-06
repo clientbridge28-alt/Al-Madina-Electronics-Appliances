@@ -12,6 +12,7 @@ import { InstallmentsView } from './components/installments/InstallmentsView';
 import { CustomersView } from './components/customers/CustomersView';
 import { SuppliersView } from './components/suppliers/SuppliersView';
 import { AttendanceView } from './components/attendance/AttendanceView';
+import { TasksView } from './components/tasks/TasksView';
 import { VisitorsView } from './components/visitors/VisitorsView';
 import { AccountingView } from './components/accounting/AccountingView';
 import { LedgersView } from './components/ledgers/LedgersView';
@@ -125,6 +126,7 @@ export default function App() {
           {currentModule === 'customers' && <CustomersView />}
           {currentModule === 'suppliers' && <SuppliersView />}
           {currentModule === 'attendance' && <AttendanceView />}
+          {currentModule === 'tasks' && <TasksView />}
           {currentModule === 'visitors' && <VisitorsView />}
           {currentModule === 'accounting' && <AccountingView />}
           {currentModule === 'ledgers' && <LedgersView />}

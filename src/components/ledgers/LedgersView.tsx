@@ -1,15 +1,17 @@
 import React, { useState, useMemo } from 'react';
-import { Layers, Printer, Search, BookOpen, CheckCircle, ArrowRight } from 'lucide-react';
+import { Layers, Printer, Search, BookOpen, CheckCircle, ArrowRight, FileDown } from 'lucide-react';
 import { 
   getCustomers, getSuppliers, getChartOfAccounts, 
-  getCustomerLedgerEntries, getSupplierLedgerEntries, getVouchers 
+  getCustomerLedgerEntries, getSupplierLedgerEntries, getVouchers, getSettings 
 } from '../../services/storage';
+import { exportTrialBalancePDF, exportAccountStatementPDF } from '../../services/pdfService';
 
 export const LedgersView: React.FC = () => {
   const customers = getCustomers();
   const suppliers = getSuppliers();
   const accounts = getChartOfAccounts();
   const vouchers = getVouchers();
+  const settings = getSettings();
 
   const [activeLedgerType, setActiveLedgerType] = useState<'TrialBalance' | 'CustomerLedger' | 'SupplierLedger' | 'CashBook'>('TrialBalance');
 
@@ -43,6 +45,53 @@ export const LedgersView: React.FC = () => {
   const totalTBDebit = trialBalanceRows.reduce((sum, r) => sum + r.debit, 0);
   const totalTBCredit = trialBalanceRows.reduce((sum, r) => sum + r.credit, 0);
 
+  const handleDownloadPDF = () => {
+    if (activeLedgerType === 'TrialBalance') {
+      exportTrialBalancePDF(trialBalanceRows, settings);
+    } else if (activeLedgerType === 'CustomerLedger') {
+      const cust = customers.find(c => c.id === selectedCustomerId);
+      exportAccountStatementPDF(
+        'Customer Ledger Account Statement',
+        cust ? cust.name : 'Customer',
+        cust ? cust.id : '',
+        cust ? cust.phone : '',
+        customerLedger,
+        settings
+      );
+    } else if (activeLedgerType === 'SupplierLedger') {
+      const supp = suppliers.find(s => s.id === selectedSupplierId);
+      exportAccountStatementPDF(
+        'Supplier / Vendor Ledger Statement',
+        supp ? supp.companyName : 'Supplier',
+        supp ? supp.id : '',
+        supp ? supp.phone : '',
+        supplierLedger,
+        settings
+      );
+    } else if (activeLedgerType === 'CashBook') {
+      const cashVouchers = vouchers.map(v => {
+        const debitEntry = v.entries?.find(e => e.accountId === 'ACC-101' && e.debit > 0);
+        const creditEntry = v.entries?.find(e => e.accountId === 'ACC-101' && e.credit > 0);
+        return {
+          date: v.date,
+          voucherNo: v.voucherNumber,
+          description: v.narration || `${v.voucherType} Transaction`,
+          debit: debitEntry ? debitEntry.debit : (v.partyType === 'Customer' ? v.amount : 0),
+          credit: creditEntry ? creditEntry.credit : (v.partyType === 'Supplier' ? v.amount : 0),
+          balance: 0
+        };
+      });
+      exportAccountStatementPDF(
+        'Cash & Bank Book Statement',
+        'Showroom Main Cash & Bank Account (ACC-101)',
+        'ACC-101',
+        settings.phone,
+        cashVouchers,
+        settings
+      );
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -56,13 +105,24 @@ export const LedgersView: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={() => window.print()}
-          className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-700 transition"
-        >
-          <Printer className="h-4 w-4" />
-          <span>Print Current Statement</span>
-        </button>
+        <div className="flex items-center flex-wrap gap-2">
+          <button
+            onClick={handleDownloadPDF}
+            className="flex items-center gap-1.5 rounded-xl border border-rose-300 bg-rose-50 hover:bg-rose-100/80 px-4 py-2 text-xs font-bold text-rose-800 shadow-2xs transition active:scale-98"
+            title="Download official statement as PDF document"
+          >
+            <FileDown className="h-4 w-4 text-rose-600" />
+            <span>Download as PDF</span>
+          </button>
+
+          <button
+            onClick={() => window.print()}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-700 transition"
+          >
+            <Printer className="h-4 w-4" />
+            <span>Print Current Statement</span>
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}

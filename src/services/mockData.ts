@@ -1,7 +1,7 @@
 import { 
   Customer, Supplier, Employee, AttendanceRecord, VisitorRecord,
   Product, PurchaseInvoice, SalesInvoice, InstallmentAccount, 
-  Voucher, LedgerEntry, AccountHead, ChequeRecord, Target, AuditLog, ShowroomSettings, User
+  Voucher, LedgerEntry, AccountHead, ChequeRecord, Target, AuditLog, ShowroomSettings, User, StaffTask
 } from '../types/erp';
 
 export const initialSettings: ShowroomSettings = {
@@ -1259,3 +1259,79 @@ export const initialAuditLogs: AuditLog[] = [
     details: 'Posted installment payment of PKR 10,000 for Account # INST-2026-001 (Receipt RCT-701)'
   }
 ];
+
+export const initialTasks: StaffTask[] = [
+  {
+    id: 'TSK-101',
+    title: 'Morning Showroom Floor Inspection & AC Testing',
+    description: 'Turn on display units, check air conditioner inverter test panels, clean glass showcases, ensure promotional price tags are clearly displayed.',
+    assignedTo: 'Muhammad Farhan',
+    assignedBy: 'Owner / Super Admin',
+    priority: 'High',
+    status: 'In Progress',
+    category: 'Showroom Floor',
+    dueDate: new Date().toISOString().split('T')[0],
+    createdAt: new Date().toISOString().split('T')[0],
+    progressPercent: 60,
+    notes: 'Ground floor main appliance aisle completed; mezzanine soundbar display remaining.'
+  },
+  {
+    id: 'TSK-102',
+    title: 'Overdue Installment Recovery Calls (Top 5 Accounts)',
+    description: 'Call Tariq Mehmood and Bilal Shah regarding missed monthly installments due for current cycle.',
+    assignedTo: 'Usman Ali',
+    assignedBy: 'Showroom Manager',
+    priority: 'Urgent',
+    status: 'Pending',
+    category: 'Recovery & Calls',
+    dueDate: new Date().toISOString().split('T')[0],
+    createdAt: new Date().toISOString().split('T')[0],
+    progressPercent: 0,
+    notes: 'Print recovery slips and prepare guarantor agreement copies.'
+  },
+  {
+    id: 'TSK-103',
+    title: 'Barcode Serial Audit for New Haier Inverter Batch',
+    description: 'Scan all 10 unit serial numbers of Haier 1.5 Ton DC Inverters into serialized inventory and stamp warranty cards.',
+    assignedTo: 'Bilal Ahmed',
+    assignedBy: 'Stock Incharge',
+    priority: 'Medium',
+    status: 'Completed',
+    category: 'Stock & Warehouse',
+    dueDate: new Date().toISOString().split('T')[0],
+    completedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
+    createdAt: new Date().toISOString().split('T')[0],
+    progressPercent: 100,
+    notes: 'All 10 barcodes verified and stored in Warehouse A.'
+  },
+  {
+    id: 'TSK-104',
+    title: 'Bank Deposit & Cash Drawer Closing Reconciliation',
+    description: 'Reconcile day cashier drawer against POS Sales invoices and deposit surplus cash in Habib Bank Limited account.',
+    assignedTo: 'Tahir Abbas',
+    assignedBy: 'Head Cashier',
+    priority: 'High',
+    status: 'Pending',
+    category: 'Accounts & Banking',
+    dueDate: new Date().toISOString().split('T')[0],
+    createdAt: new Date().toISOString().split('T')[0],
+    progressPercent: 10,
+    notes: 'Keep deposit slip receipt copy for accountant voucher entry.'
+  },
+  {
+    id: 'TSK-105',
+    title: 'Customer Delivery Follow-up: Samsung 65" UHD LED',
+    description: 'Confirm safe delivery and wall-mount installation at customer residence in Model Town.',
+    assignedTo: 'Zainab Noor',
+    assignedBy: 'Showroom Manager',
+    priority: 'Low',
+    status: 'Completed',
+    category: 'Customer Support',
+    dueDate: new Date().toISOString().split('T')[0],
+    completedAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
+    createdAt: new Date().toISOString().split('T')[0],
+    progressPercent: 100,
+    notes: 'Customer confirmed flawless installation and signed receiving memo.'
+  }
+];
+
