@@ -1,0 +1,1168 @@
+# MASTER PROMPT — ADVANCED ELECTRONICS SHOWROOM ERP SYSTEM
+
+## 1. YOUR ROLE
+
+Act as a senior software architect, full-stack developer, database architect, UI/UX designer, Firebase security expert, and enterprise ERP developer.
+
+Your task is to design and build a complete, modern, secure, production-oriented Electronics Showroom Management ERP System.
+
+This is a real business application, not a demo, prototype, static dashboard, or simple CRUD project.
+
+Build a professional system that can manage the complete operations of an electronics showroom, including customers, visitors, employees, attendance, inventory, purchases, sales, cash and credit transactions, installment accounts, recovery, accounting, ledgers, reports, and administration.
+
+Do not create a superficial interface with non-functional buttons. Every implemented feature must work and save or retrieve real data from the database.
+
+## 2. BUSINESS REQUIREMENTS
+
+The business is an electronics showroom selling products such as:
+
+- Mobile phones
+- LED TVs
+- Refrigerators
+- Washing machines
+- Air conditioners
+- Laptops and computers
+- Home appliances
+- Electronics accessories
+- Other electronic products
+
+The showroom needs to maintain accurate records of:
+
+- Who visited the showroom
+- Who entered and exited the showroom
+- Which employee attended work and at what time
+- Which customer purchased which product
+- Which product was sold for cash or credit
+- How much money was received
+- How much money is still outstanding
+- Which customers are paying in installments
+- Which installments are due or overdue
+- Which supplier supplied which products
+- Current stock and product serial numbers
+- Daily sales, purchases, expenses, profit and cash balance
+- All financial transactions and account statements
+
+The application must be suitable for a real electronics showroom operating in Pakistan.
+
+Default currency: PKR (Pakistani Rupees).
+
+Use configurable business settings for currency, timezone, financial year, invoice numbering, tax, and installment rules.
+
+## 3. TECHNOLOGY STACK
+
+Use a modern, maintainable architecture.
+
+Frontend:
+- React
+- TypeScript
+- Responsive modern UI
+- Tailwind CSS
+- shadcn/ui or equivalent professional components
+- Lucide icons
+- Recharts for charts and analytics
+
+Backend and cloud:
+- Firebase Authentication
+- Cloud Firestore
+- Firebase Storage
+- Firebase Security Rules
+- Firebase Cloud Functions where appropriate
+- Google Cloud Run for backend services if required
+- Firebase Emulator Suite for development and security testing
+
+Google AI Studio Build Mode should be used to develop the application.
+
+Use environment variables and secure server-side secrets for sensitive credentials.
+
+Never expose private API keys, service account credentials, or administrative secrets in frontend code.
+
+## 4. AUTHENTICATION AND USER MANAGEMENT
+
+Implement secure email/password authentication.
+
+Requirements:
+- Login with email and password
+- Logout
+- Forgot password
+- Password reset
+- Email verification
+- Secure session handling
+- Protected application routes
+- No unrestricted public registration
+- Owner-controlled user creation
+- Login history
+- Account activation and deactivation
+- Optional two-factor authentication when supported
+
+Create role-based access control.
+
+Default roles:
+1. Owner / Super Admin
+2. Manager
+3. Accountant
+4. Cashier
+5. Stock Manager
+6. Recovery Officer
+7. Receptionist
+
+Permissions must support:
+- View
+- Create
+- Edit
+- Delete
+- Approve
+- Print
+- Export
+
+The owner must be able to configure permissions for each role and individual user.
+
+A user must never access data or functions outside their authorized permissions.
+
+## 5. MAIN APPLICATION NAVIGATION
+
+Create a professional sidebar with the following modules:
+
+1. Dashboard
+2. Customers
+3. Visitors
+4. Employees
+5. Attendance
+6. Suppliers
+7. Products
+8. Categories
+9. Brands
+10. Inventory
+11. Purchase
+12. Purchase Return
+13. Sales
+14. Cash Sales
+15. Credit Sales
+16. Sales Return
+17. Installment Management
+18. Receive Installment
+19. Recovery Management
+20. Payment Voucher
+21. Receive Voucher
+22. Journal Voucher
+23. Cash and Bank
+24. Cheque Management
+25. Customer Ledger
+26. Supplier Ledger
+27. General Ledger
+28. Account Registration
+29. Target Management
+30. Reports
+31. Notifications
+32. User Management
+33. Audit Logs
+34. Settings
+35. Backup and Restore
+
+Use a clean navigation hierarchy. Add search, icons, active navigation indicators, and collapsible menu sections.
+
+## 6. DASHBOARD
+
+Create a professional dashboard with real-time or appropriately refreshed database-driven information.
+
+Show:
+- Today's total sales
+- Today's cash sales
+- Today's credit sales
+- Today's purchases
+- Today's received payments
+- Today's installment recovery
+- Today's expenses
+- Gross profit
+- Net profit
+- Total cash balance
+- Bank balance
+- Total customer receivables
+- Total supplier payables
+- Total inventory quantity
+- Total inventory valuation
+- Low-stock products
+- Out-of-stock products
+- Total customers
+- Total suppliers
+- Today's visitors
+- Employees present
+- Employees absent
+- Overdue installment accounts
+
+Add charts:
+- Daily sales
+- Monthly sales
+- Purchase trends
+- Profit trends
+- Payment recovery trends
+- Cash versus credit sales
+- Product/category performance
+
+All dashboard figures must come from actual database records and must use clearly defined accounting calculations.
+
+Do not display fabricated statistics or hardcoded sample figures in production mode.
+
+## 7. VISITOR MANAGEMENT
+
+Create a complete visitor entry and exit management system.
+
+Visitor fields:
+- Visitor ID
+- Visitor name
+- Phone number
+- Optional CNIC
+- Visit purpose
+- Visit date
+- Entry time
+- Exit time
+- Person or employee to meet
+- Remarks
+- Created by
+- Visitor status
+
+Features:
+- Visitor check-in
+- Visitor check-out
+- Automatically capture entry timestamp
+- Capture exit timestamp
+- Search visitor history
+- Daily visitor register
+- Date-wise visitor report
+- Employee-wise visitor report
+- Export and print visitor records
+
+Do not allow an ordinary visitor check-in to create a customer or sales transaction automatically.
+
+## 8. EMPLOYEE AND ATTENDANCE MANAGEMENT
+
+Employee profile:
+- Employee ID
+- Name
+- Phone
+- Email
+- Address
+- CNIC
+- Designation
+- Joining date
+- Salary information
+- Employment status
+- Assigned role
+
+Attendance:
+- Check-in time
+- Check-out time
+- Date
+- Shift
+- Late status
+- Early departure
+- Absence
+- Leave
+- Working hours
+- Attendance correction history
+
+Features:
+- Daily attendance
+- Monthly attendance
+- Employee attendance report
+- Manual attendance correction with approval
+- Employee-wise history
+- Salary and attendance summaries where configured
+
+Application login time must not automatically count as employee attendance.
+
+## 9. CUSTOMER MANAGEMENT
+
+Create a complete customer management module.
+
+Customer fields:
+- Customer ID
+- Full name
+- Phone
+- Alternate phone
+- CNIC
+- Email
+- Address
+- City
+- Opening balance
+- Credit limit
+- Customer status
+- Registration date
+- Notes
+- Attachments
+
+Customer profile must contain:
+- Personal information
+- Sales history
+- Purchase invoices
+- Credit transactions
+- Installment accounts
+- Payments received
+- Outstanding balance
+- Returns
+- Customer ledger
+- Account statement
+- Warranty records
+- Attachments
+- Notes and activity history
+
+Provide powerful customer search by name, phone, CNIC, customer ID, and invoice number.
+
+## 10. SUPPLIER MANAGEMENT
+
+Supplier information:
+- Supplier ID
+- Company/name
+- Contact person
+- Phone
+- Email
+- Address
+- Opening balance
+- Payment terms
+- Status
+
+Features:
+- Purchase history
+- Purchase returns
+- Payments
+- Supplier ledger
+- Outstanding payable
+- Supplier account statement
+- Date-wise reports
+
+## 11. PRODUCT, CATEGORY AND BRAND MANAGEMENT
+
+Product registration fields:
+- Product ID
+- SKU
+- Barcode
+- Product name
+- Category
+- Subcategory
+- Brand
+- Model number
+- Description
+- Product image
+- Unit
+- Purchase cost
+- Wholesale price
+- Retail price
+- Minimum selling price
+- Minimum stock level
+- Warranty duration
+- Serial number tracking
+- Product status
+
+Support:
+- Product registration
+- Product editing
+- Category management
+- Brand management
+- Barcode search
+- Product image upload
+- Duplicate SKU prevention
+- Product-wise stock
+- Product-wise purchase history
+- Product-wise sales history
+- Product-wise profit analysis
+
+For serialized electronics, track each individual unit's serial number or IMEI where applicable.
+
+A serialized item must not be sold twice or exist in two incompatible stock states.
+
+## 12. INVENTORY MANAGEMENT
+
+Implement a proper stock movement system.
+
+Features:
+- Opening stock
+- Purchase stock-in
+- Sales stock-out
+- Sales return stock-in
+- Purchase return stock-out
+- Stock adjustment
+- Damaged stock
+- Lost stock
+- Reserved stock
+- Available stock
+- Stock transfer if multiple locations are enabled
+
+Reports:
+- Item-wise stock ledger
+- All stock report
+- Low-stock report
+- Out-of-stock report
+- Brand-wise stock
+- Category-wise stock
+- Stock valuation
+- Serial-number report
+- Stock movement history
+
+Do not manually overwrite stock balances without recording an authorized stock movement.
+
+Use transaction-safe stock updates to prevent overselling and duplicate movements.
+
+## 13. PURCHASE MANAGEMENT
+
+Create Purchase Invoice.
+
+Fields:
+- Purchase invoice number
+- Supplier
+- Purchase date
+- Product
+- Quantity
+- Unit cost
+- Serial numbers
+- Discount
+- Tax
+- Freight or additional charges
+- Subtotal
+- Grand total
+- Amount paid
+- Remaining payable
+- Payment method
+- Remarks
+
+Features:
+- Add multiple products
+- Calculate totals automatically
+- Save draft
+- Post purchase
+- Print invoice
+- Generate PDF
+- Purchase history
+- Supplier balance update
+- Stock update
+- Purchase ledger entry
+
+Create Purchase Return with:
+- Original purchase reference
+- Returned products
+- Quantities
+- Return reason
+- Refund or supplier credit
+- Stock adjustment
+- Supplier balance adjustment
+
+Also support purchase orders and partial receiving where practical.
+
+## 14. SALES AND POS MANAGEMENT
+
+Create a professional Point of Sale interface.
+
+Support:
+- Cash sale
+- Credit sale
+- Partial payment
+- Multiple payment methods
+- Barcode input
+- Product search
+- Serial/IMEI selection
+- Quantity
+- Discount
+- Tax
+- Invoice notes
+- Customer selection
+- Walk-in customer configuration
+- Hold and resume sale
+- Invoice printing
+- PDF invoice
+- Sales history
+
+Sales invoice fields:
+- Invoice number
+- Customer
+- Sale date
+- Products
+- Quantities
+- Unit prices
+- Cost prices
+- Discounts
+- Tax
+- Grand total
+- Paid amount
+- Remaining balance
+- Payment method
+- Salesperson
+- Status
+
+On posting a sale:
+- Reduce inventory correctly
+- Record serial number status
+- Update customer receivable if credit exists
+- Record payment received
+- Create appropriate accounting entries
+- Record audit history
+
+Create:
+- Cash Sale
+- Credit Sale
+- Sales Return
+- Sales History
+- Invoice Search
+- Daily Sales Report
+- Monthly Sales Report
+- Customer-wise Sales Report
+- Product-wise Sales Report
+
+Sales returns must reference the original invoice and apply correct inventory and accounting adjustments.
+
+## 15. INSTALLMENT MANAGEMENT
+
+This is a critical module for the electronics showroom.
+
+Create an installment account system.
+
+Fields:
+- Installment account number
+- Customer
+- Original sales invoice
+- Product details
+- Product serial number
+- Total selling price
+- Down payment
+- Financed amount
+- Markup or service charge
+- Total payable amount
+- Installment duration
+- Monthly installment
+- First due date
+- Subsequent due dates
+- Guarantor details if required
+- Agreement details
+- Recovery officer
+- Account status
+
+Automatically generate an installment schedule based on configurable business rules.
+
+Support:
+- Weekly installments if enabled
+- Monthly installments
+- Partial installment payments
+- Advance payments
+- Late payments
+- Overdue installments
+- Rescheduling
+- Waivers with authorization
+- Early settlement
+- Account closing
+- Settlement adjustments
+
+Installment statuses:
+- Upcoming
+- Due
+- Partially Paid
+- Paid
+- Overdue
+- Rescheduled
+- Closed
+- Cancelled
+
+Never assume a fixed markup, late fee, or installment formula. Make these configurable and require an authorized user to confirm business rules.
+
+## 16. INSTALLMENT RECEIPT AND RECOVERY
+
+Create Receive Installment.
+
+Fields:
+- Receipt number
+- Installment account
+- Customer
+- Payment date
+- Amount received
+- Payment method
+- Cash/bank account
+- Reference number
+- Received by
+- Remarks
+
+Features:
+- Receive full installment
+- Receive partial installment
+- Allocate payment to correct due installments
+- Generate receipt
+- Print receipt
+- Update outstanding balance
+- Update installment schedule
+- Record accounting transaction
+
+Recovery management:
+- Due date-wise list
+- Overdue accounts
+- Customer contact details
+- Recovery officer assignment
+- Follow-up history
+- Recovery notes
+- Next follow-up date
+- Recovery report
+- Monthly recovery report
+
+Never delete or silently overwrite previous payment records.
+
+## 17. ACCOUNTING AND FINANCE
+
+Build a proper double-entry accounting foundation.
+
+Create Chart of Accounts with:
+- Assets
+- Liabilities
+- Equity
+- Income
+- Expenses
+
+Implement:
+- Account Registration
+- Payment Voucher
+- Receive Voucher
+- Journal Voucher
+- Contra Voucher
+- Expense Entry
+- Cash Book
+- Bank Book
+- General Ledger
+- Trial Balance
+- Profit and Loss Statement
+- Balance Sheet
+
+Journal Voucher must support:
+- Multiple debit lines
+- Multiple credit lines
+- Account selection
+- Narration
+- Date
+- Reference number
+
+A journal must be balanced before posting:
+
+Total Debits = Total Credits.
+
+Use proper accounting entries for purchases, sales, cost of goods sold, inventory, receivables, payables, customer payments, supplier payments, and expenses.
+
+Examples:
+- Cash sale: Debit Cash/Bank, Credit Sales.
+- Credit sale: Debit Customer Receivable, Credit Sales.
+- Cost of goods sold: Debit Cost of Goods Sold, Credit Inventory.
+- Customer payment: Debit Cash/Bank, Credit Customer Receivable.
+- Purchase on credit: Debit Inventory or relevant purchase account, Credit Supplier Payable.
+- Supplier payment: Debit Supplier Payable, Credit Cash/Bank.
+- Expense payment: Debit Expense, Credit Cash/Bank.
+
+Configure accounting policy, inventory valuation, taxes, and opening balances before production use.
+
+Never calculate profit simply as sales minus cash received.
+
+## 18. CHEQUE MANAGEMENT
+
+Create:
+- Cheque Issue
+- Cheque Receive
+- Pending Cheques
+- Cleared Cheques
+- Bounced Cheques
+- Cancelled Cheques
+
+Fields:
+- Cheque number
+- Bank
+- Account
+- Issue/receive date
+- Cheque date
+- Amount
+- Party
+- Status
+- Reference
+- Remarks
+
+Track cheque status changes and accounting impact.
+
+## 19. LEDGER MANAGEMENT
+
+Create:
+- Customer Ledger
+- Supplier Ledger
+- General Ledger
+- Account Ledger
+- Ledger Summary
+- Account Statement
+
+Every ledger must show:
+- Transaction date
+- Voucher/invoice number
+- Description
+- Debit
+- Credit
+- Running balance
+- Opening balance
+- Closing balance
+
+Allow date filtering, search, printing, and PDF export.
+
+Ledger balances must reconcile with the underlying posted transactions.
+
+## 20. TARGET MANAGEMENT
+
+Allow authorized users to create:
+- Daily sales targets
+- Monthly sales targets
+- Employee-wise targets
+- Recovery targets
+- Product-wise targets
+
+Show:
+- Target amount
+- Achieved amount
+- Remaining amount
+- Achievement percentage
+- Performance history
+
+## 21. REPORTING AND ANALYTICS
+
+Create a centralized reporting module.
+
+Sales reports:
+- Daily sales
+- Monthly sales
+- Cash sales
+- Credit sales
+- Sales return
+- Customer-wise sales
+- Product-wise sales
+
+Purchase reports:
+- Purchase report
+- Purchase return report
+- Supplier-wise purchases
+
+Inventory reports:
+- Item list
+- All stock report
+- Item-wise stock ledger
+- Brand-wise report
+- Low-stock report
+- Stock valuation
+
+Installment reports:
+- Installment accounts
+- Due date-wise list
+- Recovery report
+- Monthly received report
+- Overdue accounts
+- Account closing report
+
+Accounting reports:
+- Payment voucher report
+- Receive voucher report
+- Journal voucher report
+- Cash book
+- Bank book
+- Account statement
+- Trial balance
+- Profit and loss
+- Balance sheet
+
+Management reports:
+- Date-wise profit report
+- Daily activity log
+- Employee attendance
+- Visitor register
+- Target achievement
+
+All reports must support:
+- Date range filters
+- Search
+- Sorting
+- Pagination
+- Relevant totals
+- Print
+- PDF export
+- Excel export where supported
+
+Do not calculate reports from incomplete or unposted transactions unless clearly labelled as drafts.
+
+## 22. NOTIFICATIONS
+
+Provide in-app notifications for:
+- Low stock
+- Overdue installments
+- Upcoming installment due dates
+- Pending approvals
+- Cheque due dates
+- Important business alerts
+
+Email, SMS, and WhatsApp integrations may be added through approved external services.
+
+Do not pretend an external message was sent unless the integration confirms success.
+
+## 23. SETTINGS
+
+Create settings for:
+- Showroom name
+- Logo
+- Address
+- Phone
+- Email
+- Currency
+- Timezone
+- Date format
+- Financial year
+- Invoice numbering
+- Receipt numbering
+- Tax configuration
+- Installment rules
+- Payment methods
+- Stock valuation method
+- Roles and permissions
+- User management
+- Print templates
+- Backup configuration
+
+Default display currency should be PKR.
+
+## 24. DATABASE ARCHITECTURE
+
+Use a well-structured Firestore database.
+
+Suggested collections:
+
+- organizations
+- users
+- roles
+- permissions
+- employees
+- attendance
+- visitors
+- customers
+- suppliers
+- categories
+- brands
+- products
+- product_serials
+- stock_movements
+- purchase_invoices
+- purchase_returns
+- purchase_orders
+- sales_invoices
+- sales_returns
+- installment_accounts
+- installment_schedules
+- installment_receipts
+- recovery_records
+- chart_of_accounts
+- journal_entries
+- payment_vouchers
+- receive_vouchers
+- cheque_records
+- cash_accounts
+- expenses
+- targets
+- notifications
+- audit_logs
+- attachments
+- settings
+
+Every business record must be scoped to its organization or showroom.
+
+Design relationships and document structures carefully.
+
+Use consistent document IDs, timestamps, createdBy, updatedBy, status, and organizationId fields where appropriate.
+
+Avoid duplicating financial truth across multiple documents. Define which records are authoritative and which values are derived or cached.
+
+Use pagination and Firestore indexes for scalable queries.
+
+## 25. BACKEND BUSINESS LOGIC
+
+Implement critical financial and inventory operations on trusted backend services.
+
+Backend responsibilities:
+- Authentication verification
+- Role and permission verification
+- Invoice number generation
+- Duplicate transaction prevention
+- Stock movement posting
+- Serial number validation
+- Customer balance updates
+- Supplier balance updates
+- Installment schedule generation
+- Payment allocation
+- Journal posting
+- Ledger calculation
+- Report aggregation
+- Audit logging
+
+Use Firestore transactions or batched writes where appropriate to maintain data consistency.
+
+Make critical posting operations idempotent so retries do not create duplicate financial transactions.
+
+Do not trust totals or balances submitted by the browser. Validate and calculate them on the trusted backend.
+
+## 26. SECURITY REQUIREMENTS
+
+Security is mandatory.
+
+Implement:
+- Firebase Authentication
+- Strict Firestore Security Rules
+- Organization-level data isolation
+- Role-based access control
+- Server-side authorization
+- Secure file upload rules
+- Input validation
+- Rate limiting where appropriate
+- Protected routes
+- Audit logging
+- Restricted deletion
+- Safe error handling
+
+Never allow ordinary users to:
+- Read another organization's data
+- Change their own role
+- Increase their permissions
+- Modify posted financial records without authorization
+- Directly overwrite inventory balances
+- Delete audit records
+- Access private credentials
+
+Remember that Firebase Admin SDK bypasses Firestore Security Rules. Any backend using Admin SDK must independently verify authentication, organization membership, and permissions.
+
+Use Firebase Emulator Suite to test security rules.
+
+## 27. AUDIT LOGS
+
+Record important activities:
+- Login and logout
+- Record creation
+- Record updates
+- Transaction posting
+- Transaction cancellation
+- Payment receipt
+- Stock adjustments
+- User permission changes
+- Account closing
+- Data exports
+
+Audit fields:
+- User ID
+- Action
+- Module
+- Record ID
+- Timestamp
+- Old values where appropriate
+- New values where appropriate
+- Organization ID
+
+Never silently delete or rewrite financial history.
+
+Use reversal or cancellation entries for posted financial transactions.
+
+## 28. BACKUP AND RESTORE
+
+Implement a reliable backup strategy using supported Google Cloud/Firebase services.
+
+Provide:
+- Scheduled backups
+- Manual backup initiation for authorized administrators
+- Backup history
+- Backup status
+- Failure alerts
+- Retention policy
+- Documented restore process
+- Restore testing
+
+A backup is not considered reliable until restoration has been tested.
+
+## 29. UI/UX DESIGN
+
+Design a premium, modern electronics showroom ERP interface.
+
+Design requirements:
+- Professional business dashboard
+- Clean sidebar navigation
+- Responsive layout
+- Desktop-first usability
+- Tablet and mobile support
+- Clear typography
+- Consistent spacing
+- Professional tables
+- Searchable dropdowns
+- Date pickers
+- Confirmation dialogs
+- Loading states
+- Empty states
+- Error messages
+- Success messages
+- Form validation
+- Accessible controls
+
+Use a consistent design system.
+
+The interface should feel like a professional commercial ERP product, not a generic AI-generated template.
+
+Support English labels and a layout that can later support Urdu localization and right-to-left direction.
+
+## 30. PERFORMANCE AND RELIABILITY
+
+Requirements:
+- Efficient database queries
+- Pagination
+- Lazy loading
+- Appropriate indexes
+- Image optimization
+- Avoid unnecessary realtime listeners
+- Server-side filtering for large datasets
+- Reliable error handling
+- Duplicate submission prevention
+- Loading indicators
+- Safe transaction retries
+
+Do not load the entire database into the browser.
+
+Do not use localStorage as the primary database.
+
+Cloud Firestore must be the persistent source of business data.
+
+## 31. DATA VALIDATION AND FINANCIAL ACCURACY
+
+Implement strict validation.
+
+Examples:
+- Quantity must be valid and positive where required.
+- Payment amounts must be valid.
+- A posted journal must balance.
+- A sale cannot consume unavailable stock.
+- A serial number cannot be sold twice.
+- A return must reference a valid original transaction.
+- A customer balance must reconcile with posted transactions.
+- A supplier balance must reconcile with posted transactions.
+- Installment receipts must update the correct schedule.
+- Duplicate submissions must not create duplicate postings.
+
+Use decimal-safe money calculations. Do not rely on floating-point arithmetic for financial totals. Store money in integer minor units where practical, with explicit currency and rounding rules.
+
+## 32. TESTING
+
+Create and run tests for:
+
+- Authentication
+- Permissions
+- Organization isolation
+- Customer registration
+- Supplier registration
+- Product registration
+- Purchase posting
+- Stock calculation
+- Cash sale
+- Credit sale
+- Sales return
+- Purchase return
+- Installment schedule
+- Partial installment payment
+- Full installment payment
+- Journal balancing
+- Ledger reconciliation
+- Report totals
+- Backup and restore
+
+Example inventory test:
+Opening stock = 0.
+Purchase = 10 units.
+Sale = 3 units.
+Valid sales return = 1 unit.
+Expected stock = 8 units.
+
+Example receivable test:
+Credit sale = PKR 100,000.
+Payment received = PKR 40,000.
+Expected outstanding = PKR 60,000.
+
+Example accounting test:
+Total debit must equal total credit for every posted journal entry.
+
+Fix errors rather than hiding them.
+
+## 33. IMPLEMENTATION STRATEGY
+
+Build the system in controlled phases while preserving one consistent architecture.
+
+Phase 1: Project foundation, authentication, application shell, database setup, roles and permissions.
+
+Phase 2: Customers, suppliers, employees, visitors, attendance.
+
+Phase 3: Products, categories, brands, inventory and serial tracking.
+
+Phase 4: Purchase invoices, purchase returns and supplier balances.
+
+Phase 5: Cash sales, credit sales, POS and sales returns.
+
+Phase 6: Installment accounts, schedules, receipts and recovery.
+
+Phase 7: Chart of accounts, vouchers, journals, cash and bank management, cheques and ledgers.
+
+Phase 8: Reports, dashboard analytics, targets and notifications.
+
+Phase 9: Audit logs, backup, security hardening, testing and deployment.
+
+Do not create a disconnected application for each phase. Every module must integrate with the same authentication, organization, database, permission, audit, inventory and accounting architecture.
+
+## 34. IMPORTANT DEVELOPMENT RULES
+
+1. First inspect the existing project before changing files.
+2. If the project is empty, initialize a clean architecture.
+3. Do not unnecessarily overwrite working code.
+4. Keep components reusable and maintainable.
+5. Use TypeScript types and validation schemas.
+6. Separate UI, business logic, and database services.
+7. Do not hardcode fake dashboard statistics.
+8. Do not create buttons that do nothing.
+9. Do not claim that a feature works until it has been implemented and tested.
+10. Do not use mock data as production data.
+11. Do not expose secret keys.
+12. Do not bypass authorization for convenience.
+13. Do not silently delete financial records.
+14. Do not implement unconfirmed installment or accounting assumptions.
+15. If a required business rule is unknown, make it configurable and clearly document the assumption.
+16. Keep a project implementation checklist and update it as work progresses.
+17. After each phase, run available checks and fix build errors.
+18. Preserve completed work when moving to the next phase.
+
+## 35. FIRST TASK — START THE PROJECT CORRECTLY
+
+Begin by inspecting the current project and preparing the architecture.
+
+Then:
+
+1. Identify the existing framework and project structure.
+2. Set up the React and TypeScript application if needed.
+3. Configure the professional ERP design system.
+4. Configure Firebase Authentication and Firestore integration.
+5. Prepare secure environment configuration.
+6. Create protected routes and the main application layout.
+7. Implement the initial role and permission structure.
+8. Create the database service layer and validation architecture.
+9. Create the initial dashboard shell.
+10. Create a project checklist showing completed, pending, and blocked tasks.
+
+Before implementing any irreversible configuration, explain the required Firebase project setup and any region choices that cannot easily be changed later.
+
+If Firebase configuration or credentials are not yet available, create the integration structure and clearly identify what the owner must configure. Never fabricate credentials.
+
+Start with Phase 1. Implement real working functionality rather than merely generating a plan or static mockup.
+
+When Phase 1 is complete, report:
+- What was implemented
+- Which files were created or changed
+- Which Firebase settings are required
+- Which security rules were configured
+- Which tests were run
+- Any remaining limitations
+- The next phase to implement
+
+Continue using the same architecture and project checklist for all later phases.
+
+## FINAL OBJECTIVE
+
+Deliver a secure, scalable, professional Electronics Showroom ERP system in which all business modules work together through one reliable cloud database.
+
+The system must provide accurate customer records, visitor entry and exit, employee attendance, product inventory, purchases, sales, installment management, recovery, accounting, ledgers, reporting, audit history, and backup.
+
+Build for real business use, data integrity, financial accuracy, security, maintainability, and future expansion.

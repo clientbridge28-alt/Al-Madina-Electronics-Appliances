@@ -1,0 +1,2002 @@
+Electronic Showroom Management System
+Complete ERP • Accounting • Inventory • POS • Installments • Recovery • Attendance
+Cloud-based
+Multi-user
+Advanced ERP
+
+
+Project vision
+
+Ek aisa centralized software jisme electronic showroom ka har business operation ek hi system mein manage ho: customer ki entry se lekar product sale, payment, installment, recovery, inventory, supplier accounts, profit, loss aur daily closing tak.
+
+Part 1 — Project scope aur reference software
+1.1 Existing software se kya kya cover karna hai?
+Dono reference videos ke pehle se identify kiye gaye screens aur modules ko hum roadmap mein preserve karenge.
+Reference software module	Hamare software mein
+Purchase Invoice	Advanced Purchase Management
+Purchase Return	Purchase Return Management
+Sale Cash	Cash POS
+Sale Credit	Credit Sales
+Sale Return	Sales Return
+Payment Voucher	Payment Management
+Receive Voucher	Receipt Management
+Journal Voucher / Double Entry	Accounting Engine
+Cheque Issue	Cheque Management
+Cheque Receive	Cheque Management
+Item Registration	Product Management
+Account / Category Registration	Chart of Accounts / Categories
+Ledger Summary	Ledger Management
+Purchase Report	Purchase Analytics
+Sale Return Report	Sales Analytics
+Item List	Product Directory
+Installment Form	Installment Management
+Receive Installment	Recovery Management
+Customer Search	Customer Directory
+Target Form	Target Management
+Close Account & Update	Account Closure
+Recovery Report	Recovery Analytics
+Due Date Wise List	Due Management
+Date Wise Profit Report	Profit Analytics
+Daily Activity Log	Audit Management
+Item Wise Stock Ledger	Inventory Ledger
+Brand Wise Report	Brand Analytics
+All Stock Report	Stock Analytics
+Monthly Received Report	Collection Analytics
+A/C Statement	Account Statements
+JV Report	Journal Reports
+
+Yeh reference-derived list hai. Jahan video ke kisi specific screen ka exact field ya calculation clearly establish nahi hua, usay abhi final specification nahi maanenge; implementation se pehle verify karenge.
+1.2 Hamare software mein additional modules
+Existing functionality ko extend karte hue yeh modules add honge:
+1. Staff attendance.
+2. Visitor entry and exit.
+3. Advanced user permissions.
+4. Customer purchase history.
+5. Serial number and warranty tracking.
+6. Barcode support.
+7. Automated stock management.
+8. Multiple payment methods.
+9. Advanced installment schedules.
+10. Expense management.
+11. Bank and cash management.
+12. Profit and loss.
+13. Business dashboard.
+14. Automated notifications.
+15. Audit trail.
+16. Cloud backup and restore.
+17. Invoice and receipt printing.
+18. Data import/export.
+19. Multi-branch readiness.
+
+Part 2 — Complete software navigation structure
+Software ka sidebar organized hoga. Har module ke apne submenus honge.
+2.1 Main navigation
+Dashboard
+
+
+Business Management
+Customers
+
+Suppliers
+
+Employees
+
+Visitors
+
+Attendance
+
+
+Inventory Management
+Products
+
+Categories
+
+Brands
+
+Stock In/Out
+
+Stock Ledger
+
+Stock Adjustment
+
+
+Purchase Management
+Purchase Invoice
+
+Purchase Return
+
+Purchase Orders
+
+Supplier Payments
+
+
+Sales Management
+Sale Cash
+
+Sale Credit
+
+Sale Return
+
+POS Billing
+
+Sales History
+
+
+Installment & Recovery
+New Installment
+
+Receive Installment
+
+Due Date Wise List
+
+Recovery Report
+
+Account Closing
+
+
+Accounts & Finance
+Payment Voucher
+
+Receive Voucher
+
+Journal Voucher
+
+Cash Book
+
+Bank Book
+
+Chart of Accounts
+
+
+Ledger Management
+Customer Ledger
+
+Supplier Ledger
+
+Account Ledger
+
+Ledger Summary
+
+Trial Balance
+
+
+Cheque Management
+Cheque Issue
+
+Cheque Receive
+
+Pending Cheques
+
+Cheque Reports
+
+
+Reports & Analytics
+Sales Reports
+
+Purchase Reports
+
+Profit & Loss
+
+Stock Reports
+
+Recovery Reports
+
+
+Administration
+User Management
+
+Roles & Permissions
+
+Targets
+
+Settings
+
+Audit Logs
+
+Backup
+
+
+
+Yeh complete navigation ka proposed structure hai. Sidebar mein search, expand/collapse aur favorites bhi honge.
+Part 3 — Authentication, users aur security
+3.1 Login System
+
+
+
+
+
+
+
+dacemaerp.com
+
+
+System ka access sirf authorized users ko milega.
+
+Features:
+- Email and Password Login
+- Forgot Password
+- Password Reset
+- Email Verification
+- Session Expiry
+- Secure Logout
+- Login History
+- Failed Login Attempts
+- Active Sessions
+- Optional Two-Factor Authentication
+- Account Disable / Enable
+Public Sign Up disable rahega. Owner staff accounts create karega.
+3.2 User Management
+Owner ke paas users manage karne ka complete control hoga.
+- Create User
+- Edit User
+- Disable User
+- Activate User
+- Assign Role
+- Assign Permissions
+- Reset Access
+- View User Activity
+- Login History
+- Last Active Time
+Roles and Permissions
+Role	Main access
+Owner	All modules
+Manager	Business operations
+Accountant	Accounts and reports
+Cashier	POS and receiving
+Stock Manager	Inventory and purchase
+Recovery Officer	Installments and recovery
+Receptionist	Visitors and attendance
+
+Permissions chaar levels par control hongi:
+- View
+- Create
+- Edit
+- Approve / Delete (restricted)
+Example: Cashier invoice create kar sakta hai, lekin approved invoice ki amount change nahi kar sakta.
+3.3 Audit Trail
+Har important activity ka record:
+- Kis user ne action kiya?
+- Kis date aur time par?
+- Kis module mein?
+- Kaunsa record change hua?
+- Purani value kya thi?
+- Nayi value kya hui?
+- Action successful tha ya failed?
+Financial records ko direct delete karne ke bajaye reversal aur cancellation workflow use hoga.
+
+Part 4 — Dashboard and Business Overview
+4.1 Owner Dashboard
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+16
+
+
+
+
+
+
+
+
+
+
+Dashboard software ka central control panel hoga.
+Financial Overview
+- Total Sales Today
+- Total Purchase Today
+- Cash Received Today
+- Credit Sales Today
+- Installment Recovery Today
+- Total Expenses Today
+- Gross Profit
+- Net Profit
+- Cash in Hand
+- Bank Balance
+- Customer Receivables
+- Supplier Payables
+Inventory Overview
+- Total Products
+- Total Stock Quantity
+- Total Stock Value
+- Low Stock
+- Out of Stock
+- Damaged Items
+- Recently Purchased Items
+- Recently Sold Items
+Customer Overview
+- Total Customers
+- New Customers
+- Active Credit Customers
+- Customers with Outstanding Balance
+- Installment Customers
+- Overdue Customers
+Attendance Overview
+- Staff Present
+- Staff Absent
+- Late Arrivals
+- Visitors Today
+- Visitors Currently Inside
+- Today's Check-In / Check-Out
+Dashboard Analytics
+- Daily Sales Graph
+- Monthly Sales Graph
+- Purchase Graph
+- Profit Graph
+- Expense Graph
+- Recovery Graph
+- Payment Method Comparison
+- Top Selling Products
+- Best Performing Brands
+Dashboard Alerts
+- Low Stock
+- Overdue Installments
+- Pending Supplier Payments
+- Unpresented Cheques
+- Unposted Vouchers
+- Failed Backup
+- Important Audit Alerts
+4.2 Quick Actions
+Dashboard se direct actions:
+- New Sale
+- New Purchase
+- New Customer
+- New Supplier
+- New Product
+- Receive Payment
+- New Installment
+- Visitor Check-In
+- Staff Check-In
+- New Expense
+
+Part 5 — Staff, Visitor and Attendance Management
+5.1 Employee Management
+Har employee ka separate profile hoga.
+
+Employee information:
+- Employee ID
+- Full Name
+- Father Name
+- Mobile
+- CNIC
+- Address
+- Designation
+- Department
+- Joining Date
+- Salary
+- Employment Status
+- Emergency Contact
+- Photograph
+Employee Records
+- Attendance History
+- Salary History
+- Advance Salary
+- Leave Records
+- Performance
+- Assigned User Account
+- Activity History
+5.2 Attendance Management
+
+
+
+
+
+
+
+numla.com
+
+
+Features:
+- Staff Check-In
+- Staff Check-Out
+- Automatic Date and Time
+- Manual Correction with Approval
+- Late Arrival
+- Early Departure
+- Absent Record
+- Leave Management
+- Daily Attendance
+- Weekly Attendance
+- Monthly Attendance
+- Attendance Summary
+Ek employee ki ek din ki multiple shifts support karne ka option bhi future-ready architecture mein hoga.
+
+Important: Attendance aur application login ko alag rakhenge. Staff software mein login karne se automatically showroom attendance mark nahi hogi.
+5.3 Visitor Management
+Yeh tumhari special requirement hai.
+
+Har showroom visitor ka arrival aur departure record hoga.
+
+Visitor record:
+- Visitor ID
+- Name
+- Phone Number
+- CNIC (optional)
+- Visit Purpose
+- Visit Date
+- Entry Time
+- Exit Time
+- Person to Meet
+- Remarks
+- Entry Created By
+Visitor purposes:
+- Product Inquiry
+- Product Purchase
+- Installment Inquiry
+- Payment
+- Recovery
+- Delivery
+- Complaint
+- Meeting
+- Other
+Visitor Reports
+- Daily Visitor Report
+- Date Wise Visitors
+- Current Visitors Inside
+- Average Visit Duration
+- Purpose Wise Report
+- Repeat Visitors
+
+Part 6 — Customer Management
+6.1 Customer Registration
+
+
+Customer profile mein:
+
+Personal Information
+- Customer ID
+- Name
+- Father Name
+- Mobile
+- WhatsApp
+- CNIC
+- Email
+- Address
+- City
+- Date of Registration
+Business Information
+- Customer Type
+- Opening Balance
+- Credit Limit
+- Customer Status
+- Remarks
+Documents
+- CNIC Front
+- CNIC Back
+- Agreement
+- Other Attachments
+CNIC aur personal documents ko restricted access aur secure storage ke saath manage karenge.
+6.2 Customer Profile
+Customer ke profile mein separate tabs:
+1. Overview
+2. Purchase History
+3. Cash Sales
+4. Credit Sales
+5. Installment Accounts
+6. Payments Received
+7. Customer Ledger
+8. Outstanding Balance
+9. Returns
+10. Warranty
+11. Documents
+12. Notes
+6.3 Customer Search
+Search methods:
+- Customer ID
+- Customer Name
+- Phone Number
+- CNIC
+- Invoice Number
+- Installment Account Number
+Search results se direct customer profile, invoices aur ledger khul sakega.
+6.4 Customer Management Reports
+- All Customers
+- New Customers
+- Active Customers
+- Credit Customers
+- Outstanding Customers
+- Customer Purchase History
+- Customer Payment History
+- Customer Balance Report
+- Inactive Customers
+
+Part 7 — Supplier Management
+7.1 Supplier Registration
+Supplier profile:
+- Supplier ID
+- Company Name
+- Contact Person
+- Mobile
+- WhatsApp
+- Email
+- Address
+- City
+- NTN (optional)
+- Opening Balance
+- Credit Terms
+- Remarks
+7.2 Supplier Account
+Supplier profile mein:
+- Purchase History
+- Purchase Returns
+- Payments
+- Outstanding Balance
+- Supplier Ledger
+- Cheque Payments
+- Documents
+- Account Statement
+7.3 Supplier Reports
+- All Suppliers
+- Supplier Wise Purchases
+- Supplier Outstanding
+- Supplier Payment History
+- Purchase Return History
+- Supplier Ledger
+- Supplier Balance Summary
+
+Part 8 — Product and Inventory Management
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+9
+
+
+
+
+
+
+
+
+
+
+Yeh module products aur stock ka complete record maintain karega.
+8.1 Product Registration
+Product information:
+- Product ID
+- Product Name
+- Product Code
+- SKU
+- Category
+- Subcategory
+- Brand
+- Model
+- Barcode
+- Description
+- Product Image
+- Unit
+- Purchase Price
+- Wholesale Price
+- Retail Price
+- Minimum Sale Price
+- Minimum Stock
+- Warranty Duration
+- Status
+8.2 Product Categories
+- LED / Smart TVs
+- Refrigerators
+- Air Conditioners
+- Washing Machines
+- Deep Freezers
+- Water Dispensers
+- Microwave Ovens
+- Mobiles
+- Laptops
+- Computers
+- Kitchen Appliances
+- Home Appliances
+- Accessories
+- Other Electronics
+Owner new categories create, edit aur disable kar sakega.
+8.3 Brand Management
+- Brand Registration
+- Brand Logo
+- Brand Description
+- Brand Wise Product List
+- Brand Wise Stock
+- Brand Wise Sales
+- Brand Wise Purchase
+8.4 Product Serial Number Management
+Electronics ke liye important.
+
+Har serial-numbered item ka record:
+- Serial Number
+- Product
+- Brand
+- Model
+- Purchase Invoice
+- Supplier
+- Purchase Date
+- Sale Invoice
+- Customer
+- Sale Date
+- Warranty Start
+- Warranty End
+- Current Status
+Serial number duplicate nahi hona chahiye jahan individual unit tracking required ho.
+8.5 Stock Management
+- Opening Stock
+- Purchase Stock In
+- Sale Stock Out
+- Purchase Return
+- Sale Return
+- Stock Adjustment
+- Damaged Stock
+- Lost Stock
+- Reserved Stock
+- Available Stock
+- Stock Transfer
+- Stock Valuation
+8.6 Stock Alerts
+- Low Stock Alert
+- Out of Stock
+- Negative Stock Prevention
+- Overstock Alert
+- Warranty Expiry Alert
+8.7 Stock Ledger
+Har product ka complete movement history:
+- Opening Stock
+- Purchase
+- Sale
+- Return
+- Adjustment
+- Closing Stock
+8.8 Inventory Reports
+- All Stock Report
+- Item List
+- Item Wise Stock Ledger
+- Brand Wise Report
+- Category Wise Stock
+- Low Stock Report
+- Out of Stock Report
+- Damaged Stock Report
+- Stock Valuation
+- Serial Number Report
+- Warranty Expiry Report
+- Stock Movement Report
+
+Part 9 — Purchase Management
+
+
+
+
+
+
+
+docs.accu360.in
+
+
+9.1 Purchase Invoice
+Reference software ka essential module.
+
+Purchase invoice mein:
+- Purchase Invoice Number
+- Purchase Date
+- Supplier
+- Supplier Invoice Number
+- Product
+- Brand
+- Model
+- Serial Number
+- Quantity
+- Unit Price
+- Discount
+- Tax
+- Transport Charges
+- Other Charges
+- Subtotal
+- Grand Total
+- Paid Amount
+- Remaining Balance
+- Payment Method
+- Remarks
+Purchase invoice automatic processing
+1. Invoice validate hogi.
+2. Product quantities update hongi.
+3. Serial numbers register honge.
+4. Stock ledger entry banegi.
+5. Supplier payable calculate hoga.
+6. Payment account update hoga.
+7. Accounting journal post hogi.
+8. Purchase report update hogi.
+9.2 Purchase Return
+- Original Purchase Invoice
+- Supplier
+- Product
+- Serial Number
+- Return Quantity
+- Return Reason
+- Return Value
+- Refund Status
+- Supplier Adjustment
+Stock decrease aur supplier balance adjustment properly handle hoga.
+9.3 Additional Purchase Features
+- Purchase Order
+- Purchase Approval
+- Partial Receiving
+- Purchase Invoice Attachments
+- Supplier Invoice Reference
+- Purchase Discount
+- Freight and Other Charges
+- Purchase History
+Purchase Order aur actual received stock alag records honge. Sirf order create hone se inventory increase nahi hogi.
+9.4 Purchase Reports
+- Daily Purchase
+- Monthly Purchase
+- Date Wise Purchase
+- Supplier Wise Purchase
+- Product Wise Purchase
+- Purchase Return
+- Purchase Payment
+- Outstanding Purchase
+- Purchase Profitability Analysis
+
+Part 10 — Sales and POS Management
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+11
+
+
+
+
+
+
+
+
+
+
+10.1 Cash Sale
+- Cash Sale Invoice
+- Invoice Number
+- Invoice Date
+- Customer
+- Product Search
+- Barcode
+- Serial Number
+- Quantity
+- Rate
+- Discount
+- Tax
+- Total
+- Received Amount
+- Change Amount
+- Payment Method
+10.2 Credit Sale
+- Credit Invoice
+- Customer Profile
+- Product Details
+- Total Amount
+- Down Payment
+- Remaining Amount
+- Due Date
+- Credit Terms
+- Installment Link
+- Guarantor Details (where applicable)
+10.3 Sale Return
+- Original Invoice
+- Customer
+- Product
+- Serial Number
+- Quantity
+- Return Reason
+- Refund Amount
+- Exchange
+- Account Adjustment
+10.4 POS Features
+- Fast Product Search
+- Barcode Scanner
+- Keyboard Navigation
+- Cart Management
+- Multiple Items
+- Discount
+- Tax
+- Split Payment
+- Cash / Bank / Card / Other Payment
+- Invoice Print
+- PDF Receipt
+- Invoice Reprint
+- Hold Sale
+- Resume Sale
+10.5 Sales Reports
+- Daily Sale
+- Monthly Sale
+- Date Wise Sale
+- Cash Sale
+- Credit Sale
+- Sale Return
+- Product Wise Sale
+- Customer Wise Sale
+- Brand Wise Sale
+- Payment Method Wise Sale
+- Salesperson Wise Sale
+- Discount Report
+- Invoice History
+
+Part 11 — Installment and Recovery Management
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+11
+
+
+
+
+
+
+
+
+
+
+Yeh hamare software ke important advanced modules mein se ek hoga.
+11.1 New Installment Account
+- Installment Account Number
+- Customer
+- CNIC
+- Mobile
+- Address
+- Product
+- Original Invoice
+- Product Price
+- Down Payment
+- Financed Amount
+- Markup / Service Charge (if applicable)
+- Total Payable
+- Duration
+- Monthly Amount
+- First Due Date
+- Final Due Date
+- Guarantor
+- Agreement Details
+- Account Status
+11.2 Installment Schedule
+System automatic schedule generate karega.
+- Installment Number
+- Due Date
+- Principal Amount
+- Markup Component
+- Total Due
+- Received Amount
+- Remaining Due
+- Payment Status
+Status:
+- Upcoming
+- Due
+- Partially Paid
+- Paid
+- Overdue
+- Waived
+- Rescheduled
+11.3 Receive Installment
+- Customer Search
+- Account Number
+- Installment Number
+- Due Amount
+- Previous Balance
+- Received Amount
+- Payment Date
+- Payment Method
+- Cash / Bank Account
+- Receipt Number
+- Remarks
+Partial payment bhi supported hogi.
+11.4 Recovery Management
+- Recovery Officer
+- Assigned Customers
+- Due Customers
+- Overdue Customers
+- Daily Collection
+- Monthly Collection
+- Customer Follow-up
+- Recovery Notes
+- Promise-to-Pay Date
+- Collection Status
+11.5 Installment Account Closing
+- Account Selection
+- Outstanding Amount
+- Settlement Discount
+- Final Received Amount
+- Adjustment
+- Closing Date
+- Closing Reason
+- Approval
+- Final Statement
+Account close hone ke baad normal installments automatically stop ho jayengi. Closed account ka historical data delete nahi hoga.
+11.6 Installment Reports
+- Installment Form Report
+- Customer Wise Installment
+- Due Date Wise List
+- Overdue List
+- Receive Installment Report
+- Recovery Report
+- Monthly Received Report
+- Recovery Officer Report
+- Closed Account Report
+- Pending Balance Report
+- Installment Aging Report
+- Rescheduled Account Report
+
+Part 12 — Accounting and Financial Management
+Yeh software ka sabse sensitive aur important module hoga.
+
+Ismein har financial transaction ka proper accounting record maintain hoga.
+12.1 Chart of Accounts
+Account categories:
+
+Assets
+- Cash in Hand
+- Bank Accounts
+- Customer Receivables
+- Inventory
+- Fixed Assets
+- Other Assets
+Liabilities
+- Supplier Payables
+- Outstanding Expenses
+- Loans
+- Other Liabilities
+Capital / Equity
+- Owner Capital
+- Retained Earnings
+- Drawings
+Income
+- Product Sales
+- Service Income
+- Other Income
+Expenses
+- Rent
+- Electricity
+- Salaries
+- Transport
+- Marketing
+- Maintenance
+- Other Expenses
+Har account ka unique account code aur parent account hoga.
+12.2 Payment Voucher
+- Voucher Number
+- Date
+- Paid To
+- Account Head
+- Expense Category
+- Amount
+- Payment Method
+- Cash / Bank Account
+- Reference
+- Description
+- Attachment
+- Created By
+- Approval Status
+12.3 Receive Voucher
+- Voucher Number
+- Date
+- Received From
+- Customer / Account
+- Invoice Reference
+- Installment Reference
+- Amount
+- Payment Method
+- Cash / Bank Account
+- Remaining Balance
+- Remarks
+12.4 Journal Voucher — Double Entry
+Reference software mein JV Double Entry ka feature hai.
+
+Hamare system mein:
+- JV Number
+- Transaction Date
+- Account Selection
+- Debit
+- Credit
+- Narration
+- Reference
+- Attachments
+- Approval
+- Posting Status
+Multiple debit aur credit lines support hongi.
+
+Rules:
+- Debit total aur credit total equal.
+- Zero-value journal post nahi hoga.
+- Closed financial period mein unauthorized posting nahi hogi.
+- Posted journal directly delete nahi hoga.
+- Corrections reversal journal se hongi.
+12.5 Contra Voucher
+Cash aur bank ke darmiyan transfers:
+- Cash to Bank
+- Bank to Cash
+- Bank to Bank
+- Cash Account Transfer
+12.6 Expense Management
+- Expense Category
+- Expense Date
+- Amount
+- Payment Method
+- Paid To
+- Description
+- Attachment
+- Approval
+12.7 Cash and Bank Management
+- Multiple Cash Accounts
+- Bank Account Registration
+- Opening Balance
+- Deposits
+- Withdrawals
+- Transfers
+- Bank Charges
+- Bank Reconciliation
+- Closing Balance
+12.8 Cheque Management
+Reference software ke Cheque Issue aur Cheque Receive features ko include karenge.
+
+Cheque Issue
+- Cheque Number
+- Bank
+- Payee
+- Date
+- Amount
+- Purpose
+- Status
+Cheque Receive
+- Cheque Number
+- Bank
+- Customer
+- Received Date
+- Cheque Date
+- Amount
+- Deposit Date
+- Status
+Status:
+- Received
+- Issued
+- Deposited
+- Cleared
+- Bounced
+- Cancelled
+12.9 Accounting Reports
+- Cash Book
+- Bank Book
+- General Ledger
+- Account Ledger
+- Ledger Summary
+- Head-wise Balance
+- Trial Balance
+- Profit & Loss
+- Balance Sheet
+- Income Statement
+- Expense Report
+- Journal Voucher Report
+- Payment Voucher Report
+- Receive Voucher Report
+- A/C Statement
+- Outstanding Receivables
+- Outstanding Payables
+12.10 Accounting Engine ka central rule
+Har posted business transaction ke saath double-entry accounting journal create hogi.
+
+Misal:
+Transaction	Debit	Credit
+Cash sale	Cash	Sales
+Credit sale	Customer Receivable	Sales
+Inventory sold	Cost of Goods Sold	Inventory
+Customer payment	Cash / Bank	Customer Receivable
+Purchase on credit	Inventory	Supplier Payable
+Supplier payment	Supplier Payable	Cash / Bank
+Expense paid	Expense	Cash / Bank
+
+Tax, discounts, markup aur returns ke accounts configured accounting policy ke mutabiq handle honge.
+
+Important: Stock valuation aur Cost of Goods Sold ka calculation bhi accounting engine se connected hoga. Iske baghair profit report reliable nahi hogi.
+
+Part 13 — Ledger Management
+
+
+
+
+
+
+
+community.sap.com
+
+
+13.1 Customer Ledger
+- Opening Balance
+- Sale Debit
+- Payment Credit
+- Return Adjustment
+- Installment Received
+- Closing Balance
+13.2 Supplier Ledger
+- Opening Balance
+- Purchase
+- Purchase Return
+- Supplier Payment
+- Adjustment
+- Closing Balance
+13.3 General Ledger
+Har chart of accounts ke transactions.
+13.4 Account Ledger
+- Account Name
+- Account Code
+- From Date
+- To Date
+- Opening Balance
+- Debit
+- Credit
+- Running Balance
+13.5 Ledger Summary
+Tamam accounts ki summarized position.
+13.6 Head-wise Balance
+Account groups ke mutabiq balances.
+13.7 Ledger Reports
+- Customer Ledger
+- Supplier Ledger
+- General Ledger
+- Cash Ledger
+- Bank Ledger
+- Expense Ledger
+- Sales Ledger
+- Purchase Ledger
+- Account Statement
+- Ledger Summary
+
+Part 14 — Targets and Performance Management
+Reference video mein Target Form nazar aaya tha. Is feature ko bhi preserve karenge.
+14.1 Target Management
+Owner targets assign karega:
+- Daily Sales Target
+- Monthly Sales Target
+- Recovery Target
+- Product Sales Target
+- Employee Target
+- Department Target
+14.2 Target Tracking
+- Assigned Target
+- Achieved Target
+- Remaining Target
+- Achievement Percentage
+- Date Range
+- Employee Performance
+14.3 Target Reports
+- Daily Target Report
+- Monthly Target Report
+- Employee Performance
+- Recovery Performance
+- Salesperson Performance
+
+Part 15 — Reports and Business Intelligence
+Yeh section software ka comprehensive reporting centre hoga.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+13
+
+
+
+
+
+
+
+
+
+
+15.1 Sales Reports
+- Daily Sales
+- Monthly Sales
+- Date Wise Sales
+- Cash Sales
+- Credit Sales
+- Sales Return
+- Product Wise Sales
+- Brand Wise Sales
+- Customer Wise Sales
+- Salesperson Wise Sales
+- Discount Report
+15.2 Purchase Reports
+- Purchase Invoice Report
+- Purchase Return Report
+- Supplier Wise Purchase
+- Product Wise Purchase
+- Purchase Payment Report
+- Outstanding Purchase Report
+15.3 Inventory Reports
+- Item List
+- All Stock Report
+- Item Wise Stock Ledger
+- Brand Wise Report
+- Category Wise Stock
+- Low Stock
+- Out of Stock
+- Damaged Stock
+- Stock Valuation
+- Stock Adjustment
+- Serial Number History
+- Warranty Expiry
+15.4 Accounting Reports
+- Ledger Summary
+- Customer Ledger
+- Supplier Ledger
+- General Ledger
+- Cash Book
+- Bank Book
+- Trial Balance
+- Head-wise Balance
+- Profit & Loss
+- Balance Sheet
+- A/C Statement
+- JV Report
+- Payment Voucher Report
+- Receive Voucher Report
+15.5 Installment Reports
+- Installment Account List
+- Due Date Wise List
+- Overdue List
+- Monthly Received Report
+- Recovery Report
+- Customer Wise Recovery
+- Recovery Officer Report
+- Account Closing Report
+- Remaining Balance
+- Installment Aging
+15.6 Attendance Reports
+- Daily Attendance
+- Monthly Attendance
+- Staff Check-In
+- Staff Check-Out
+- Late Arrival
+- Absent Employees
+- Leave Report
+- Visitor Report
+- Visit Duration
+15.7 Profit Reports
+- Daily Profit
+- Date Wise Profit
+- Monthly Profit
+- Product Wise Profit
+- Brand Wise Profit
+- Category Wise Profit
+- Gross Profit
+- Net Profit
+- Expense Analysis
+15.8 Cheque Reports
+- Cheque Issue
+- Cheque Receive
+- Pending Cheques
+- Cleared Cheques
+- Bounced Cheques
+15.9 Reports ke common features
+Har report mein:
+- Date Range
+- Search
+- Filters
+- Sorting
+- Pagination
+- Column Selection
+- PDF Export
+- Excel Export
+- Print
+- Summary Totals
+- Drill-down to Original Transaction
+Report ke totals original posted transactions se reconcile hone chahiye.
+
+Part 16 — Invoice, Receipt and Printing System
+16.1 Invoice Templates
+- Cash Sale Invoice
+- Credit Sale Invoice
+- Purchase Invoice
+- Sale Return Note
+- Purchase Return Note
+- Payment Voucher
+- Receive Voucher
+- Installment Receipt
+- Recovery Receipt
+- Customer Statement
+16.2 Invoice Design
+Har printout par:
+- Showroom Logo
+- Showroom Name
+- Address
+- Contact Information
+- Invoice Number
+- Date
+- Customer Details
+- Product Details
+- Quantity
+- Rate
+- Discount
+- Total
+- Payment Received
+- Remaining Balance
+- Authorized Signature
+- Terms & Conditions
+16.3 Printing Support
+- A4 Printer
+- Thermal Receipt Printer
+- PDF Download
+- Invoice Reprint
+- Multiple Copies
+- Print Preview
+16.4 Document Management
+- Customer CNIC
+- Supplier Documents
+- Purchase Bills
+- Installment Agreements
+- Warranty Documents
+- Expense Receipts
+
+Part 17 — Notifications and Automation
+17.1 Internal Notifications
+System ke andar notifications:
+- New Sale
+- New Purchase
+- Low Stock
+- Overdue Installment
+- New Recovery
+- Cheque Due
+- Cheque Bounced
+- Pending Approval
+- Backup Failure
+17.2 Automated Reminders
+- Upcoming Installment
+- Overdue Installment
+- Warranty Expiry
+- Low Stock
+- Supplier Payment Due
+17.3 Optional External Integrations
+- WhatsApp Business Platform
+- Email Notifications
+- SMS Gateway
+Yeh integrations optional honge aur owner enable karega. Customer ko messages bhejne ke liye consent aur applicable communication rules ka khayal rakha jayega.
+
+Part 18 — Settings and Administration
+18.1 Showroom Settings
+- Showroom Name
+- Logo
+- Address
+- Phone
+- Email
+- Currency
+- Invoice Footer
+- Business Hours
+18.2 Financial Settings
+- Financial Year
+- Fiscal Period
+- Default Cash Account
+- Default Bank Account
+- Tax Configuration
+- Discount Configuration
+- Rounding Rules
+- Payment Methods
+- Opening Balances
+18.3 Invoice and Voucher Settings
+- Invoice Prefix
+- Invoice Number Sequence
+- Voucher Number Sequence
+- Receipt Number
+- Print Template
+- Numbering Rules
+18.4 User Settings
+- Roles
+- Permissions
+- Password Policy
+- Session Policy
+- Approval Limits
+- User Status
+18.5 System Settings
+- Theme
+- Language
+- Date Format
+- Time Zone
+- Notification Preferences
+- Backup Schedule
+- Report Preferences
+
+Part 19 — Cloud Database and Backend Architecture
+Ab software ke andar data kaise organize hoga, isko define karna zaroori hai.
+19.1 Recommended Technology Stack
+Component	Recommended technology
+Application	React
+Programming Language	TypeScript
+Design	Tailwind CSS
+UI Components	shadcn/ui
+Icons	Lucide
+Charts	Recharts
+Login	Firebase Authentication
+Initial Database	Cloud Firestore
+Documents	Firebase Storage
+Backend APIs	Node.js / TypeScript
+Hosting	Google Cloud Run
+Background Tasks	Cloud Functions
+Backup	Cloud Storage
+Version Control	GitHub
+
+Google AI Studio Build Mode Firebase Authentication aur Firestore integration set up karne mein help karta hai, aur web app ko Cloud Run par publish bhi kiya ja sakta hai. 
+Firebase+1
+
+19.2 Database Collections
+Recommended logical structure:
+showroom_erp/
+│
+├── organizations/
+├── users/
+├── roles/
+├── permissions/
+│
+├── employees/
+├── attendance/
+├── visitors/
+│
+├── customers/
+├── suppliers/
+│
+├── categories/
+├── brands/
+├── products/
+├── product_serials/
+├── stock_movements/
+│
+├── purchase_invoices/
+├── purchase_returns/
+├── purchase_orders/
+│
+├── sales_invoices/
+├── sales_returns/
+│
+├── installment_accounts/
+├── installment_schedules/
+├── installment_receipts/
+├── recovery_records/
+│
+├── chart_of_accounts/
+├── journal_entries/
+├── payment_vouchers/
+├── receive_vouchers/
+├── cheque_records/
+├── cash_accounts/
+├── expenses/
+│
+├── targets/
+├── notifications/
+├── audit_logs/
+├── attachments/
+├── backups/
+└── settings/
+
+
+Har business record mein organization/shop identifier zaroor hoga. Is se future mein multiple showrooms aur branches ka structure support kiya ja sakega.
+19.3 Backend Responsibilities
+Backend ka kaam sirf data save karna nahi hoga.
+- Authentication verification
+- Role verification
+- Permission checking
+- Invoice numbering
+- Stock calculation
+- Ledger posting
+- Journal generation
+- Installment scheduling
+- Outstanding calculation
+- Report aggregation
+- Duplicate transaction prevention
+- Audit logging
+- Document access validation
+19.4 Database Performance
+Fast performance ke liye:
+- Proper Firestore indexes
+- Pagination
+- Server-side filtering
+- Optimized dashboard summaries
+- Lazy loading
+- Cached reference data
+- Limited document reads
+- Efficient image storage
+- Background report generation
+- Database query monitoring
+Firestore aggregation queries se count, sum aur average jaise summaries nikal sakte hain, lekin complex reporting aur large-scale accounting ke liye dedicated reporting layer ki planning bhi hogi. 
+Firebase
+
+
+Long-term consideration: Agar business volume aur accounting queries bohat complex ho jayein, to PostgreSQL/Cloud SQL ko primary relational accounting database banane ka option evaluate karenge. Is decision ko implementation se pehle expected users, transactions aur reporting requirements ke mutabiq finalize karna chahiye.
+
+Part 20 — Required APIs and Services
+Software ke liye har feature ki separate paid API zaroori nahi hogi.
+20.1 Essential services
+API / Service	Function
+Firebase Authentication	Secure email login
+Cloud Firestore	Business database
+Firebase Storage	Images and documents
+Firebase Security Rules	Database access restrictions
+Cloud Run	Application deployment
+Cloud Functions	Backend operations
+Cloud Scheduler	Scheduled automation
+Cloud Storage	Backup storage
+Secret Manager	Secure API credentials
+
+20.2 Optional integrations
+Service	Usage
+Gemini API	AI business assistant
+WhatsApp Business API	Installment reminders
+Email delivery API	Invoice and report emails
+SMS Gateway	Customer notifications
+Barcode Scanner	Product identification
+Payment Gateway	Online payments, if needed
+
+No unnecessary API keys: PDF generation, Excel exports, calculations, barcode input from a compatible USB scanner aur basic reporting ke liye external paid API ki zaroorat nahi.
+20.3 API credentials security
+- Firebase client configuration frontend mein use ho sakti hai, lekin woh secret authorization nahi hai.
+- Gemini aur external service secrets server-side rahenge.
+- Service account credentials kabhi frontend mein nahi aayenge.
+- Secret Manager mein production credentials store honge.
+- API access least-privilege permissions ke saath configure hoga.
+20.4 Email aur business data ka relationship
+Tumhari requirement ke mutabiq:
+
+Email = Login identity
+
+Cloud database = Business records
+
+Example:
+
+Owner owner@example.com se login karega. Uske customers, invoices, stock, installment records aur accounts Cloud Firestore mein save honge. Owner email login se kisi doosre device par login karega to authorized business data access kar sakega.
+
+Email inbox mein har transaction ko store karna na secure accounting architecture hai aur na hi practical database design.
+
+Part 21 — Complete Security Architecture
+21.1 Database Security
+- Authenticated access only.
+- Organization-based data isolation.
+- Role-based access.
+- Restricted write operations.
+- Server-side financial validation.
+- Restricted sensitive fields.
+- No public database access.
+- Secure file access.
+- Database rules testing.
+21.2 Financial Security
+- Posted invoices cannot be silently deleted.
+- Reversal vouchers for corrections.
+- Transaction approval.
+- User activity tracking.
+- Financial period closing.
+- Duplicate invoice prevention.
+- Audit history.
+- Daily reconciliation.
+21.3 Application Security
+- Secure session handling.
+- Password reset protection.
+- Login attempt monitoring.
+- Rate limiting.
+- Input validation.
+- XSS protection.
+- CSRF protection where applicable.
+- Secure HTTP configuration.
+- Server-side permission checks.
+Firebase Security Rules authenticated users aur user roles ke mutabiq access restrict kar sakte hain. Lekin Admin SDK/server-side access ke liye separate IAM aur backend authorization bhi zaroori hai. Rules ko production se pehle Emulator mein test karna chahiye. 
+Firebase+2
+
+
+Part 22 — Automated Backup and Disaster Recovery
+
+
+
+
+
+
+
+gryzagroup.com
+
+
+22.1 Backup Features
+- Scheduled Firestore Exports
+- Cloud Storage Backup
+- Manual Backup
+- Backup History
+- Backup Status
+- Backup Failure Alert
+- Retention Policy
+- Restore Procedure
+22.2 Backup Policy
+Proposed schedule:
+- Daily backup.
+- Weekly retained backup.
+- Monthly archival backup.
+- Before major system updates, additional backup.
+22.3 Restore Testing
+Sirf backup create karna kaafi nahi.
+
+Humein check karna hoga:
+- Backup file available hai?
+- Database restore hota hai?
+- Customer records complete hain?
+- Invoice records complete hain?
+- Ledger balances match karte hain?
+- Product stock match karta hai?
+Cloud Firestore managed export/import Cloud Storage ke zariye recovery support karta hai. 
+Firebase
+
+
+Part 23 — Advanced Performance and User Experience
+Software ka interface modern hone ke saath fast bhi hona chahiye.
+23.1 Speed Optimization
+- Fast dashboard loading.
+- Search indexing.
+- Debounced search.
+- Pagination.
+- Optimized database queries.
+- Reusable components.
+- Code splitting.
+- Lazy loading.
+- Image compression.
+- Background processing.
+23.2 Global Search
+Ek global search se:
+- Customer
+- Supplier
+- Product
+- Invoice
+- Voucher
+- Serial Number
+- Installment Account
+search ho sake.
+23.3 Keyboard Shortcuts
+Examples:
+Shortcut	Action
+Ctrl + K	Global Search
+Alt + N	New Sale
+Alt + P	New Purchase
+Alt + C	New Customer
+Esc	Close Dialog
+Ctrl + P	Print
+
+23.4 Responsive Design
+- Desktop
+- Laptop
+- Tablet
+- Mobile
+Desktop par full sidebar aur data tables honge. Mobile par simplified navigation aur responsive forms honge.
+23.5 Error Handling
+- Clear validation messages.
+- Database error messages.
+- Network failure handling.
+- Retry option.
+- Duplicate transaction warnings.
+- Unsaved changes warnings.
+- Loading indicators.
+- Success notifications.
+Agar internet temporarily disconnect ho jaye, software incomplete financial transaction ko successful nahi dikhayega. Offline transaction support ko separate planned feature rakhenge, jisme safe synchronization aur conflict handling implement karni hogi.
+
+Part 24 — Complete Transaction Integration
+Yeh roadmap ka sabse important architectural part hai.
+
+Humare software mein modules alag alag islands nahi honge. Ek transaction ka impact relevant modules mein automatically reflect hoga.
+24.1 Integration Matrix
+Action	Stock	Customer	Supplier	Cash/Bank	Ledger
+Cash Sale	Decrease	Update	—	Increase	Update
+Credit Sale	Decrease	Receivable	—	—	Update
+Customer Payment	—	Reduce Due	—	Increase	Update
+Purchase	Increase	—	Payable	Depends on payment	Update
+Purchase Return	Decrease	—	Adjust	Refund if applicable	Update
+Sale Return	Increase	Adjust	—	Refund if applicable	Update
+Installment Receipt	—	Reduce Due	—	Increase	Update
+Expense Payment	—	—	—	Decrease	Update
+Journal Entry	If applicable	If applicable	If applicable	If applicable	Update
+
+24.2 Example: Complete Customer Journey
+Customer Business Journey
+1. Showroom Entry
+   
+   Visitor record, entry time and purpose.
+2. Customer Registration
+   
+   Personal details aur customer ID.
+3. Product Selection
+   
+   Product, brand, model aur serial number.
+4. Sales Invoice
+   
+   Cash sale ya credit sale.
+5. Payment
+   
+   Cash, bank, card ya other method.
+6. Installment
+   
+   Financing aur installment schedule, agar applicable ho.
+7. Recovery
+   
+   Har received payment ki receipt aur ledger update.
+8. Customer Statement
+   
+   Complete purchases, payments aur outstanding balance.
+9. Showroom Exit
+   
+   Visitor exit timestamp aur visit completion.
+
+Is journey mein har stage apne relevant module ke saath connected hogi.
+24.3 Example: Complete Product Journey
+1. Supplier se product purchase.
+2. Purchase invoice create.
+3. Serial number register.
+4. Stock inventory increase.
+5. Product sale.
+6. Inventory decrease.
+7. Customer and invoice record link.
+8. Warranty activate.
+9. Product profitability calculate.
+10. Product stock ledger maintain.
+
+
+Part 25 — Testing and Quality Assurance
+Software client ko dene se pehle har module test hoga.
+25.1 Functional Testing
+- Login.
+- User creation.
+- Customer registration.
+- Supplier registration.
+- Product registration.
+- Purchase.
+- Purchase return.
+- Cash sale.
+- Credit sale.
+- Sale return.
+- Installment creation.
+- Installment receiving.
+- Payment voucher.
+- Receive voucher.
+- Journal entry.
+- Cheque management.
+- Attendance.
+- Visitor entry and exit.
+- Reports.
+25.2 Financial Testing
+Example test:
+- Purchase 10 units.
+- Sell 3 units.
+- Return 1 unit.
+- Closing stock should be 8 units.
+Phir:
+- Credit sale 100,000.
+- Receive payment 40,000.
+- Customer outstanding should be 60,000.
+Accounting entries aur reports ko independently verify karenge.
+25.3 Security Testing
+- Unauthorized login.
+- Staff permission restrictions.
+- Direct database access.
+- Unauthorized record editing.
+- Cross-organization data access.
+- Session expiration.
+- API access control.
+25.4 Performance Testing
+- Large product directory.
+- Multiple invoices.
+- Multiple simultaneous users.
+- Large ledger reports.
+- Dashboard loading.
+- Database query performance.
+25.5 Data Consistency Testing
+- Sales report versus invoices.
+- Purchase report versus supplier ledger.
+- Cash book versus cash transactions.
+- Trial balance versus journal entries.
+- Stock report versus stock movements.
+- Installment report versus received receipts.
+Kisi bhi discrepancy ko release se pehle resolve karna hoga.
+
+Part 26 — Final Deployment and Client Handover
+26.1 Development Environment
+Development ke liye:
+- Google AI Studio Build Mode
+- Firebase Project
+- Cloud Firestore
+- GitHub Repository
+- Development Testing Environment
+26.2 Production Environment
+Client ke liye:
+- Production Firebase Project
+- Production Database
+- Secure Authentication
+- Production Hosting
+- Custom Domain
+- SSL / HTTPS
+- Backup Configuration
+- Monitoring
+- Error Logging
+Google AI Studio se Firebase integration aur Cloud Run deployment ka supported workflow available hai. Database location pehle carefully choose karni hogi, kyunke integration ke waqt selected location doosri related Google Cloud services par bhi apply ho sakti hai. 
+Firebase+2
+
+26.3 Client Handover
+Client ko deliver hoga:
+1. Working ERP application.
+2. Owner login.
+3. Staff login system.
+4. Database access under owner's control.
+5. Complete source code.
+6. GitHub repository.
+7. Deployment details.
+8. Backup configuration.
+9. User guide.
+10. Admin guide.
+11. Basic technical documentation.
+12. Testing and verification report.
+Client ka production Google Cloud/Firebase account uski ownership mein hona chahiye, na ke developer ke personal account mein.
+
+Part 27 — Complete Development Timeline
+Yeh recommended development sequence hai. Do din ka target initial working MVP ke liye hai; complete production-grade ERP ke liye testing aur additional development time required hoga.
+Project execution plan
+Phase 1
+Foundation and Security
+
+Project setup, database, authentication, roles, dashboard and audit architecture.
+
+
+Phase 2
+Master Data Management
+
+Customers, suppliers, employees, products, categories, brands and opening balances.
+
+
+Phase 3
+Purchase and Inventory
+
+Purchase invoices, returns, stock movements, serial numbers and inventory reports.
+
+
+Phase 4
+Sales and POS
+
+Cash sales, credit sales, returns, billing, receipts and customer balances.
+
+
+Phase 5
+Installment and Recovery
+
+Installment plans, schedules, partial receipts, due lists and account closure.
+
+
+Phase 6
+Accounting and Ledger
+
+Double-entry engine, vouchers, cash book, supplier/customer ledger and trial balance.
+
+
+Phase 7
+Reports and Management
+
+Business analytics, reports, targets, attendance and visitor management.
+
+
+Phase 8
+Automation and Production
+
+Printing, notifications, backups, security verification, deployment and handover.
+
+
+27.1 Two-day MVP priority
+Priority	Features
+P0	Login, security, database
+P0	Customers, suppliers, products
+P0	Purchase and stock
+P0	Cash and credit sales
+P0	Customer balances
+P1	Basic vouchers and ledger
+P1	Installment and recovery
+P1	Attendance and visitors
+P1	Essential reports
+P2	Advanced analytics
+P2	WhatsApp and email automation
+P2	Advanced backup and integrations
+
+P0 ke financial workflows ko test kiye baghair client ka real business data enter nahi karna chahiye.
+
+Part 28 — Final Software Feature Inventory
+Yeh poore proposed system ka consolidated scope hai.
+Module	Included components
+Authentication & Security	10
+Dashboard	5 groups
+Staff & Visitor	2 major systems
+Customer Management	4 groups
+Supplier Management	3 groups
+Product & Inventory	8 groups
+Purchase Management	4 groups
+Sales & POS	5 groups
+Installment & Recovery	6 groups
+Accounting & Finance	10 groups
+Ledger Management	7 groups
+Cheque Management	2 systems
+Target Management	3 groups
+Reports & Analytics	9 categories
+Printing & Documents	4 groups
+Notifications	3 groups
+Settings	5 groups
+Backup & Administration	3 groups
+
+Complete ERP Scope
+18 major functional areas
+
+40+
+Proposed submodules and workflows
+100+
+Potential forms, reports and views
+
+Planning estimates, not a count of already implemented features.

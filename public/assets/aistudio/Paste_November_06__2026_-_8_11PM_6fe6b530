@@ -1,0 +1,1337 @@
+Electronic Showroom ERP — Master Development Roadmap
+Proposed architecture
+ Cloud-based ERP
+
+1. Software ka complete structure
+Software ko 15 major modules mein divide karenge:
+#	Main module	Purpose
+1	Authentication & Security	Login, roles, permissions
+2	Dashboard	Complete showroom overview
+3	Staff & Visitor Management	Entry, exit, attendance
+4	Customer Management	Customer profiles and history
+5	Supplier Management	Supplier accounts
+6	Product & Inventory	Products and stock
+7	Purchase Management	Purchase invoices and returns
+8	Sales & POS	Cash and credit sales
+9	Installment Management	Installments and recovery
+10	Accounts & Vouchers	Financial transactions
+11	Ledger Management	Customer, supplier and account ledgers
+12	Reports & Analytics	Business reports
+13	Cheque Management	Issued and received cheques
+14	Settings & Configuration	Shop settings and preferences
+15	Backup & Audit Management	Data protection and activity history
+
+Inke andar multiple submodules, entry forms aur reports honge.
+2. Dashboard — software ka main control centre
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+13
+
+
+
+
+
+
+
+
+
+
+Dashboard khulte hi owner ko showroom ki complete situation nazar aani chahiye.
+
+Dashboard widgets:
+- Today's Total Sales
+- Today's Cash Received
+- Today's Credit Sales
+- Today's Expenses
+- Today's Net Profit
+- Total Customers
+- Total Suppliers
+- Total Products
+- Total Stock Value
+- Low Stock Items
+- Pending Customer Balances
+- Pending Supplier Payments
+- Today's Installments
+- Overdue Installments
+- Today's Visitors
+- Staff Present
+- Monthly Sales Chart
+- Monthly Purchase Chart
+- Profit & Loss Chart
+- Recent Transactions
+Quick Actions:
+- New Cash Sale
+- New Credit Sale
+- New Purchase
+- Receive Payment
+- Add Customer
+- Add Product
+- Staff Check-In
+- Visitor Entry
+Dashboard par date filter bhi hoga: Today, Yesterday, This Week, This Month, Custom Date.
+3. Authentication & Security Module
+
+
+
+
+
+
+
+allstatesservice.com
+
+
+Software personal showroom system hoga. Public registration nahi honi chahiye.
+
+Login system:
+- Email and Password
+- Forgot Password
+- Password Reset Email
+- Secure Logout
+- Session Management
+- Login History
+- Failed Login Tracking
+- Optional Two-Factor Authentication
+User roles:
+Role	Permissions
+Owner / Super Admin	Complete access
+Manager	Operational and reporting access
+Accountant	Accounts and financial reports
+Cashier	Sales and payment receiving
+Stock Manager	Inventory and purchases
+Recovery Staff	Installments and recovery
+Receptionist	Visitor and attendance entries
+
+Owner har user ki permissions individually control kar sakega.
+
+Misal ke taur par cashier sale create kar sake, lekin purani sale delete na kar sake.
+
+Important security rules:
+- User registration sirf owner create kare.
+- Har user authenticated ho.
+- Database access role ke mutabiq ho.
+- Financial records ki deletion restricted ho.
+- Sensitive changes ka audit log ho.
+- Owner ke ilawa koi system settings change na kar sake.
+4. Staff & Visitor Management Module
+
+
+
+
+
+
+
+daftarapp.com
+
+
+Yeh tumhari additional requirement hai.
+
+Is module mein do alag systems honge.
+
+A. Staff Attendance
+- Employee Registration
+- Employee ID
+- Employee Name
+- Mobile Number
+- Designation
+- Joining Date
+- Salary
+- Check-In
+- Check-Out
+- Late Arrival
+- Early Departure
+- Break Time
+- Daily Attendance
+- Monthly Attendance
+- Attendance Report
+B. Customer / Visitor Entry
+- Visitor Name
+- Mobile Number
+- CNIC (optional)
+- Purpose of Visit
+- Check-In Time
+- Check-Out Time
+- Staff Member to Meet
+- Visit Remarks
+- Previous Visit History
+System automatically arrival aur departure ka timestamp save karega.
+
+Example:
+Visitor	Entry	Exit
+Ahmed	10:15 AM	10:45 AM
+Ali	11:20 AM	12:05 PM
+
+Receptionist ya authorized staff visitor ki entry karega. Check-out ke waqt uski existing entry close hogi, nayi entry create nahi hogi.
+5. Customer Management Module
+
+
+Har customer ki complete profile hogi.
+
+Customer Registration Form:
+- Customer ID (automatic)
+- Full Name
+- Father Name
+- Mobile Number
+- WhatsApp Number
+- CNIC
+- Address
+- City
+- Email
+- Customer Type
+- Registration Date
+- Opening Balance
+- Remarks
+Customer Profile ke andar tabs:
+1. Overview
+2. Purchase History
+3. Sale Invoices
+4. Payment History
+5. Customer Ledger
+6. Installment Details
+7. Remaining Balance
+8. Returned Items
+9. Warranty Information
+10. Documents
+Advanced Search:
+- Name se search
+- Mobile number se search
+- CNIC se search
+- Customer ID se search
+- Invoice number se search
+Customer profile kholte hi uska total purchase, total paid, outstanding balance aur transaction history milni chahiye.
+6. Supplier Management Module
+Supplier ka bhi complete account maintain hoga.
+- Supplier Registration
+- Company Name
+- Contact Person
+- Mobile Number
+- Address
+- NTN (optional)
+- Opening Balance
+- Purchase History
+- Payment History
+- Supplier Ledger
+- Outstanding Balance
+- Purchase Return History
+Har supplier ke account ka balance automatically update hoga.
+7. Product & Inventory Management
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+10
+
+
+
+
+
+
+
+
+
+
+Yeh showroom ka central module hoga.
+
+Product Registration:
+- Product ID
+- Product Name
+- Category
+- Brand
+- Model Number
+- SKU
+- Barcode
+- Serial Number
+- Purchase Price
+- Wholesale Price
+- Retail Price
+- Quantity
+- Minimum Stock
+- Warranty Period
+- Supplier
+- Product Image
+- Description
+Categories:
+- LED TVs
+- Refrigerators
+- Air Conditioners
+- Washing Machines
+- Deep Freezers
+- Mobiles
+- Laptops
+- Kitchen Appliances
+- Other Electronics
+Stock Management:
+- Stock In
+- Stock Out
+- Stock Adjustment
+- Stock Transfer (future multi-branch support)
+- Damaged Stock
+- Returned Stock
+- Low Stock Alert
+- Out of Stock Alert
+- Stock Valuation
+- Item Wise Stock Ledger
+- Brand Wise Stock
+- Category Wise Stock
+Serial Number Tracking:
+
+Electronics showroom mein yeh bohat important hai.
+
+Har serial-numbered product ka purchase record, sale invoice, customer aur warranty ek doosre se linked honge.
+
+Example: Samsung LED ka serial number enter karne par pata chal sake ke woh kis supplier se aaya, kab purchase hua aur kis customer ko sell hua.
+8. Purchase Management Module
+
+
+
+
+
+
+
+codecanyon.net
+
+
+Yahan reference software ka Purchase Invoice aur Purchase Return workflow implement hoga.
+
+Purchase Invoice:
+- Invoice Number
+- Purchase Date
+- Supplier
+- Product
+- Quantity
+- Purchase Rate
+- Discount
+- Tax
+- Transport Charges
+- Other Charges
+- Grand Total
+- Paid Amount
+- Remaining Amount
+- Payment Method
+- Remarks
+Automatic Operations:
+1. Purchase save hogi.
+2. Inventory increase hogi.
+3. Supplier account update hoga.
+4. Cash/bank account update hoga.
+5. Purchase ledger entry create hogi.
+6. Purchase report update hogi.
+Purchase Return:
+- Original Purchase Reference
+- Supplier
+- Product
+- Quantity
+- Return Reason
+- Return Amount
+- Refund or Supplier Adjustment
+Return hone par stock aur supplier balance dono properly adjust honge.
+9. Sales & POS Billing Module
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+10
+
+
+
+
+
+
+
+
+
+
+Yeh software ka sabse frequently used module hoga.
+A. Sale Cash
+- Invoice Number
+- Date and Time
+- Customer
+- Product Search
+- Barcode Scan
+- Serial Number
+- Quantity
+- Unit Price
+- Discount
+- Tax
+- Grand Total
+- Payment Received
+- Payment Method
+- Change / Balance
+B. Sale Credit
+- Customer Selection
+- CNIC
+- Mobile Number
+- Product Details
+- Total Amount
+- Down Payment
+- Remaining Balance
+- Installment Plan (if applicable)
+- Due Date
+- Guarantor Details (if applicable)
+C. Sale Return
+- Original Invoice
+- Customer
+- Product
+- Serial Number
+- Return Quantity
+- Return Reason
+- Refund Amount
+- Exchange / Adjustment
+Automatic accounting:
+
+Cash sale par cash increase aur stock decrease hoga.
+
+Credit sale par customer receivable increase aur stock decrease hoga.
+
+Sale return par stock aur financial accounts dono reverse ya adjust honge, original transaction reference ke saath.
+10. Installment & Recovery Management
+
+
+
+
+
+
+
+ezycollect.io
+
+
+Dono reference videos ke additional screens ko dekhte hue yeh dedicated module hona chahiye.
+
+Main sections:
+- Installment Form
+- New Installment Account
+- Customer Details
+- Guarantor Details
+- Product Details
+- Down Payment
+- Total Financing Amount
+- Installment Duration
+- Monthly Installment
+- First Due Date
+- Next Due Date
+- Total Received
+- Remaining Amount
+- Late Payment
+- Recovery Entry
+- Receive Installment
+- Installment History
+- Account Closing
+- Account Update
+Recovery Reports:
+- Due Date Wise List
+- Overdue Installments
+- Daily Recovery Report
+- Monthly Received Report
+- Customer Wise Recovery
+- Pending Recovery
+- Closed Accounts
+- Recovery Staff Performance
+Example:
+Customer Installment Example
+Rs. 150,000
+Total financed amount
+Down payment
+
+Rs. 30,000
+
+Remaining installments
+
+Rs. 120,000
+
+Monthly installment
+
+Rs. 10,000
+
+Duration
+
+12 months
+
+
+Received
+Rs. 60,000
+
+Outstanding
+Rs. 90,000
+
+
+
+Illustrative payment progress
+Har installment receive hone par customer ledger, cash book aur recovery report automatically update hogi.
+
+Important: Late fees, partial payments, early settlement aur rescheduling ka proper logic bhi hona chahiye.
+11. Accounts & Vouchers Module
+
+
+
+
+
+
+
+hasib.co.tz
+
+
+Reference software ke tamam important vouchers is module mein honge.
+Voucher	Kaam
+Payment Voucher	Payment ya expenses record
+Receive Voucher	Customer se payment receive
+Journal Voucher (JV)	Double-entry adjustments
+Contra Voucher	Cash aur bank transfer
+Opening Balance	Initial account balances
+Adjustment Voucher	Financial corrections
+
+Payment Voucher
+- Voucher Number
+- Date
+- Account Head
+- Paid To
+- Amount
+- Payment Method
+- Cash / Bank Account
+- Description
+- Attachment
+- Save / Print
+Receive Voucher
+- Customer
+- Invoice Reference
+- Received Amount
+- Payment Method
+- Cash / Bank Account
+- Remaining Balance
+- Remarks
+Journal Entry — Double Entry
+- Voucher Number
+- Date
+- Debit Account
+- Credit Account
+- Amount
+- Description
+- Multiple Debit/Credit Lines
+System mein debit aur credit ka total hamesha equal hona chahiye.
+\[
+\text{Total Debit}=\text{Total Credit}
+\]
+
+Important: Har transaction ka accounting effect automatic create hona chahiye. Sale, purchase, payment ya recovery ko dobara manually ledger mein enter nahi karna padega.
+12. Chart of Accounts & Ledger Management
+Is module mein complete accounting structure hoga.
+
+Chart of Accounts:
+- Assets
+- Liabilities
+- Capital / Equity
+- Income
+- Expenses
+- Cash Accounts
+- Bank Accounts
+- Customer Receivables
+- Supplier Payables
+- Inventory
+- Sales
+- Purchase
+- Cost of Goods Sold
+Ledger Screens:
+- Customer Ledger
+- Supplier Ledger
+- General Ledger
+- Account Ledger
+- Ledger Summary
+- Head-wise Balance
+- Cash Book
+- Bank Book
+- A/C Statement
+- Trial Balance
+- Opening Balance
+- Closing Balance
+Har ledger mein:
+Date	Voucher	Debit	Credit	Balance
+01 Nov	Opening	0	0	0
+02 Nov	Sale	50,000	0	50,000
+03 Nov	Receive	0	20,000	30,000
+
+Yeh sirf illustrative example hai.
+13. Cheque Management Module
+Reference software mein cheque issue aur receive dono ka system nazar aata hai.
+
+Cheque Receive:
+- Customer
+- Bank Name
+- Cheque Number
+- Cheque Date
+- Amount
+- Received Date
+- Status
+Cheque Issue:
+- Supplier / Payee
+- Bank Account
+- Cheque Number
+- Cheque Date
+- Amount
+- Status
+Cheque Status:
+- Pending
+- Deposited
+- Cleared
+- Bounced
+- Cancelled
+Reports:
+- Cheque Issue Report
+- Cheque Receive Report
+- Pending Cheques
+- Cleared Cheques
+- Bounced Cheques
+14. Reports & Business Analytics
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+12
+
+
+
+
+
+
+
+
+
+
+Reference videos ke reports ke saath additional reports bhi add karenge.
+Report	Details
+Ledger Summary	All account balances
+Purchase Report	Purchase history
+Sale Report	Sales history
+Sale Return Report	Returned sales
+Daily Cash Book	Daily cash movement
+Trial Balance	Debit and credit totals
+Head-wise Balance	Account group balances
+Cheque Reports	Issue and receive
+Item List	Complete product directory
+Item Wise Stock Ledger	Product movements
+Brand Wise Report	Brand inventory
+All Stock Report	Complete inventory
+Date Wise Profit Report	Profit by date
+Recovery Report	Installment recovery
+Due Date Wise List	Upcoming dues
+Monthly Received Report	Monthly collections
+A/C Statement	Account statement
+JV Report	Journal entries
+Daily Activity Log	User activity
+Close Account Report	Closed installment accounts
+
+Additional advanced reports:
+- Gross Profit Report
+- Net Profit & Loss
+- Customer Outstanding
+- Supplier Outstanding
+- Best Selling Products
+- Slow Moving Products
+- Stock Valuation
+- Sales by Payment Method
+- Daily Business Summary
+- Monthly Business Comparison
+- Expense Analysis
+- Tax Summary
+Har report mein date range, search, sorting aur PDF/Excel export ka option hoga.
+15. Settings & Configuration
+Owner ke paas complete customization hogi.
+- Showroom Name
+- Logo
+- Address
+- Phone
+- Email
+- Currency (PKR)
+- Invoice Prefix
+- Voucher Prefix
+- Fiscal Year
+- Financial Settings
+- Tax Settings
+- Discount Settings
+- Payment Methods
+- Product Categories
+- Brands
+- User Permissions
+- Notification Preferences
+- Print Settings
+- Receipt Format
+Invoice par showroom ka logo, contact details, customer details, products aur payment information print honi chahiye.
+16. Advanced Features
+In features se software aur professional banega:
+1. Barcode Scanner Support.
+2. Thermal Printer Support.
+3. A4 Invoice Printing.
+4. PDF Invoice Generation.
+5. Excel Reports.
+6. Automatic Low Stock Notifications.
+7. Installment Due Reminders.
+8. Customer WhatsApp Contact Shortcut.
+9. Global Search.
+10. Keyboard Shortcuts.
+11. Transaction Approval Workflow.
+12. Data Import from Excel.
+13. Product Image Upload.
+14. Document Attachments.
+15. Multiple Cash/Bank Accounts.
+16. Multi-User Activity Monitoring.
+17. Automatic Database Backup.
+18. Dark and Light Themes.
+19. Mobile and Tablet Responsive Design.
+20. Multi-branch architecture readiness.
+
+17. Software ka UI/UX Design
+Software ka design purane desktop ERP jaisa nahi hona chahiye.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+12
+
+
+
+
+
+
+
+
+
+
+Recommended Design System
+- Background: Light grey / off-white.
+- Sidebar: Dark navy or graphite.
+- Primary: Professional blue.
+- Success: Green.
+- Warning: Amber.
+- Danger: Red.
+- Cards: Clean white.
+- Borders: Subtle.
+- Typography: Inter.
+- Icons: Lucide.
+- Tables: Compact and readable.
+- Forms: Properly grouped fields.
+Application Layout
+SHOWROOM ERP
+
+Online
+
+Owner Dashboard
+
+Dashboard
+Live Data
+
+Today's SalesRs. 125,000
+
+
+Today's RecoveryRs. 25,000
+
+
+Products1,250
+
+
+OutstandingRs. 450,000
+
+
+
+
+Main Navigation
+Dashboard
+
+
+Sales / POS
+
+
+Inventory
+
+
+Purchases
+
+
+Customers
+
+
+Accounts
+
+
+Attendance
+
+
+Reports
+
+
+
+
+
+This is a conceptual layout preview, not a working application.Har module ke andar same design language maintain hogi. Lekin har form ka layout uske kaam ke mutabiq hoga.
+
+18. Technical Architecture — Backend mein kya hoga?
+Ab sabse important technical hissa.
+
+Meri recommendation hai ke Google AI Studio mein React + TypeScript based full-stack web application banayi jaye.
+System Architecture
+Frontend — React + TypeScript
+Dashboard, forms, tables, POS, reports
+
+Backend — Server-side API
+Business logic, validation, transactions, permissions
+
+Cloud Firestore
+Business data
+
+Firebase Auth
+Login and identity
+
+Cloud Storage
+Images and documents
+
+Cloud Run
+Application hosting
+
+
+Cloud Functions + Scheduled Jobs
+Automations, notifications, reports and backup jobs
+
+Recommended technologies
+Layer	Technology
+Frontend	React
+Language	TypeScript
+Styling	Tailwind CSS
+UI Components	shadcn/ui
+Icons	Lucide
+Charts	Recharts
+Authentication	Firebase Auth
+Database	Cloud Firestore
+File Storage	Firebase Storage
+Backend	Node.js / TypeScript
+Server APIs	Cloud Run
+Background Jobs	Cloud Functions
+Hosting	Google Cloud Run
+Version Control	GitHub
+
+Important architecture decision: Firestore is suitable for a fast first implementation and can support this system when transactions and data structures are designed properly. Lekin agar business ka accounting volume, complex financial reporting aur relational queries bohat barh jayein, to PostgreSQL on Cloud SQL zyada suitable long-term option ho sakta hai. Is liye database layer ko modular rakhna chahiye, taake future migration possible ho.
+19. Required APIs, Keys & Integrations
+Ab tumhara important sawal: software ko kaun kaun si API keys chahiye hongi?
+
+Meri recommendation hai ke pehle version mein unnecessary APIs na lagayen. Sirf essential services connect karenge.
+Service / API	Purpose	Required?
+Firebase Authentication	Email/password login	Yes
+Cloud Firestore	Business data storage	Yes
+Firebase Storage	Product images and documents	Yes
+Firebase Security Rules	Database access protection	Yes
+Cloud Run	Hosting and server runtime	Yes
+Cloud Functions	Background operations	Recommended
+Cloud Scheduler	Scheduled tasks	Recommended
+Cloud Storage	Database backups	Recommended
+Gemini API	Optional AI features	No
+WhatsApp Business API	Automated customer messages	Optional
+Email delivery API	Automated invoices and reminders	Optional
+Barcode Scanner API	Barcode input	No separate API needed for basic scanner support
+PDF generation library	Invoice and report PDFs	No external API required
+Excel library	Excel exports	No external API required
+
+Kya API keys manually leni hongi?
+Firebase:
+- Firebase project create karna.
+- Authentication enable karna.
+- Cloud Firestore enable karna.
+- Storage configure karna.
+- Security Rules deploy karna.
+Google AI Studio Build Mode ab Firebase integration ke zariye Firestore aur Authentication setup kar sakta hai. Yeh integration app ke code aur configuration files bhi generate kar sakti hai. 
+Firebase+1
+
+
+Cloud Run:
+
+Google AI Studio ke Publish option se application deploy ki ja sakti hai. Application Cloud Run par host hoti hai. Standard deployment ke liye linked Google Cloud project aur billing ki zaroorat ho sakti hai; Starter Tier ki bhi eligibility aur usage limitations hain. 
+Google AI for Developers+1
+
+
+WhatsApp:
+
+Agar customer ko automatic installment reminders WhatsApp par bhejne hain, tab Meta WhatsApp Business Platform ki configuration aur credentials ki zaroorat hogi.
+
+Email:
+
+Password reset Firebase Authentication handle kar sakta hai. Lekin customized invoice emails, daily reports aur installment reminders ke liye separate email delivery service integrate kar sakte hain.
+
+Meri advice: pehle core ERP complete karo. WhatsApp aur automated email baad mein integrate karo.
+20. Database Design — Complete Data Structure
+Database ko randomly create nahi karna. Pehle collections aur relationships define karne hain.
+
+Recommended Firestore structure:
+showroom_erp/
+│
+├── users/
+├── roles/
+├── permissions/
+├── employees/
+├── attendance/
+├── visitors/
+│
+├── customers/
+├── suppliers/
+│
+├── categories/
+├── brands/
+├── products/
+├── stock_movements/
+│
+├── purchase_invoices/
+├── purchase_returns/
+│
+├── sales_invoices/
+├── sales_returns/
+│
+├── installment_accounts/
+├── installment_schedules/
+├── installment_receipts/
+├── recovery_records/
+│
+├── payment_vouchers/
+├── receive_vouchers/
+├── journal_vouchers/
+├── cheque_records/
+│
+├── chart_of_accounts/
+├── ledger_entries/
+├── cash_accounts/
+├── expenses/
+│
+├── audit_logs/
+├── notifications/
+└── settings/
+
+
+Yeh logical collection map hai; actual implementation mein har collection ko shop ID se isolate karna chahiye, chahe abhi sirf ek showroom ho.
+Har record mein common fields
+- id
+- shopId
+- createdAt
+- createdBy
+- updatedAt
+- updatedBy
+- status
+Financial transactions mein additional fields:
+- voucherNumber
+- transactionDate
+- debitAccount
+- creditAccount
+- amount
+- referenceId
+- postedAt
+- postedBy
+Sabse important database rule:
+
+Ek sale sirf invoice table mein save karke khatam nahi hogi. Uska stock movement, customer balance, cash/bank entry aur accounting journal bhi create hoga.
+
+Yeh tamam operations ek controlled server-side transaction ke andar execute hone chahiye. Agar beech mein koi operation fail ho, to incomplete financial transaction save nahi honi chahiye.
+21. Core Business Workflows
+Yeh woh logic hai jo software ko actually functional banayega.
+Purchase Workflow
+1. Supplier select karo.
+2. Products aur quantities add karo.
+3. Purchase invoice calculate karo.
+4. Payment aur outstanding amount calculate karo.
+5. Purchase confirm/post karo.
+6. Stock increase karo.
+7. Supplier ledger aur accounting entries update karo.
+
+Cash Sale Workflow
+1. Customer select ya create karo.
+2. Barcode ya product search se item add karo.
+3. Serial number validate karo.
+4. Discount aur total calculate karo.
+5. Payment receive karo.
+6. Invoice post karo.
+7. Stock decrease aur accounting update karo.
+8. Receipt print ya PDF generate karo.
+
+Credit Sale Workflow
+1. Customer select karo.
+2. Credit limit check karo.
+3. Product add karo.
+4. Down payment record karo.
+5. Outstanding amount calculate karo.
+6. Customer ledger update karo.
+7. Agar installment plan hai to schedule generate karo.
+8. Stock decrease karo.
+9. Invoice print karo.
+Installment Receive Workflow
+1. Customer search karo.
+2. Installment account select karo.
+3. Due installment identify karo.
+4. Received amount enter karo.
+5. Payment method select karo.
+6. Receipt generate karo.
+7. Outstanding balance update karo.
+8. Recovery report aur ledger update karo.
+Journal Entry Workflow
+1. Voucher create karo.
+2. Debit accounts select karo.
+3. Credit accounts select karo.
+4. Amounts validate karo.
+5. Debit-credit equality check karo.
+6. Owner/accountant permission validate karo.
+7. Transaction post karo.
+8. Ledger aur trial balance update karo.
+22. Security Architecture — Data Protection
+Yeh owner ka personal business software hai, is liye security ko sirf login screen tak limited nahi rakhna.
+
+Security layers:
+1. Firebase Authentication.
+2. Role-based permissions.
+3. Firestore Security Rules.
+4. Server-side authorization.
+5. Input validation.
+6. Audit logging.
+7. Restricted financial deletion.
+8. Password reset protection.
+9. Secure secrets management.
+10. Backup and recovery.
+Ek aur zaroori baat: Firestore Rules ko frontend ke bharose nahi chhorna. Database par actual access restrictions enforce honi chahiye. Server/Admin SDK ke through chalne wale backend operations ke liye bhi server-side authorization implement karna hoga.
+
+Firebase ki official security guidance App Check, monitoring aur abuse protection ko bhi recommend karti hai. 
+Firebase+1
+
+
+Owner ke special controls:
+- Staff account disable kar sake.
+- Financial transaction edit karne ki permission control kare.
+- Posted transaction ko direct delete na kar sake.
+- Reversal voucher ke zariye correction ho.
+- Har sensitive action ka record rahe.
+- Admin account recovery ka secure process ho.
+23. Backup & Recovery System
+Business ka data sabse valuable asset hai.
+
+Meri recommendation:
+- Regular automated Firestore exports.
+- Cloud Storage mein backup files.
+- Backup success/failure logs.
+- Manual backup option.
+- Restore procedure.
+- Backup retention policy.
+- Periodic restore testing.
+Firestore managed export/import ke liye billing-enabled project, Cloud Storage bucket aur appropriate permissions chahiye hoti hain. Isko Firebase integration automatically configure kar degi, aisa assume nahi karna. 
+Firebase+1
+
+
+24. Google AI Studio mein kya select karna hai?
+
+
+
+
+
+
+
+aitoolhub.co
+
+
+Yahan humara development start hoga.
+
+Step 1 — Google AI Studio
+Google AI Studio open karoStep 2 — Build Mode
+- Build select karo.
+- Web application choose karo.
+- Full-stack application build karne ka instruction do.
+- React + TypeScript use karne ko kaho.
+Step 3 — Firebase Integration
+
+Jab agent Firebase setup offer kare:
+- Firebase enable karo.
+- Apna Google Cloud project choose karo.
+- Database location carefully choose karo.
+- Firestore aur Authentication setup karo.
+Database region ka decision pehle karna hai, kyunke initial integration ke baad location change karna seedha possible nahi hota. Pakistan se access ke liye available regions ki latency, data residency aur service availability compare karni hogi. 
+Firebase+1
+
+
+Step 4 — GitHub
+
+Project ko GitHub ke saath sync karo, taake source code ka version history aur recovery available ho.
+
+Step 5 — Publish
+
+Testing complete hone ke baad Cloud Run par deploy karo.
+
+25. Google AI Studio ke liye Development Prompts
+Meri sabse important advice: poora ERP ek hi prompt mein generate mat karwana.
+
+Agar ek prompt mein 15 modules, dozens of forms aur complete accounting system maangoge, to AI incomplete functions, duplicate logic aur inconsistent database structures generate kar sakta hai.
+
+Hum ek master prompt aur uske baad module-wise prompts use karenge.
+
+Neeche pehla master prompt hai jo project ki foundation create karne ke liye hoga.
+
+PROMPT 01 — MASTER PROJECT FOUNDATION
+Build a professional, production-oriented, full-stack Electronic Showroom ERP and Business Management Web Application.
+
+PROJECT OBJECTIVE:
+Create a comprehensive ERP system for an electronics showroom, inspired by traditional electronics showroom accounting software, but with a significantly more modern, organized, responsive and user-friendly interface.
+
+TECHNOLOGY:
+- React
+- TypeScript
+- Tailwind CSS
+- Lucide Icons
+- Firebase Authentication
+- Cloud Firestore
+- Firebase Storage
+- Secure server-side APIs
+- Google Cloud Run deployment
+APPLICATION REQUIREMENTS:
+1. Create a professional ERP layout with a collapsible sidebar, top navigation, global search, user profile and notification area.
+2. Create the following main modules:
+- Dashboard
+- Authentication and User Management
+- Staff Attendance
+- Visitor Management
+- Customers
+- Suppliers
+- Product Categories
+- Brands
+- Inventory
+- Purchase Invoices
+- Purchase Returns
+- Cash Sales
+- Credit Sales
+- Sale Returns
+- Installment Accounts
+- Installment Recovery
+- Payment Vouchers
+- Receive Vouchers
+- Journal Vouchers
+- Cheque Management
+- Chart of Accounts
+- Customer Ledgers
+- Supplier Ledgers
+- General Ledger
+- Cash Book
+- Trial Balance
+- Financial Reports
+- Stock Reports
+- Recovery Reports
+- Settings
+- Audit Logs
+- Backup Management
+3. Use Firebase Authentication with email and password. Disable public registration. Allow the owner to create authorized staff accounts.
+4. Use Cloud Firestore for persistent business data. All records must be associated with a showroom ID.
+5. Implement role-based access control and secure database rules.
+6. Build modular, reusable components and maintain a clean folder architecture.
+7. Design all forms with proper validation, loading states, error messages and success notifications.
+8. Use professional financial formatting with PKR currency support.
+9. Ensure responsive desktop, tablet and mobile layouts.
+10. Implement server-side business logic for financial transactions. Never rely exclusively on frontend calculations or permissions.
+11. Create an accounting architecture based on balanced double-entry journal transactions.
+12. Prevent duplicate invoice submissions, unauthorized edits and accidental financial deletions.
+13. Use audit logs for sensitive operations.
+14. Create reusable reporting, filtering, searching and PDF/Excel export utilities.
+IMPORTANT DEVELOPMENT RULES:
+- Do not create fake functionality.
+- Do not use localStorage as the primary business database.
+- Do not use hardcoded sample values as live business data.
+- Do not create buttons that have no working actions.
+- Do not silently ignore failed database operations.
+- Keep all financial operations consistent.
+- Build the application in modules.
+- Preserve existing functionality when adding new modules.
+- Verify every module before marking it complete.
+FIRST TASK:
+Set up the project architecture, Firebase integration, authentication, database structure, security foundation, reusable UI components and main ERP dashboard.
+
+Do not attempt to implement every business module in this first phase. Build a stable foundation first and then implement each module incrementally.
+
+
+
+
+Iske baad module-wise prompts honge:
+Prompt	Development task
+02	Authentication and roles
+03	Dashboard
+04	Staff attendance and visitor management
+05	Customers and suppliers
+06	Product and inventory
+07	Purchase and purchase return
+08	Sales POS and invoices
+09	Installment and recovery
+10	Accounts and vouchers
+11	Ledger and accounting engine
+12	Reports and analytics
+13	Cheque management
+14	Settings, security and audit
+15	Backup and deployment
+
+26. Development Roadmap — Kis order mein build hoga?
+Meri recommendation hai ke development is order mein ho:
+Development phases
+1. Phase 1 — Foundation
+   Critical
+   Project setup, Firebase, login, security, roles, database architecture aur dashboard.
+2. Phase 2 — Master Data
+   
+   Customers, suppliers, employees, products, categories, brands aur stock setup.
+3. Phase 3 — Transactions
+   
+   Purchase Invoice, Purchase Return, Cash Sale, Credit Sale aur Sale Return.
+4. Phase 4 — Installments
+   
+   Installment accounts, schedules, recovery, payments aur account closing.
+5. Phase 5 — Accounting Engine
+   
+   Payment Voucher, Receive Voucher, JV, ledgers, cash book aur trial balance.
+6. Phase 6 — Reports
+   
+   Video reference reports, financial analytics, stock reports aur recovery reports.
+7. Phase 7 — Attendance
+   
+   Staff check-in/check-out aur visitor entry/exit.
+8. Phase 8 — Security & Automation
+   
+   Audit logs, permissions, backups, notifications aur printing.
+9. Phase 9 — Testing & Deployment
+   
+   Full testing, bug fixing, database verification aur Cloud Run deployment.
+
+27. Two-Day Development Strategy
+Agar client ko sirf do din mein initial working version dena hai, to scope ko carefully prioritize karna hoga.
+Time	Target
+Day 1 — Morning	Foundation, login, dashboard
+Day 1 — Afternoon	Customers, suppliers, inventory
+Day 1 — Evening	Purchase and sales
+Day 2 — Morning	Installments and vouchers
+Day 2 — Afternoon	Ledgers and important reports
+Day 2 — Evening	Attendance, testing and deployment
+
+Reality check: Do din mein ek working MVP deliver karna possible target hai, lekin complete, fully audited accounting ERP, extensive reports, backup recovery aur production-grade security ki 100% guarantee nahi di ja sakti. Is roadmap ke mutabiq advanced modules ko additional testing aur development chahiye hogi.
+
+Client ko demo dene se pehle financial calculations, stock movements aur customer balances zaroor verify karne hain.
+28. Final Acceptance Checklist
+Software client ko dene se pehle yeh sab check hoga:
+Project QA Checklist
+0/22 verified
+
+
+
+[ ] Email/password login properly working
+[ ] Unauthorized users cannot access the system
+[ ] Role-based permissions tested
+[ ] All customer and supplier forms working
+[ ] Products and stock correctly maintained
+[ ] Purchase increases inventory
+[ ] Sale decreases inventory
+[ ] Sale return reverses appropriate stock and accounts
+[ ] Customer outstanding balance correct
+[ ] Installment schedule and recovery correct
+[ ] Payment and Receive Vouchers working
+[ ] Debit and Credit always balance
+[ ] Customer and Supplier Ledgers correct
+[ ] Trial Balance verified
+[ ] Cash Book verified
+[ ] Staff attendance and visitor timing correct
+[ ] Reports match transaction records
+[ ] PDF invoices print correctly
+[ ] Excel exports work
+[ ] Cloud data persists after logout and login
+[ ] Backup and restore tested
+[ ] Application works on desktop and mobile
+Reset checklist
+
+29. Meri final technical recommendation
+Main is project ke liye yeh stack finalize karne ki recommendation deta hoon:
+Recommended stack
+Proposed
+
+React + TypeScript + Tailwind
+
+
+Firebase Authentication
+
+
+Cloud Firestore
+
+
+Google Cloud Run
+
+
+Cloud Storage + Automated Backup
+
+
+GitHub Version Control

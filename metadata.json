@@ -1,0 +1,6 @@
+{
+  "name": "ElectroShowroom ERP",
+  "description": "Comprehensive Electronic Showroom ERP & Business Management System with POS, Serial Inventory, Installment Recovery, Visitor Logs, Staff Attendance, Double-Entry Accounts, Ledgers & Reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
