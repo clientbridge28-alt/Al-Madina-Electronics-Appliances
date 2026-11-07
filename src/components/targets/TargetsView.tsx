@@ -15,13 +15,14 @@ export const TargetsView: React.FC = () => {
 
   const handleSaveTarget = (e: React.FormEvent) => {
     e.preventDefault();
+    const currentYm = new Date().toISOString().slice(0, 7);
     const newTgt: Target = {
       id: `TGT-${Date.now().toString().slice(-4)}`,
       targetType,
       period: 'Monthly',
-      monthYear: '2026-11',
+      monthYear: currentYm,
       targetAmount,
-      achievedAmount: Math.round(targetAmount * 0.35), // initial progress
+      achievedAmount: 0,
       assignedTo,
       status: 'In Progress'
     };

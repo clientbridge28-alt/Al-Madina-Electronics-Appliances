@@ -2,7 +2,8 @@ import {
   Customer, Supplier, Employee, AttendanceRecord, VisitorRecord,
   Product, PurchaseInvoice, SalesInvoice, InstallmentAccount, 
   Voucher, LedgerEntry, AccountHead, ChequeRecord, Target, AuditLog, 
-  ShowroomSettings, User, UserRole, SerialUnit, StaffTask, TaskStatus, TaskPriority
+  ShowroomSettings, User, UserRole, SerialUnit, StaffTask, TaskStatus, TaskPriority,
+  SalesReturn, PurchaseReturn
 } from '../types/erp';
 
 import {
@@ -26,6 +27,8 @@ interface ErpDatabase {
   products: Product[];
   purchases: PurchaseInvoice[];
   sales: SalesInvoice[];
+  salesReturns: SalesReturn[];
+  purchaseReturns: PurchaseReturn[];
   installments: InstallmentAccount[];
   accounts: AccountHead[];
   vouchers: Voucher[];
@@ -86,7 +89,9 @@ export function seedDemoData(): void {
     cheques: initialCheques,
     targets: initialTargets,
     auditLogs: initialAuditLogs,
-    tasks: initialTasks
+    tasks: initialTasks,
+    salesReturns: [],
+    purchaseReturns: []
   };
   saveDatabase(dbCache);
 }
@@ -104,6 +109,8 @@ export function clearToProductionEmpty(): void {
     products: [],
     purchases: [],
     sales: [],
+    salesReturns: [],
+    purchaseReturns: [],
     installments: [],
     accounts: initialChartOfAccounts.map(a => ({ ...a, currentBalance: 0 })),
     vouchers: [],
@@ -135,6 +142,8 @@ function getDatabase(): ErpDatabase {
       dbCache = JSON.parse(raw);
       if (dbCache) {
         dbCache.tasks = dbCache.tasks || [];
+        dbCache.salesReturns = dbCache.salesReturns || [];
+        dbCache.purchaseReturns = dbCache.purchaseReturns || [];
       }
       return dbCache!;
     }
@@ -502,6 +511,64 @@ export function createPurchaseInvoice(invoice: Omit<PurchaseInvoice, 'id' | 'cre
   return newInvoice;
 }
 
+export function getPurchaseReturns(): PurchaseReturn[] {
+  return getDatabase().purchaseReturns || [];
+}
+
+export function createPurchaseReturn(returnData: Omit<PurchaseReturn, 'id' | 'processedBy'>): PurchaseReturn {
+  const db = getDatabase();
+  const user = getActiveUser();
+
+  const newReturn: PurchaseReturn = {
+    ...returnData,
+    id: returnData.returnNumber || `PRTN-${Date.now().toString().slice(-4)}`,
+    processedBy: user.name
+  };
+
+  // 1. Deduct product stock and update serial unit status
+  newReturn.items.forEach(item => {
+    const prod = db.products.find(p => p.id === item.productId);
+    if (prod) {
+      prod.stockQuantity = Math.max(0, prod.stockQuantity - item.quantity);
+      if (item.serialNumber && prod.serials) {
+        const serialUnit = prod.serials.find(s => s.serialNumber === item.serialNumber);
+        if (serialUnit) {
+          serialUnit.status = 'Returned';
+        }
+      }
+    }
+  });
+
+  // 2. Adjust supplier balance or record refund
+  if (newReturn.refundMethod === 'Deduct Payable') {
+    const supp = db.suppliers.find(s => s.id === newReturn.supplierId);
+    if (supp) {
+      supp.currentBalance = Math.max(0, supp.currentBalance - newReturn.grandTotal);
+    }
+  } else if (newReturn.refundMethod === 'Cash Refund') {
+    const cashAcc = db.accounts.find(a => a.id === 'ACC-101');
+    if (cashAcc) {
+      cashAcc.currentBalance += newReturn.grandTotal;
+    }
+  } else if (newReturn.refundMethod === 'Bank Refund') {
+    const bankAcc = db.accounts.find(a => a.id === 'ACC-102');
+    if (bankAcc) {
+      bankAcc.currentBalance += newReturn.grandTotal;
+    }
+  }
+
+  // 3. Mark original purchase as Returned if applicable
+  const origPurchase = db.purchases.find(p => p.invoiceNumber === newReturn.originalPurchaseNo);
+  if (origPurchase) {
+    origPurchase.status = 'Returned';
+  }
+
+  db.purchaseReturns.unshift(newReturn);
+  saveDatabase(db);
+  logAuditAction('Purchase Return', 'Process Purchase Return', `Processed Purchase Return #${newReturn.returnNumber} to ${newReturn.supplierName} (PKR ${newReturn.grandTotal.toLocaleString()})`, newReturn.id);
+  return newReturn;
+}
+
 // ---------------- SALES & POS ----------------
 
 export function getSales(): SalesInvoice[] {
@@ -556,6 +623,68 @@ export function createSalesInvoice(saleData: Omit<SalesInvoice, 'id' | 'status'>
   saveDatabase(db);
   logAuditAction('Sales & POS', 'Post Sales Invoice', `Completed ${newSale.saleType} Sale #${newSale.invoiceNumber} for ${newSale.customerName} - PKR ${newSale.grandTotal.toLocaleString()}`, newSale.id);
   return newSale;
+}
+
+export function getSalesReturns(): SalesReturn[] {
+  return getDatabase().salesReturns || [];
+}
+
+export function createSalesReturn(returnData: Omit<SalesReturn, 'id' | 'processedBy'>): SalesReturn {
+  const db = getDatabase();
+  const user = getActiveUser();
+
+  const newReturn: SalesReturn = {
+    ...returnData,
+    id: returnData.returnNumber || `SRTN-${Date.now().toString().slice(-4)}`,
+    processedBy: user.name
+  };
+
+  // 1. Restore product stock and reset serial unit status
+  newReturn.items.forEach(item => {
+    const prod = db.products.find(p => p.id === item.productId);
+    if (prod) {
+      prod.stockQuantity += item.quantity;
+      if (item.serialNumber && prod.serials) {
+        const serialUnit = prod.serials.find(s => s.serialNumber === item.serialNumber);
+        if (serialUnit) {
+          serialUnit.status = 'In Stock';
+          serialUnit.saleInvoiceNo = undefined;
+          serialUnit.saleDate = undefined;
+          serialUnit.customerId = undefined;
+          serialUnit.customerName = undefined;
+        }
+      }
+    }
+  });
+
+  // 2. Customer balance adjustment or cash refund
+  if (newReturn.refundMethod === 'Credit Note') {
+    const cust = db.customers.find(c => c.id === newReturn.customerId);
+    if (cust) {
+      cust.currentBalance = Math.max(0, cust.currentBalance - newReturn.grandTotal);
+    }
+  } else if (newReturn.refundMethod === 'Cash') {
+    const cashAcc = db.accounts.find(a => a.id === 'ACC-101');
+    if (cashAcc) {
+      cashAcc.currentBalance = Math.max(0, cashAcc.currentBalance - newReturn.grandTotal);
+    }
+  } else if (newReturn.refundMethod === 'Bank') {
+    const bankAcc = db.accounts.find(a => a.id === 'ACC-102');
+    if (bankAcc) {
+      bankAcc.currentBalance = Math.max(0, bankAcc.currentBalance - newReturn.grandTotal);
+    }
+  }
+
+  // 3. Mark original invoice status as Returned if fully returned
+  const origSale = db.sales.find(s => s.invoiceNumber === newReturn.originalInvoiceNo);
+  if (origSale) {
+    origSale.status = 'Returned';
+  }
+
+  db.salesReturns.unshift(newReturn);
+  saveDatabase(db);
+  logAuditAction('Sales Return', 'Process Sales Return', `Processed Sales Return #${newReturn.returnNumber} for invoice #${newReturn.originalInvoiceNo} (PKR ${newReturn.grandTotal.toLocaleString()})`, newReturn.id);
+  return newReturn;
 }
 
 // ---------------- INSTALLMENTS & RECOVERY ----------------
@@ -872,10 +1001,65 @@ export function saveCheque(cheque: ChequeRecord): void {
   saveDatabase(db);
 }
 
+export function clearChequeWithAccounting(chequeId: string, clearanceDate: string): boolean {
+  const db = getDatabase();
+  const cheque = db.cheques.find(c => c.id === chequeId);
+  if (!cheque) return false;
+
+  cheque.status = 'Cleared';
+  cheque.clearanceDate = clearanceDate;
+
+  // Real double-entry accounting entry: Bank Account reconciliation
+  const bankAcc = db.accounts.find(a => a.id === 'ACC-102');
+  if (cheque.type === 'Received') {
+    if (bankAcc) {
+      bankAcc.currentBalance += cheque.amount;
+    }
+  } else if (cheque.type === 'Issued') {
+    if (bankAcc) {
+      bankAcc.currentBalance = Math.max(0, bankAcc.currentBalance - cheque.amount);
+    }
+  }
+
+  saveDatabase(db);
+  logAuditAction('Cheques', 'Clear Cheque', `Cheque #${cheque.chequeNumber} (${cheque.type}) cleared through ${cheque.bankName} for PKR ${cheque.amount.toLocaleString()}`, cheque.id);
+  return true;
+}
+
 // ---------------- TARGETS ----------------
 
 export function getTargets(): Target[] {
-  return getDatabase().targets;
+  const db = getDatabase();
+  // Dynamically calculate achieved amounts based on real sales and installment collections
+  return db.targets.map(t => {
+    let actualAchieved = 0;
+    if (t.targetType === 'Sales') {
+      const monthSales = db.sales.filter(s => s.date.startsWith(t.monthYear));
+      if (t.assignedTo === 'Showroom Overall' || t.assignedTo === 'Showroom') {
+        actualAchieved = monthSales.reduce((sum, s) => sum + s.grandTotal, 0);
+      } else {
+        actualAchieved = monthSales.filter(s => s.salesPerson === t.assignedTo).reduce((sum, s) => sum + s.grandTotal, 0);
+      }
+    } else if (t.targetType === 'Recovery') {
+      const monthInstallments = db.installments.filter(inst => {
+        if (t.assignedTo === 'Showroom Overall' || t.assignedTo === 'Showroom') return true;
+        return inst.recoveryOfficerName === t.assignedTo || inst.recoveryOfficerId === t.assignedTo;
+      });
+      actualAchieved = monthInstallments.reduce((sum, inst) => {
+        const monthPaid = inst.schedule
+          .filter(s => s.paidDate && s.paidDate.startsWith(t.monthYear))
+          .reduce((itemSum, s) => itemSum + s.paidAmount, 0);
+        return sum + monthPaid;
+      }, 0);
+    }
+
+    const isAchieved = actualAchieved >= t.targetAmount && t.targetAmount > 0;
+    return {
+      ...t,
+      achievedAmount: actualAchieved,
+      status: isAchieved ? 'Achieved' : 'In Progress'
+    };
+  });
 }
 
 export function saveTarget(target: Target): void {

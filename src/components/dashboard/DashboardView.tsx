@@ -1,9 +1,14 @@
 import React, { useState, useMemo } from 'react';
 import { 
-  TrendingUp, ShoppingBag, CreditCard, 
+  TrendingUp, TrendingDown, ShoppingBag, CreditCard, 
   Package, AlertTriangle, UserPlus, DollarSign,
-  UserCheck, Clock, PlusCircle, Database, Sparkles
+  UserCheck, Clock, PlusCircle, Database, Sparkles,
+  ArrowUpRight, ArrowDownRight, Award, BarChart3
 } from 'lucide-react';
+import {
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
+  Tooltip, CartesianGrid, Legend
+} from 'recharts';
 import { 
   getSales, getPurchases, getProducts, getCustomers, 
   getSuppliers, getInstallmentAccounts, getAttendance, 
@@ -75,32 +80,73 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     [attendance, todayStr]
   );
 
-  // Dynamic Monthly Sales & Purchases aggregation for past 6 months
+  // Dynamic Monthly Sales & Purchases aggregation for past 6 months with performance metrics
   const monthlyChartData = useMemo(() => {
-    const months: { month: string; yearMonth: string; sale: number; purchase: number }[] = [];
+    const months: { 
+      month: string; 
+      fullMonth: string; 
+      yearMonth: string; 
+      sales: number; 
+      purchases: number; 
+      invoicesCount: number;
+    }[] = [];
     const now = new Date();
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const yearMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       const monthLabel = d.toLocaleString('default', { month: 'short' });
-      months.push({ month: monthLabel, yearMonth, sale: 0, purchase: 0 });
+      const fullMonth = d.toLocaleString('default', { month: 'long', year: 'numeric' });
+      months.push({ 
+        month: monthLabel, 
+        fullMonth, 
+        yearMonth, 
+        sales: 0, 
+        purchases: 0, 
+        invoicesCount: 0 
+      });
     }
 
     sales.forEach(s => {
       const ym = s.date.slice(0, 7);
       const match = months.find(m => m.yearMonth === ym);
-      if (match) match.sale += s.grandTotal;
+      if (match) {
+        match.sales += s.grandTotal;
+        match.invoicesCount += 1;
+      }
     });
 
     purchases.forEach(p => {
       const ym = p.date.slice(0, 7);
       const match = months.find(m => m.yearMonth === ym);
-      if (match) match.purchase += p.grandTotal;
+      if (match) match.purchases += p.grandTotal;
     });
 
-    // Find max for scaling
-    const maxVal = Math.max(...months.map(m => Math.max(m.sale, m.purchase)), 1000);
-    return { months, maxVal };
+    // 6-Month Performance Insights
+    const total6MonthSales = months.reduce((acc, m) => acc + m.sales, 0);
+    const total6MonthPurchases = months.reduce((acc, m) => acc + m.purchases, 0);
+    const avgMonthlySales = Math.round(total6MonthSales / 6);
+    
+    // Best month
+    const bestMonth = [...months].sort((a, b) => b.sales - a.sales)[0];
+
+    // Month-over-Month calculation (Current month vs Previous month)
+    const currentMonthData = months[months.length - 1];
+    const prevMonthData = months[months.length - 2];
+    let momGrowth: number | null = null;
+    if (prevMonthData && prevMonthData.sales > 0) {
+      momGrowth = Math.round(((currentMonthData.sales - prevMonthData.sales) / prevMonthData.sales) * 100);
+    } else if (currentMonthData && currentMonthData.sales > 0) {
+      momGrowth = 100;
+    }
+
+    return { 
+      data: months, 
+      total6MonthSales, 
+      total6MonthPurchases, 
+      avgMonthlySales, 
+      bestMonth, 
+      momGrowth 
+    };
   }, [sales, purchases]);
 
   // Dynamic Category Breakdown for Inventory
@@ -315,65 +361,164 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Sales & Purchases Trend Bar Chart (2 Cols) */}
         <div className="lg:col-span-2 rounded-2xl bg-white p-5 border border-slate-200 shadow-2xs space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h3 className="text-sm font-bold text-slate-900">Sales Volume & Purchases Trend</h3>
-              <p className="text-xs text-slate-400">Actual showroom trade ledger figures</p>
+              <div className="flex items-center gap-2">
+                <BarChart3 className="h-4 w-4 text-blue-600" />
+                <h3 className="text-sm font-bold text-slate-900">Last 6 Months Sales & Trade Performance</h3>
+              </div>
+              <p className="text-xs text-slate-400">Dynamic Recharts performance insights from showroom sales invoices</p>
             </div>
             <div className="flex items-center gap-3 text-xs">
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 font-medium">
                 <span className="h-3 w-3 rounded-sm bg-blue-600" />
-                <span className="text-slate-600">Sales</span>
+                <span className="text-slate-700">Total Sales</span>
               </div>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 font-medium">
                 <span className="h-3 w-3 rounded-sm bg-amber-400" />
-                <span className="text-slate-600">Purchases</span>
+                <span className="text-slate-700">Stock Purchases</span>
               </div>
             </div>
           </div>
 
-          {/* SVG Bar Chart with Real Data */}
-          <div className="h-64 w-full flex items-end justify-between gap-4 pt-6 pb-2 px-2 border-b border-slate-100">
-            {monthlyChartData.months.map((bar, idx) => {
-              const saleHeightPct = monthlyChartData.maxVal > 0 ? (bar.sale / monthlyChartData.maxVal) * 100 : 0;
-              const purchHeightPct = monthlyChartData.maxVal > 0 ? (bar.purchase / monthlyChartData.maxVal) * 100 : 0;
-
-              return (
-                <div key={idx} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end group">
-                  <div className="w-full flex items-end justify-center gap-1.5 h-48">
-                    {/* Sale Bar */}
-                    <div 
-                      style={{ height: `${Math.max(saleHeightPct, bar.sale > 0 ? 4 : 0)}%` }}
-                      className="w-1/2 max-w-[24px] rounded-t-md bg-blue-600 hover:bg-blue-700 transition relative group-hover:shadow-sm"
-                    >
-                      {bar.sale > 0 && (
-                        <span className="opacity-0 group-hover:opacity-100 absolute -top-7 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] py-0.5 px-1.5 rounded font-mono pointer-events-none transition whitespace-nowrap z-10">
-                          ₨{bar.sale.toLocaleString()}
-                        </span>
-                      )}
-                    </div>
-                    {/* Purchase Bar */}
-                    <div 
-                      style={{ height: `${Math.max(purchHeightPct, bar.purchase > 0 ? 4 : 0)}%` }}
-                      className="w-1/2 max-w-[24px] rounded-t-md bg-amber-400 hover:bg-amber-500 transition relative group-hover:shadow-sm"
-                    >
-                      {bar.purchase > 0 && (
-                        <span className="opacity-0 group-hover:opacity-100 absolute -top-7 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] py-0.5 px-1.5 rounded font-mono pointer-events-none transition whitespace-nowrap z-10">
-                          ₨{bar.purchase.toLocaleString()}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <span className="text-[11px] font-medium text-slate-500">{bar.month}</span>
-                </div>
-              );
-            })}
+          {/* Quick Performance Insights Strip */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-100 text-xs">
+            <div className="space-y-0.5">
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">6-Month Sales</span>
+              <p className="font-black text-slate-900 font-mono text-sm">
+                ₨ {monthlyChartData.total6MonthSales.toLocaleString()}
+              </p>
+            </div>
+            <div className="space-y-0.5">
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Monthly Average</span>
+              <p className="font-bold text-blue-600 font-mono text-sm">
+                ₨ {monthlyChartData.avgMonthlySales.toLocaleString()}
+              </p>
+            </div>
+            <div className="space-y-0.5">
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Peak Month</span>
+              <div className="flex items-center gap-1">
+                <Award className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                <p className="font-bold text-slate-800 text-xs truncate">
+                  {monthlyChartData.bestMonth && monthlyChartData.bestMonth.sales > 0 
+                    ? `${monthlyChartData.bestMonth.month} (₨ ${monthlyChartData.bestMonth.sales.toLocaleString()})` 
+                    : 'No Sales Yet'}
+                </p>
+              </div>
+            </div>
+            <div className="space-y-0.5">
+              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">MoM Trend</span>
+              <div className="flex items-center gap-1">
+                {monthlyChartData.momGrowth !== null ? (
+                  monthlyChartData.momGrowth >= 0 ? (
+                    <span className="inline-flex items-center gap-0.5 text-emerald-600 font-bold text-xs">
+                      <ArrowUpRight className="h-3.5 w-3.5" />
+                      +{monthlyChartData.momGrowth}%
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-0.5 text-rose-600 font-bold text-xs">
+                      <ArrowDownRight className="h-3.5 w-3.5" />
+                      {monthlyChartData.momGrowth}%
+                    </span>
+                  )
+                ) : (
+                  <span className="text-slate-400 font-medium text-xs">0%</span>
+                )}
+                <span className="text-[10px] text-slate-400">vs prev mo</span>
+              </div>
+            </div>
           </div>
 
-          <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
-            <span>Showroom Turnover: <strong>₨ {totalSalesRevenue.toLocaleString()}</strong> Total Cumulative Sales</span>
+          {/* Recharts Bar Chart */}
+          <div className="w-full h-64 pt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={monthlyChartData.data}
+                margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <XAxis 
+                  dataKey="month" 
+                  stroke="#94a3b8" 
+                  fontSize={11} 
+                  tickLine={false} 
+                  axisLine={{ stroke: '#e2e8f0' }} 
+                />
+                <YAxis 
+                  stroke="#94a3b8" 
+                  fontSize={10} 
+                  tickLine={false} 
+                  axisLine={false} 
+                  tickFormatter={(val: number) => 
+                    val >= 1000000 
+                      ? `${(val / 1000000).toFixed(1)}M` 
+                      : val >= 1000 
+                        ? `${(val / 1000).toFixed(0)}k` 
+                        : `${val}`
+                  } 
+                />
+                <Tooltip 
+                  content={({ active, payload, label }) => {
+                    if (active && payload && payload.length) {
+                      const data = payload[0].payload;
+                      const netTrade = (data.sales || 0) - (data.purchases || 0);
+                      return (
+                        <div className="bg-slate-900/95 backdrop-blur-xs text-white p-3 rounded-xl shadow-xl border border-slate-700 text-xs min-w-44 space-y-1.5 z-50">
+                          <div className="font-bold text-slate-200 border-b border-slate-700 pb-1 flex items-center justify-between">
+                            <span>{data.fullMonth || label}</span>
+                            <span className="text-[10px] text-slate-400 font-mono">{data.yearMonth}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-blue-400">
+                            <span className="flex items-center gap-1.5 font-medium">
+                              <span className="h-2 w-2 rounded-full bg-blue-500 inline-block" />
+                              Total Sales:
+                            </span>
+                            <span className="font-bold font-mono">₨ {(data.sales || 0).toLocaleString()}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-amber-400">
+                            <span className="flex items-center gap-1.5 font-medium">
+                              <span className="h-2 w-2 rounded-full bg-amber-400 inline-block" />
+                              Purchases:
+                            </span>
+                            <span className="font-bold font-mono">₨ {(data.purchases || 0).toLocaleString()}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-slate-300 text-[11px] pt-1 border-t border-slate-800">
+                            <span>Net Flow:</span>
+                            <span className={`font-mono font-bold ${netTrade >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {netTrade >= 0 ? '+' : ''}₨ {netTrade.toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 pt-0.5">
+                            Orders: {data.invoicesCount || 0} invoices recorded
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
+                <Bar 
+                  dataKey="sales" 
+                  name="Sales Revenue" 
+                  fill="#2563eb" 
+                  radius={[5, 5, 0, 0]} 
+                  maxBarSize={32}
+                />
+                <Bar 
+                  dataKey="purchases" 
+                  name="Stock Purchases" 
+                  fill="#fbbf24" 
+                  radius={[5, 5, 0, 0]} 
+                  maxBarSize={32}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="flex items-center justify-between text-xs text-slate-500 pt-1 border-t border-slate-100">
+            <span>Showroom Turnover: <strong>₨ {totalSalesRevenue.toLocaleString()}</strong> Cumulative Lifetime Sales</span>
             <button onClick={() => onNavigate('reports')} className="text-blue-600 font-bold hover:underline">
-              View Detailed Analytics →
+              View Detailed Analytics & Ledgers →
             </button>
           </div>
         </div>

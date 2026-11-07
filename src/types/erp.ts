@@ -200,6 +200,54 @@ export interface SalesInvoice {
   installmentAccountId?: string;
 }
 
+export interface SalesReturnItem {
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+  serialNumber?: string;
+  reason: string;
+}
+
+export interface SalesReturn {
+  id: string;
+  returnNumber: string;
+  originalInvoiceNo: string;
+  customerId: string;
+  customerName: string;
+  date: string;
+  items: SalesReturnItem[];
+  grandTotal: number;
+  refundMethod: 'Cash' | 'Credit Note' | 'Bank';
+  remarks?: string;
+  processedBy: string;
+}
+
+export interface PurchaseReturnItem {
+  productId: string;
+  productName: string;
+  quantity: number;
+  purchasePrice: number;
+  total: number;
+  serialNumber?: string;
+  reason: string;
+}
+
+export interface PurchaseReturn {
+  id: string;
+  returnNumber: string;
+  originalPurchaseNo: string;
+  supplierId: string;
+  supplierName: string;
+  date: string;
+  items: PurchaseReturnItem[];
+  grandTotal: number;
+  refundMethod: 'Deduct Payable' | 'Cash Refund' | 'Bank Refund';
+  remarks?: string;
+  processedBy: string;
+}
+
 export interface InstallmentScheduleItem {
   installmentNumber: number;
   dueDate: string;

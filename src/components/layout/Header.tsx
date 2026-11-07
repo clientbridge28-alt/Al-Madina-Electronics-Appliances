@@ -10,6 +10,7 @@ import {
 } from '../../services/storage';
 import { UserRole } from '../../types/erp';
 import { Sparkles, ShieldCheck } from 'lucide-react';
+import { InventoryAlertNotification } from './InventoryAlertNotification';
 
 interface HeaderProps {
   onOpenSearch: () => void;
@@ -164,6 +165,9 @@ export const Header: React.FC<HeaderProps> = ({
             {currentTime.toLocaleDateString([], { weekday: 'short', day: '2-digit', month: 'short' })}
           </span>
         </div>
+
+        {/* Dedicated Inventory Reorder Level Monitor */}
+        <InventoryAlertNotification onNavigate={onNavigate} />
 
         {/* Notifications Dropdown */}
         <div className="relative">

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { CreditCard, Plus, Search, CheckCircle, Clock, AlertTriangle, X } from 'lucide-react';
-import { getCheques, saveCheque } from '../../services/storage';
+import { getCheques, saveCheque, clearChequeWithAccounting } from '../../services/storage';
 import { ChequeRecord } from '../../types/erp';
 import { Badge } from '../common/Badge';
 
@@ -46,11 +46,13 @@ export const ChequesView: React.FC = () => {
   };
 
   const handleUpdateStatus = (chq: ChequeRecord, newStatus: ChequeRecord['status']) => {
-    chq.status = newStatus;
     if (newStatus === 'Cleared') {
-      chq.clearanceDate = new Date().toISOString().split('T')[0];
+      const today = new Date().toISOString().split('T')[0];
+      clearChequeWithAccounting(chq.id, today);
+    } else {
+      chq.status = newStatus;
+      saveCheque(chq);
     }
-    saveCheque(chq);
     setCheques(getCheques());
   };
 
