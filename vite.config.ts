@@ -3,8 +3,14 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
 
-export default defineConfig(() => {
+export default defineConfig(({ command, mode }) => {
+  // Use '/Al-Madina-Electronics-Appliances/' for production GitHub Pages build,
+  // or allow env override with VITE_BASE, and keep '/' for local development
+  const isProduction = mode === 'production' || command === 'build';
+  const base = process.env.VITE_BASE || (isProduction ? '/Al-Madina-Electronics-Appliances/' : '/');
+
   return {
+    base,
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

@@ -9,8 +9,9 @@ import {
   getInstallmentAccounts, getVisitors, isDemoMode, setDemoMode, seedDemoData 
 } from '../../services/storage';
 import { UserRole } from '../../types/erp';
-import { Sparkles, ShieldCheck } from 'lucide-react';
+import { Sparkles, ShieldCheck, Cloud, HardDrive } from 'lucide-react';
 import { InventoryAlertNotification } from './InventoryAlertNotification';
+import { getCloudPersistenceStatus } from '../../services/firebase';
 
 interface HeaderProps {
   onOpenSearch: () => void;
@@ -63,7 +64,10 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-200 bg-white/95 px-4 sm:px-6 backdrop-blur-md no-print">
+    <header 
+      style={{ fontFamily: 'Georgia', fontStyle: 'italic', textAlign: 'left', fontSize: '14px' }}
+      className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-200 bg-white/95 px-4 sm:px-6 backdrop-blur-md no-print"
+    >
       {/* Left: Showroom Identity */}
       <div className="flex items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-700 to-indigo-600 text-white shadow-md shadow-blue-500/20">
@@ -71,7 +75,10 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight leading-tight">
+            <h1 
+              style={{ fontFamily: 'Georgia', fontSize: '18px' }}
+              className="text-sm sm:text-base font-bold text-slate-900 tracking-tight leading-tight"
+            >
               {settings.showroomName}
             </h1>
             {isDemoMode() ? (
@@ -93,8 +100,29 @@ export const Header: React.FC<HeaderProps> = ({
                 <span>Production Mode</span>
               </button>
             )}
+
+            {getCloudPersistenceStatus().isConfigured ? (
+              <span 
+                className="hidden xl:inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200"
+                title={getCloudPersistenceStatus().details}
+              >
+                <Cloud className="h-3 w-3 text-blue-600" />
+                <span>Cloud Firestore Active</span>
+              </span>
+            ) : (
+              <span 
+                className="hidden xl:inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100/80 text-slate-600 border border-slate-200"
+                title={getCloudPersistenceStatus().details}
+              >
+                <HardDrive className="h-3 w-3 text-slate-500" />
+                <span>Local Engine</span>
+              </span>
+            )}
           </div>
-          <p className="text-[11px] text-slate-500 hidden sm:block">
+          <p 
+            style={{ fontFamily: 'Times New Roman', fontSize: '8px' }}
+            className="text-[11px] text-slate-500 hidden sm:block"
+          >
             {settings.city} • Fiscal Year 2026-27 • Currency: {settings.currency} (₨)
           </p>
         </div>
@@ -104,6 +132,7 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="hidden md:flex items-center flex-1 max-w-md mx-6">
         <button
           onClick={onOpenSearch}
+          style={{ fontFamily: 'Courier New', textAlign: 'left', fontSize: '6px' }}
           className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2 text-xs text-slate-400 hover:border-slate-300 hover:bg-slate-100/70 transition shadow-xs"
         >
           <div className="flex items-center gap-2">

@@ -171,7 +171,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Top Welcome Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl bg-white p-5 border border-slate-200 shadow-2xs">
+      <div 
+        style={{ fontFamily: 'Georgia', fontStyle: 'italic' }}
+        className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl bg-white p-5 border border-slate-200 shadow-2xs"
+      >
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-black text-slate-900 tracking-tight">

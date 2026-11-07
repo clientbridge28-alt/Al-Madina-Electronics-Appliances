@@ -70,7 +70,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <aside className="w-64 shrink-0 border-r border-slate-200 bg-white flex flex-col h-[calc(100vh-4rem)] sticky top-16 no-print overflow-hidden select-none">
       {/* Brand Sub-header */}
-      <div className="p-4 border-b border-slate-100 bg-slate-50/40 flex items-center justify-between">
+      <div 
+        style={{ fontFamily: 'Times New Roman', fontStyle: 'italic', fontSize: '15px' }}
+        className="p-4 border-b border-slate-100 bg-slate-50/40 flex items-center justify-between"
+      >
         <div className="flex items-center gap-2">
           <div className="p-1.5 rounded-lg bg-blue-50 text-blue-600">
             <Tv className="h-4 w-4" />
