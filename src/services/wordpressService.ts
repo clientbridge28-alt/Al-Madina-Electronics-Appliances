@@ -1,59 +1,36 @@
-import { Product, SalesInvoice } from '../types/erp';
+import type { Product } from '../types/erp';
+import { authorizedApiFetch } from './firebase';
 
-export interface WordPressSettings {
+export interface WordPressStatus {
   siteUrl: string;
-  consumerKey: string;
-  consumerSecret: string;
-  isConnected: boolean;
-  isWooCommerceActive: boolean;
+  hasRestCredentials: boolean;
+  hasWooCredentials: boolean;
   syncProductsAuto: boolean;
-  syncOrdersAuto: boolean;
   syncStockAuto: boolean;
-  defaultOrderStatus: 'Pending' | 'Completed';
-  lastSyncTimestamp?: string;
-  lastSyncStatus?: 'Success' | 'Failed' | 'Never';
-  lastErrorMessage?: string;
+  syncOrdersAuto: boolean;
+  lastBackupAt: string | null;
+  lastBackupStatus: string;
+  lastBackupRef: string | null;
+  lastError: string | null;
+  secretStoragePolicy: string;
 }
 
 export interface SyncLogEntry {
   id: string;
   timestamp: string;
-  type: 'Product Push' | 'Stock Update' | 'Order Pull' | 'Connection Test';
+  type: 'Product Push' | 'Stock Update' | 'Secondary Backup' | 'Connection Test';
   status: 'Success' | 'Failed' | 'Warning';
   details: string;
   recordRef?: string;
 }
 
-const WP_SETTINGS_KEY = 'electro_erp_wordpress_config_v1';
-const WP_LOGS_KEY = 'electro_erp_wordpress_logs_v1';
+const WP_LOGS_KEY = 'electro_erp_wordpress_logs_v2';
 
-export function getWordPressSettings(): WordPressSettings {
-  try {
-    const raw = localStorage.getItem(WP_SETTINGS_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch (e) {
-    console.error('Failed to read WordPress settings', e);
-  }
-  return {
-    siteUrl: '',
-    consumerKey: '',
-    consumerSecret: '',
-    isConnected: false,
-    isWooCommerceActive: false,
-    syncProductsAuto: false,
-    syncOrdersAuto: false,
-    syncStockAuto: true,
-    defaultOrderStatus: 'Pending',
-    lastSyncStatus: 'Never'
-  };
-}
-
-export function saveWordPressSettings(settings: WordPressSettings): void {
-  try {
-    localStorage.setItem(WP_SETTINGS_KEY, JSON.stringify(settings));
-  } catch (e) {
-    console.error('Failed to save WordPress settings', e);
-  }
+// Ensure any legacy plaintext credentials stored in localStorage from older builds are purged
+try {
+  localStorage.removeItem('electro_erp_wordpress_config_v1');
+} catch {
+  // Ignore storage access errors
 }
 
 export function getSyncLogs(): SyncLogEntry[] {
@@ -70,148 +47,149 @@ export function addSyncLog(entry: Omit<SyncLogEntry, 'id' | 'timestamp'>): void 
   const current = getSyncLogs();
   const newLog: SyncLogEntry = {
     ...entry,
-    id: `LOG-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-    timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19)
+    id: `WPLOG-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19),
   };
   current.unshift(newLog);
   if (current.length > 200) current.pop();
   try {
     localStorage.setItem(WP_LOGS_KEY, JSON.stringify(current));
-  } catch (e) {
-    console.error('Failed to save sync log', e);
+  } catch {
+    // Ignore
   }
 }
 
-// ---------------- WORDPRESS & WOOCOMMERCE REST API CLIENT ----------------
-
-export async function testWordPressConnection(siteUrl: string, key: string, secret: string): Promise<{ success: boolean; message: string; isWooCommerce: boolean }> {
-  const cleanUrl = siteUrl.trim().replace(/\/+$/, '');
-  if (!cleanUrl) {
-    return { success: false, message: 'Please provide a valid WordPress site URL (e.g. https://my-electronics-store.pk)', isWooCommerce: false };
-  }
-
+export async function fetchWordPressServerStatus(): Promise<WordPressStatus | null> {
   try {
-    // 1. First probe standard WordPress REST API index
-    const wpRes = await fetch(`${cleanUrl}/wp-json/`);
-    if (!wpRes.ok) {
-      return { success: false, message: `WordPress REST API probe returned status HTTP ${wpRes.status}. Check if site URL is reachable.`, isWooCommerce: false };
+    const res = await authorizedApiFetch('/api/wordpress/status');
+    if (!res.ok) return null;
+    return (await res.json()) as WordPressStatus;
+  } catch {
+    return null;
+  }
+}
+
+export async function configureWordPressServer(payload: {
+  siteUrl: string;
+  restUsername?: string;
+  appPassword?: string;
+  wcKey?: string;
+  wcSecret?: string;
+  syncProductsAuto?: boolean;
+  syncStockAuto?: boolean;
+  syncOrdersAuto?: boolean;
+}): Promise<{ saved: boolean; message?: string }> {
+  try {
+    const res = await authorizedApiFetch('/api/wordpress/configure', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { saved: false, message: data.error || `HTTP ${res.status}` };
     }
+    return { saved: true };
+  } catch (err: any) {
+    return { saved: false, message: err?.message || 'Backend API unavailable.' };
+  }
+}
 
-    const wpData = await wpRes.json();
-    const namespaces: string[] = wpData.namespaces || [];
-    const hasWoo = namespaces.includes('wc/v3') || namespaces.includes('wc/v2');
-
-    // 2. If credentials provided, probe WooCommerce authentication
-    if (key && secret) {
-      const authHeader = 'Basic ' + btoa(`${key}:${secret}`);
-      const wcRes = await fetch(`${cleanUrl}/wp-json/wc/v3/system_status`, {
-        headers: { Authorization: authHeader }
-      });
-
-      if (wcRes.ok) {
-        return {
-          success: true,
-          message: `Successfully connected to WooCommerce REST API on ${cleanUrl}! System status OK.`,
-          isWooCommerce: true
-        };
-      } else if (wcRes.status === 401) {
-        return {
-          success: false,
-          message: `Authentication failed (HTTP 401). Verify that WooCommerce Consumer Key and Consumer Secret are correct and have Read/Write permissions.`,
-          isWooCommerce: hasWoo
-        };
-      }
-    }
-
+export async function testWordPressConnection(siteUrl?: string): Promise<{
+  success: boolean;
+  message: string;
+  isWooCommerce: boolean;
+}> {
+  try {
+    const res = await authorizedApiFetch('/api/wordpress/test', {
+      method: 'POST',
+      body: JSON.stringify({ siteUrl }),
+    });
+    const data = await res.json();
+    addSyncLog({
+      type: 'Connection Test',
+      status: data.success ? 'Success' : 'Failed',
+      details: data.message || 'WordPress test executed',
+      recordRef: siteUrl || 'Server Config',
+    });
     return {
-      success: true,
-      message: `Connected to WordPress site "${wpData.name || cleanUrl}". ${hasWoo ? 'WooCommerce detected! Add API keys to enable full product/order sync.' : 'WooCommerce plugin not detected in REST API namespaces.'}`,
-      isWooCommerce: hasWoo
+      success: Boolean(data.success),
+      message: data.message || 'Unknown response',
+      isWooCommerce: Boolean(data.isWooCommerce),
     };
   } catch (err: any) {
-    return {
-      success: false,
-      message: `Connection failed: ${err.message || 'Network error or CORS restriction. Ensure HTTPS and CORS headers are enabled on the WordPress server.'}`,
-      isWooCommerce: false
-    };
+    const msg = `Server proxy error: ${err?.message || 'Unable to reach /api/wordpress/test'}`;
+    addSyncLog({
+      type: 'Connection Test',
+      status: 'Failed',
+      details: msg,
+    });
+    return { success: false, message: msg, isWooCommerce: false };
   }
 }
 
-// Transform ERP Product to WooCommerce REST API payload
-export function buildWooCommerceProductPayload(product: Product) {
-  return {
-    sku: product.sku,
-    name: product.name,
-    type: 'simple',
-    regular_price: String(product.retailPrice),
-    description: product.description || `${product.brand} ${product.modelNumber} with official company warranty.`,
-    short_description: `${product.brand} ${product.category}`,
-    categories: [{ name: product.category }],
-    manage_stock: true,
-    stock_quantity: product.stockQuantity,
-    stock_status: product.stockQuantity > 0 ? 'instock' : 'outofstock',
-    attributes: [
-      { name: 'Brand', visible: true, options: [product.brand] },
-      { name: 'Model', visible: true, options: [product.modelNumber] },
-      { name: 'Warranty', visible: true, options: [`${product.warrantyMonths} Months Official`] }
-    ]
-  };
-}
-
-// Queue / Trigger Product Sync
 export async function syncProductToWooCommerce(product: Product): Promise<{ success: boolean; message: string }> {
-  const config = getWordPressSettings();
-  if (!config.isConnected || !config.siteUrl || !config.consumerKey) {
+  try {
+    const res = await authorizedApiFetch('/api/wordpress/sync-product', {
+      method: 'POST',
+      body: JSON.stringify({ product }),
+    });
+    const data = await res.json().catch(() => ({}));
     addSyncLog({
       type: 'Product Push',
-      status: 'Warning',
-      details: `Cannot sync "${product.name}": WooCommerce API credentials not configured.`,
-      recordRef: product.sku
+      status: data.success ? 'Success' : 'Failed',
+      details: data.message || `HTTP ${res.status}`,
+      recordRef: product.sku,
     });
-    return { success: false, message: 'WooCommerce credentials not configured.' };
-  }
-
-  const payload = buildWooCommerceProductPayload(product);
-  const cleanUrl = config.siteUrl.trim().replace(/\/+$/, '');
-  const authHeader = 'Basic ' + btoa(`${config.consumerKey}:${config.consumerSecret}`);
-
-  try {
-    const res = await fetch(`${cleanUrl}/wp-json/wc/v3/products`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: authHeader
-      },
-      body: JSON.stringify(payload)
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      addSyncLog({
-        type: 'Product Push',
-        status: 'Success',
-        details: `Synchronized product "${product.name}" to WooCommerce (WP ID: ${data.id}, SKU: ${product.sku})`,
-        recordRef: product.sku
-      });
-      return { success: true, message: `Product synced to WooCommerce (ID: ${data.id})` };
-    } else {
-      const errData = await res.json().catch(() => ({}));
-      const msg = errData.message || `HTTP ${res.status}`;
-      addSyncLog({
-        type: 'Product Push',
-        status: 'Failed',
-        details: `Failed to sync "${product.name}": ${msg}`,
-        recordRef: product.sku
-      });
-      return { success: false, message: msg };
-    }
+    return {
+      success: Boolean(data.success),
+      message: data.message || `HTTP ${res.status}`,
+    };
   } catch (err: any) {
+    const msg = err?.message || 'WooCommerce sync request failed';
     addSyncLog({
       type: 'Product Push',
       status: 'Failed',
-      details: `Network/CORS error while syncing "${product.name}": ${err.message}`,
-      recordRef: product.sku
+      details: msg,
+      recordRef: product.sku,
     });
-    return { success: false, message: err.message };
+    return { success: false, message: msg };
+  }
+}
+
+export async function pushBackupToWordPress(params: {
+  backupId: string;
+  checksum: string;
+  recordCount: number;
+  summary: Record<string, any>;
+}): Promise<{ success: boolean; wpRef?: string; timestamp?: string; message?: string }> {
+  try {
+    const res = await authorizedApiFetch('/api/wordpress/backup', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+    const data = await res.json().catch(() => ({}));
+    addSyncLog({
+      type: 'Secondary Backup',
+      status: data.success ? 'Success' : 'Failed',
+      details: data.success
+        ? `Archived snapshot ${params.backupId} (${params.recordCount} records) -> ${data.wpRef}`
+        : data.message || `HTTP ${res.status}`,
+      recordRef: params.backupId,
+    });
+    return {
+      success: Boolean(data.success),
+      wpRef: data.wpRef,
+      timestamp: data.timestamp,
+      message: data.message,
+    };
+  } catch (err: any) {
+    const msg = err?.message || 'WordPress backup endpoint unreachable';
+    addSyncLog({
+      type: 'Secondary Backup',
+      status: 'Failed',
+      details: msg,
+      recordRef: params.backupId,
+    });
+    return { success: false, message: msg };
   }
 }

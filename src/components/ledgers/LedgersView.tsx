@@ -1,12 +1,15 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Layers, Printer, Search, BookOpen, CheckCircle, ArrowRight, FileDown } from 'lucide-react';
 import { 
   getCustomers, getSuppliers, getChartOfAccounts, 
-  getCustomerLedgerEntries, getSupplierLedgerEntries, getVouchers, getSettings 
+  getCustomerLedgerEntries, getSupplierLedgerEntries, getVouchers, getSettings, subscribeToDatabase 
 } from '../../services/storage';
 import { exportTrialBalancePDF, exportAccountStatementPDF } from '../../services/pdfService';
 
 export const LedgersView: React.FC = () => {
+  const [, setVersion] = useState(0);
+  useEffect(() => subscribeToDatabase(() => setVersion(v => v + 1)), []);
+
   const customers = getCustomers();
   const suppliers = getSuppliers();
   const accounts = getChartOfAccounts();
@@ -18,15 +21,23 @@ export const LedgersView: React.FC = () => {
   const [selectedCustomerId, setSelectedCustomerId] = useState(customers[0]?.id || '');
   const [selectedSupplierId, setSelectedSupplierId] = useState(suppliers[0]?.id || '');
 
+  useEffect(() => {
+    if (!selectedCustomerId && customers.length > 0) setSelectedCustomerId(customers[0].id);
+  }, [customers.length]);
+
+  useEffect(() => {
+    if (!selectedSupplierId && suppliers.length > 0) setSelectedSupplierId(suppliers[0].id);
+  }, [suppliers.length]);
+
   // Customer Ledger Data
   const customerLedger = useMemo(() => {
     return getCustomerLedgerEntries(selectedCustomerId);
-  }, [selectedCustomerId]);
+  }, [selectedCustomerId, customers.length, vouchers.length]);
 
   // Supplier Ledger Data
   const supplierLedger = useMemo(() => {
     return getSupplierLedgerEntries(selectedSupplierId);
-  }, [selectedSupplierId]);
+  }, [selectedSupplierId, suppliers.length, vouchers.length]);
 
   // Trial Balance calculation
   const trialBalanceRows = useMemo(() => {
@@ -321,18 +332,18 @@ export const LedgersView: React.FC = () => {
               <span className="text-xs font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">Active</span>
             </div>
             <p className="text-3xl font-black text-slate-900 font-mono">
-              ₨ {(accounts.find(a => a.id === 'ACC-101')?.currentBalance || 345000).toLocaleString()}
+              ₨ {(accounts.find(a => a.id === 'ACC-101')?.currentBalance || 0).toLocaleString()}
             </p>
             <p className="text-xs text-slate-400">Daily retail POS cash receipts & minor expenses</p>
           </div>
 
           <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Meezan Bank Current A/C</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Bank Accounts (Meezan & Alfalah)</span>
               <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">Bank Alfalah & Meezan</span>
             </div>
             <p className="text-3xl font-black text-blue-800 font-mono">
-              ₨ {((accounts.find(a => a.id === 'ACC-102')?.currentBalance || 2450000) + (accounts.find(a => a.id === 'ACC-103')?.currentBalance || 1820000)).toLocaleString()}
+              ₨ {((accounts.find(a => a.id === 'ACC-102')?.currentBalance || 0) + (accounts.find(a => a.id === 'ACC-103')?.currentBalance || 0)).toLocaleString()}
             </p>
             <p className="text-xs text-slate-400">Total institutional bank deposits & supplier clearing</p>
           </div>

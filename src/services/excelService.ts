@@ -349,3 +349,147 @@ export function processProductExcelBuffer(buffer: ArrayBuffer) {
     totalRows: rawRows.length
   };
 }
+
+// ---------------- FULL ERP WORKBOOK BACKUP & DISASTER RECOVERY ----------------
+
+export async function computeSha256Hex(input: string): Promise<string> {
+  if (typeof window !== 'undefined' && window.crypto?.subtle) {
+    const encoder = new TextEncoder();
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', encoder.encode(input));
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  let hash = 0;
+  for (let i = 0; i < input.length; i++) {
+    hash = (hash * 31 + input.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+export async function exportFullWorkbookBackup(snapshot: Record<string, any>, prefix = 'AlMadina_ERP_Backup'): Promise<{
+  fileName: string;
+  checksum: string;
+  recordCount: number;
+}> {
+  const wb = XLSX.utils.book_new();
+  const sheetCollections = [
+    'customers',
+    'suppliers',
+    'employees',
+    'products',
+    'purchases',
+    'purchaseReturns',
+    'sales',
+    'salesReturns',
+    'installments',
+    'accounts',
+    'vouchers',
+    'cheques',
+    'targets',
+    'tasks',
+    'attendance',
+    'visitors',
+    'auditLogs',
+  ];
+
+  let recordCount = 0;
+  for (const key of sheetCollections) {
+    const rows = Array.isArray(snapshot[key]) ? snapshot[key] : [];
+    recordCount += rows.length;
+    const flattened = rows.map((row: any) => {
+      const out: Record<string, any> = {};
+      for (const [k, v] of Object.entries(row || {})) {
+        out[k] = typeof v === 'object' && v !== null ? JSON.stringify(v) : v;
+      }
+      return out;
+    });
+    const ws = XLSX.utils.json_to_sheet(flattened.length > 0 ? flattened : [{ _empty: true }]);
+    XLSX.utils.book_append_sheet(wb, ws, key.slice(0, 31));
+  }
+
+  const checksum = await computeSha256Hex(JSON.stringify(snapshot));
+  const metaSheet = XLSX.utils.json_to_sheet([
+    {
+      exportedAt: new Date().toISOString(),
+      recordCount,
+      checksum,
+      version: '2.6-enterprise',
+      settingsJson: JSON.stringify(snapshot.settings || {}),
+    },
+  ]);
+  XLSX.utils.book_append_sheet(wb, metaSheet, '_BackupMeta');
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const fileName = `${prefix}_${stamp}.xlsx`;
+  XLSX.writeFile(wb, fileName);
+
+  return { fileName, checksum, recordCount };
+}
+
+export function exportCollectionToCSV(rows: any[], fileName: string): void {
+  const ws = XLSX.utils.json_to_sheet(rows.length > 0 ? rows : [{ _empty: true }]);
+  const csv = XLSX.utils.sheet_to_csv(ws);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${fileName}_${new Date().toISOString().split('T')[0]}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+export async function parseBackupWorkbookForRestore(file: File): Promise<{
+  snapshot: Record<string, any>;
+  checksum: string;
+  expectedChecksum?: string;
+  recordCount: number;
+}> {
+  const buffer = await file.arrayBuffer();
+  const wb = XLSX.read(buffer, { type: 'array' });
+  const snapshot: Record<string, any> = {};
+  let expectedChecksum: string | undefined;
+  let recordCount = 0;
+
+  for (const sheetName of wb.SheetNames) {
+    const rawRows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[sheetName]);
+    if (sheetName === '_BackupMeta') {
+      const meta = rawRows[0];
+      if (meta?.checksum) expectedChecksum = String(meta.checksum);
+      if (meta?.settingsJson) {
+        try {
+          snapshot.settings = JSON.parse(meta.settingsJson);
+        } catch {
+          // ignore
+        }
+      }
+      continue;
+    }
+
+    const parsedRows = rawRows
+      .filter(r => !r._empty)
+      .map(r => {
+        const obj: Record<string, any> = {};
+        for (const [k, v] of Object.entries(r)) {
+          if (typeof v === 'string' && (v.startsWith('[') || v.startsWith('{'))) {
+            try {
+              obj[k] = JSON.parse(v);
+              continue;
+            } catch {
+              // keep string
+            }
+          }
+          obj[k] = v;
+        }
+        return obj;
+      });
+
+    snapshot[sheetName] = parsedRows;
+    recordCount += parsedRows.length;
+  }
+
+  const checksum = await computeSha256Hex(JSON.stringify(snapshot));
+  return { snapshot, checksum, expectedChecksum, recordCount };
+}
+

@@ -1,22 +1,50 @@
 import {
   Customer, Supplier, Employee, AttendanceRecord, VisitorRecord,
-  Product, PurchaseInvoice, SalesInvoice, InstallmentAccount, 
-  Voucher, LedgerEntry, AccountHead, ChequeRecord, Target, AuditLog, 
-  ShowroomSettings, User, UserRole, SerialUnit, StaffTask, TaskStatus, TaskPriority,
-  SalesReturn, PurchaseReturn
+  Product, PurchaseInvoice, SalesInvoice, InstallmentAccount,
+  Voucher, LedgerEntry, AccountHead, ChequeRecord, Target, AuditLog,
+  ShowroomSettings, User, UserRole, SerialUnit, StaffTask, TaskStatus,
+  SalesReturn, PurchaseReturn,
 } from '../types/erp';
-
+import {
+  ORG_ID,
+  getDefaultPermissionsForRole,
+  type BackupRecord,
+  type RoleTemplate,
+  type SecurityEvent,
+  type UserSession,
+} from '../types/rbac';
 import {
   initialSettings, initialUsers, initialCustomers, initialSuppliers,
   initialEmployees, initialAttendance, initialVisitors, initialProducts,
   initialPurchases, initialSales, initialInstallments, initialChartOfAccounts,
-  initialVouchers, initialCheques, initialTargets, initialAuditLogs, initialTasks
+  initialVouchers, initialCheques, initialTargets, initialAuditLogs, initialTasks,
 } from './mockData';
+import {
+  applyVoucherToAccounts,
+  buildChequeClearanceVoucher,
+  buildInstallmentCreationVoucher,
+  buildInstallmentReceiptVoucher,
+  buildPurchaseReturnVoucher,
+  buildPurchaseVoucher,
+  buildSalesReturnVoucher,
+  buildSalesVoucher,
+  roundMoney,
+  sumVoucherSides,
+} from './accounting';
+import {
+  commitCloudBatch,
+  persistCloudDoc,
+  sanitizeDocId,
+  seedInitialCloudDefaultsIfNeeded,
+  type BatchWriteOp,
+  type CloudCollectionName,
+} from './firestoreSync';
 
-const DB_KEY = 'electro_erp_db_v1';
-const AUTH_KEY = 'electro_erp_active_user_v1';
+const DEMO_DB_KEY = 'electro_erp_demo_db_v2';
+const DEMO_MODE_KEY = 'electro_erp_demo_mode_v1';
+const BACKUP_RECORDS_KEY = 'electro_erp_backup_records_v1';
 
-interface ErpDatabase {
+export interface ErpDatabase {
   settings: ShowroomSettings;
   users: User[];
   customers: Customer[];
@@ -36,15 +64,38 @@ interface ErpDatabase {
   targets: Target[];
   auditLogs: AuditLog[];
   tasks: StaffTask[];
+  backups: BackupRecord[];
+  roles: RoleTemplate[];
+  sessions: UserSession[];
+  securityEvents: SecurityEvent[];
 }
 
-// Memory cache & subscribers for reactive updates
+export interface StockLedgerRow {
+  id: string;
+  date: string;
+  refNo: string;
+  type: 'Purchase In' | 'Sale Out' | 'Sales Return In' | 'Purchase Return Out' | 'Adjustment';
+  party: string;
+  qtyIn: number;
+  qtyOut: number;
+  runningQty: number;
+  unitRate: number;
+  serial?: string;
+}
+
 let dbCache: ErpDatabase | null = null;
+let cloudActiveUid: string | null = null;
+let cloudActiveUser: User | null = null;
+let cloudInitializedFlags = { settings: false, accounts: false, seededCheckDone: false };
 const listeners = new Set<() => void>();
 
 function notifySubscribers() {
   listeners.forEach(cb => {
-    try { cb(); } catch (e) { console.error('Storage subscriber error:', e); }
+    try {
+      cb();
+    } catch (e) {
+      console.error('Storage subscriber error:', e);
+    }
   });
 }
 
@@ -55,55 +106,13 @@ export function subscribeToDatabase(listener: () => void): () => void {
   };
 }
 
-const DEMO_MODE_KEY = 'electro_erp_demo_mode_v1';
-
-export function isDemoMode(): boolean {
-  return localStorage.getItem(DEMO_MODE_KEY) === 'true';
-}
-
-export function setDemoMode(enabled: boolean): void {
-  localStorage.setItem(DEMO_MODE_KEY, enabled ? 'true' : 'false');
-  if (enabled) {
-    seedDemoData();
-  } else {
-    clearToProductionEmpty();
-  }
-}
-
-export function seedDemoData(): void {
-  localStorage.setItem(DEMO_MODE_KEY, 'true');
-  dbCache = {
-    settings: initialSettings,
-    users: initialUsers,
-    customers: initialCustomers,
-    suppliers: initialSuppliers,
-    employees: initialEmployees,
-    attendance: initialAttendance,
-    visitors: initialVisitors,
-    products: initialProducts,
-    purchases: initialPurchases,
-    sales: initialSales,
-    installments: initialInstallments,
-    accounts: initialChartOfAccounts,
-    vouchers: initialVouchers,
-    cheques: initialCheques,
-    targets: initialTargets,
-    auditLogs: initialAuditLogs,
-    tasks: initialTasks,
-    salesReturns: [],
-    purchaseReturns: []
-  };
-  saveDatabase(dbCache);
-}
-
-export function clearToProductionEmpty(): void {
-  localStorage.setItem(DEMO_MODE_KEY, 'false');
-  dbCache = {
-    settings: initialSettings,
-    users: initialUsers,
+function buildEmptyProductionDatabase(): ErpDatabase {
+  return {
+    settings: { ...initialSettings },
+    users: [],
     customers: [],
     suppliers: [],
-    employees: initialEmployees.slice(0, 2),
+    employees: [],
     attendance: [],
     visitors: [],
     products: [],
@@ -116,83 +125,232 @@ export function clearToProductionEmpty(): void {
     vouchers: [],
     cheques: [],
     targets: [],
+    auditLogs: [],
     tasks: [],
-    auditLogs: [
-      {
-        id: `AUD-INIT-${Date.now()}`,
-        timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19),
-        userId: 'usr-1',
-        userName: 'System Administrator',
-        userRole: 'Owner',
-        module: 'System',
-        action: 'Production Mode Active',
-        details: 'Showroom database set to clean production mode. Ready for live business transactions.'
-      }
-    ]
+    backups: [],
+    roles: [],
+    sessions: [],
+    securityEvents: [],
   };
-  saveDatabase(dbCache);
+}
+
+function buildDemoDatabase(): ErpDatabase {
+  return {
+    settings: { ...initialSettings },
+    users: initialUsers.map(u => ({
+      ...u,
+      uid: u.id,
+      orgId: ORG_ID,
+      permissions: getDefaultPermissionsForRole(u.role),
+      suspended: false,
+      emailVerified: true,
+    })),
+    customers: [...initialCustomers],
+    suppliers: [...initialSuppliers],
+    employees: [...initialEmployees],
+    attendance: [...initialAttendance],
+    visitors: [...initialVisitors],
+    products: JSON.parse(JSON.stringify(initialProducts)),
+    purchases: JSON.parse(JSON.stringify(initialPurchases)),
+    sales: JSON.parse(JSON.stringify(initialSales)),
+    salesReturns: [],
+    purchaseReturns: [],
+    installments: JSON.parse(JSON.stringify(initialInstallments)),
+    accounts: JSON.parse(JSON.stringify(initialChartOfAccounts)),
+    vouchers: JSON.parse(JSON.stringify(initialVouchers)),
+    cheques: JSON.parse(JSON.stringify(initialCheques)),
+    targets: JSON.parse(JSON.stringify(initialTargets)),
+    auditLogs: JSON.parse(JSON.stringify(initialAuditLogs)),
+    tasks: JSON.parse(JSON.stringify(initialTasks)),
+    backups: [],
+    roles: [],
+    sessions: [],
+    securityEvents: [],
+  };
+}
+
+export function isDemoMode(): boolean {
+  try {
+    return localStorage.getItem(DEMO_MODE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function isCloudConnected(): boolean {
+  return Boolean(cloudActiveUid && !isDemoMode());
+}
+
+export function setDemoMode(enabled: boolean): void {
+  localStorage.setItem(DEMO_MODE_KEY, enabled ? 'true' : 'false');
+  if (enabled) {
+    seedDemoData();
+  } else {
+    dbCache = buildEmptyProductionDatabase();
+    notifySubscribers();
+  }
+}
+
+export function seedDemoData(): void {
+  localStorage.setItem(DEMO_MODE_KEY, 'true');
+  dbCache = buildDemoDatabase();
+  try {
+    localStorage.setItem(DEMO_DB_KEY, JSON.stringify(dbCache));
+  } catch {
+    // ignore storage limits
+  }
+  notifySubscribers();
+}
+
+export function clearToProductionEmpty(): void {
+  localStorage.setItem(DEMO_MODE_KEY, 'false');
+  localStorage.removeItem(DEMO_DB_KEY);
+  dbCache = buildEmptyProductionDatabase();
+  notifySubscribers();
+}
+
+export function setCloudSessionUser(user: User | null): void {
+  cloudActiveUser = user;
+  cloudActiveUid = user ? (user.uid || user.id) : null;
+  if (user && !isDemoMode()) {
+    dbCache = buildEmptyProductionDatabase();
+  }
+  notifySubscribers();
+}
+
+export function clearCloudSession(): void {
+  cloudActiveUser = null;
+  cloudActiveUid = null;
+  cloudInitializedFlags = { settings: false, accounts: false, seededCheckDone: false };
+  if (!isDemoMode()) {
+    dbCache = buildEmptyProductionDatabase();
+  }
+  notifySubscribers();
+}
+
+export function applyCloudCollectionSnapshot(colName: CloudCollectionName, docs: any[]): void {
+  if (isDemoMode()) return; // Never mix cloud production data into demo sandbox
+  const db = getDatabase();
+  if (colName === 'settings') {
+    const main = docs.find(d => d.id === 'main') || docs[0];
+    if (main) {
+      db.settings = { ...initialSettings, ...main };
+      cloudInitializedFlags.settings = true;
+    }
+  } else if (colName === 'accounts') {
+    if (docs.length > 0) {
+      db.accounts = docs.sort((a, b) => String(a.code).localeCompare(String(b.code)));
+      cloudInitializedFlags.accounts = true;
+    }
+  } else if (colName in db) {
+    (db as any)[colName] = docs;
+  }
+
+  // Bootstrap initial empty chart of accounts & showroom settings in Firestore for owner on first login
+  if (
+    !cloudInitializedFlags.seededCheckDone &&
+    cloudActiveUser?.role === 'Owner' &&
+    colName === 'accounts'
+  ) {
+    cloudInitializedFlags.seededCheckDone = true;
+    if (docs.length === 0) {
+      seedInitialCloudDefaultsIfNeeded(
+        db.settings,
+        initialChartOfAccounts.map(a => ({ ...a, currentBalance: 0 })),
+        cloudInitializedFlags.settings ? 1 : 0,
+        docs.length
+      ).catch(err => console.warn('Initial cloud defaults seed deferred:', err));
+    }
+  }
+
+  notifySubscribers();
 }
 
 function getDatabase(): ErpDatabase {
   if (dbCache) return dbCache;
 
-  try {
-    const raw = localStorage.getItem(DB_KEY);
-    if (raw) {
-      dbCache = JSON.parse(raw);
-      if (dbCache) {
-        dbCache.tasks = dbCache.tasks || [];
-        dbCache.salesReturns = dbCache.salesReturns || [];
-        dbCache.purchaseReturns = dbCache.purchaseReturns || [];
-      }
-      return dbCache!;
-    }
-  } catch (err) {
-    console.error('Failed to parse database from localStorage:', err);
-  }
-
-  // If no DB exists yet, check if demo mode was explicitly requested
   if (isDemoMode()) {
-    seedDemoData();
-    return dbCache!;
+    try {
+      const raw = localStorage.getItem(DEMO_DB_KEY);
+      if (raw) {
+        dbCache = JSON.parse(raw);
+        if (dbCache) {
+          dbCache.tasks = dbCache.tasks || [];
+          dbCache.salesReturns = dbCache.salesReturns || [];
+          dbCache.purchaseReturns = dbCache.purchaseReturns || [];
+          dbCache.backups = dbCache.backups || [];
+          dbCache.roles = dbCache.roles || [];
+          dbCache.sessions = dbCache.sessions || [];
+          dbCache.securityEvents = dbCache.securityEvents || [];
+          return dbCache;
+        }
+      }
+    } catch {
+      // fall through to seed demo
+    }
+    dbCache = buildDemoDatabase();
+    return dbCache;
   }
 
-  // Default initial database is clean production database
-  clearToProductionEmpty();
-  return dbCache!;
+  dbCache = buildEmptyProductionDatabase();
+  return dbCache;
 }
 
 function saveDatabase(db: ErpDatabase): void {
   dbCache = db;
-  try {
-    localStorage.setItem(DB_KEY, JSON.stringify(db));
-  } catch (err) {
-    console.error('Failed to write database to localStorage:', err);
+  if (isDemoMode()) {
+    try {
+      localStorage.setItem(DEMO_DB_KEY, JSON.stringify(db));
+    } catch (err) {
+      console.error('Demo storage write error:', err);
+    }
   }
   notifySubscribers();
 }
 
+function getActorUid(): string {
+  return cloudActiveUid || getActiveUser().uid || getActiveUser().id || 'system';
+}
+
+function persistBatchIfLive(ops: BatchWriteOp[]): void {
+  if (!isCloudConnected()) return;
+  commitCloudBatch(ops).catch(err => {
+    console.error('Cloud batch persistence error:', err);
+  });
+}
+
 // ---------------- AUTHENTICATION & USERS ----------------
 
+const GUEST_USER: User = {
+  id: 'guest',
+  uid: 'guest',
+  name: 'Guest Viewer',
+  email: 'guest@preview.local',
+  role: 'Cashier',
+  phone: '',
+  active: false,
+  lastLogin: '',
+};
+
 export function getActiveUser(): User {
-  try {
-    const raw = localStorage.getItem(AUTH_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch (err) {
-    console.error('Active user parse error:', err);
+  if (cloudActiveUser && !isDemoMode()) {
+    return cloudActiveUser;
   }
-  // Default to Owner
-  const defaultUser = getDatabase().users[0] || initialUsers[0];
-  setActiveUser(defaultUser);
-  return defaultUser;
+  if (isDemoMode()) {
+    return {
+      ...initialUsers[0],
+      uid: 'demo-viewer',
+      name: 'Demo Preview (Read-Only Sample)',
+      role: 'Owner',
+      permissions: getDefaultPermissionsForRole('Owner'),
+    };
+  }
+  return cloudActiveUser || GUEST_USER;
 }
 
 export function setActiveUser(user: User): void {
-  try {
-    localStorage.setItem(AUTH_KEY, JSON.stringify(user));
-  } catch (e) {
-    console.error('Failed to set active user:', e);
-  }
+  cloudActiveUser = user;
+  cloudActiveUid = user.uid || user.id;
   notifySubscribers();
 }
 
@@ -200,27 +358,31 @@ export function getUsers(): User[] {
   return getDatabase().users;
 }
 
+export function getRoleTemplates(): RoleTemplate[] {
+  return getDatabase().roles;
+}
+
+export function getUserSessions(): UserSession[] {
+  return getDatabase().sessions;
+}
+
+export function getSecurityEvents(): SecurityEvent[] {
+  return [...getDatabase().securityEvents].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+// Legacy switchRole intentionally disabled in Live Cloud Mode
 export function switchRole(role: UserRole): User {
+  if (!isDemoMode()) {
+    throw new Error('Direct role switching is disabled. Sign in with your verified staff account.');
+  }
   const db = getDatabase();
   const found = db.users.find(u => u.role === role);
   if (found) {
-    setActiveUser(found);
-    logAuditAction('Authentication', 'Role Switch', `Switched active profile to ${found.name} (${role})`);
+    cloudActiveUser = found;
+    notifySubscribers();
     return found;
   }
-  const fallback: User = {
-    id: `usr-${Date.now()}`,
-    name: `${role} User`,
-    email: `${role.toLowerCase()}@almadinaelectronics.pk`,
-    role,
-    phone: '+92 300 0000000',
-    active: true,
-    lastLogin: new Date().toLocaleString()
-  };
-  db.users.push(fallback);
-  saveDatabase(db);
-  setActiveUser(fallback);
-  return fallback;
+  return getActiveUser();
 }
 
 // ---------------- SETTINGS ----------------
@@ -233,6 +395,13 @@ export function saveSettings(settings: ShowroomSettings): void {
   const db = getDatabase();
   db.settings = settings;
   saveDatabase(db);
+  if (isCloudConnected()) {
+    persistCloudDoc('settings', 'main', {
+      ...settings,
+      orgId: ORG_ID,
+      updatedAt: new Date().toISOString(),
+    }).catch(err => console.error(err));
+  }
   logAuditAction('Settings', 'Update Showroom Profile', `Updated showroom profile for ${settings.showroomName}`);
 }
 
@@ -245,22 +414,27 @@ export function getAuditLogs(): AuditLog[] {
 export function logAuditAction(module: string, action: string, details: string, recordId?: string): void {
   const user = getActiveUser();
   const db = getDatabase();
-  const newLog: AuditLog = {
-    id: `AUD-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+  const uid = getActorUid();
+  const newLog: AuditLog & { orgId?: string } = {
+    id: sanitizeDocId(`AUD-${Date.now()}-${Math.floor(Math.random() * 1000)}`),
+    orgId: ORG_ID,
     timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19),
-    userId: user.id,
-    userName: user.name,
+    userId: uid,
+    userName: user.name || 'System User',
     userRole: user.role,
     module,
     action,
-    details,
-    recordId
+    details: details.slice(0, 990),
+    recordId,
   };
   db.auditLogs.unshift(newLog);
   if (db.auditLogs.length > 500) {
-    db.auditLogs.pop(); // keep latest 500 logs
+    db.auditLogs.pop();
   }
   saveDatabase(db);
+  if (isCloudConnected()) {
+    persistCloudDoc('auditLogs', newLog.id, newLog).catch(err => console.warn('Audit log cloud write skipped:', err));
+  }
 }
 
 // ---------------- CUSTOMERS ----------------
@@ -275,15 +449,18 @@ export function getCustomerById(id: string): Customer | undefined {
 
 export function saveCustomer(customer: Customer): void {
   const db = getDatabase();
-  const idx = db.customers.findIndex(c => c.id === customer.id);
+  const uid = getActorUid();
+  const payload = { ...customer, id: sanitizeDocId(customer.id), orgId: ORG_ID, createdByUid: (customer as any).createdByUid || uid };
+  const idx = db.customers.findIndex(c => c.id === payload.id);
   if (idx >= 0) {
-    db.customers[idx] = customer;
-    logAuditAction('Customers', 'Edit Customer', `Updated profile of customer: ${customer.name}`, customer.id);
+    db.customers[idx] = payload;
+    logAuditAction('Customers', 'Edit Customer', `Updated profile of customer: ${payload.name}`, payload.id);
   } else {
-    db.customers.unshift(customer);
-    logAuditAction('Customers', 'New Customer Registered', `Added new customer: ${customer.name} (CNIC: ${customer.cnic})`, customer.id);
+    db.customers.unshift(payload);
+    logAuditAction('Customers', 'New Customer Registered', `Added new customer: ${payload.name} (CNIC: ${payload.cnic})`, payload.id);
   }
   saveDatabase(db);
+  persistBatchIfLive([{ collection: 'customers', id: payload.id, data: payload }]);
 }
 
 // ---------------- SUPPLIERS ----------------
@@ -298,15 +475,18 @@ export function getSupplierById(id: string): Supplier | undefined {
 
 export function saveSupplier(supplier: Supplier): void {
   const db = getDatabase();
-  const idx = db.suppliers.findIndex(s => s.id === supplier.id);
+  const uid = getActorUid();
+  const payload = { ...supplier, id: sanitizeDocId(supplier.id), orgId: ORG_ID, createdByUid: (supplier as any).createdByUid || uid };
+  const idx = db.suppliers.findIndex(s => s.id === payload.id);
   if (idx >= 0) {
-    db.suppliers[idx] = supplier;
-    logAuditAction('Suppliers', 'Edit Supplier', `Updated supplier profile: ${supplier.companyName}`, supplier.id);
+    db.suppliers[idx] = payload;
+    logAuditAction('Suppliers', 'Edit Supplier', `Updated supplier profile: ${payload.companyName}`, payload.id);
   } else {
-    db.suppliers.unshift(supplier);
-    logAuditAction('Suppliers', 'New Supplier Registered', `Added supplier: ${supplier.companyName}`, supplier.id);
+    db.suppliers.unshift(payload);
+    logAuditAction('Suppliers', 'New Supplier Registered', `Added supplier: ${payload.companyName}`, payload.id);
   }
   saveDatabase(db);
+  persistBatchIfLive([{ collection: 'suppliers', id: payload.id, data: payload }]);
 }
 
 // ---------------- EMPLOYEES & ATTENDANCE ----------------
@@ -317,15 +497,17 @@ export function getEmployees(): Employee[] {
 
 export function saveEmployee(employee: Employee): void {
   const db = getDatabase();
-  const idx = db.employees.findIndex(e => e.id === employee.id);
+  const payload = { ...employee, id: sanitizeDocId(employee.id), orgId: ORG_ID };
+  const idx = db.employees.findIndex(e => e.id === payload.id);
   if (idx >= 0) {
-    db.employees[idx] = employee;
-    logAuditAction('Employees', 'Edit Employee', `Updated employee: ${employee.name}`, employee.id);
+    db.employees[idx] = payload;
+    logAuditAction('Employees', 'Edit Employee', `Updated employee: ${payload.name}`, payload.id);
   } else {
-    db.employees.unshift(employee);
-    logAuditAction('Employees', 'New Employee', `Registered employee: ${employee.name} as ${employee.designation}`, employee.id);
+    db.employees.unshift(payload);
+    logAuditAction('Employees', 'New Employee', `Registered employee: ${payload.name} as ${payload.designation}`, payload.id);
   }
   saveDatabase(db);
+  persistBatchIfLive([{ collection: 'employees', id: payload.id, data: payload }]);
 }
 
 export function getAttendance(): AttendanceRecord[] {
@@ -340,23 +522,23 @@ export function markStaffCheckIn(employeeId: string, notes?: string): Attendance
   const now = new Date();
   const todayStr = now.toISOString().split('T')[0];
   const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
-
-  // Check if late (after 09:15 AM)
   const isLate = now.getHours() > 9 || (now.getHours() === 9 && now.getMinutes() > 15);
 
-  const newRecord: AttendanceRecord = {
-    id: `ATT-${Date.now()}`,
+  const newRecord: AttendanceRecord & { orgId?: string } = {
+    id: sanitizeDocId(`ATT-${Date.now()}`),
+    orgId: ORG_ID,
     employeeId: emp.id,
     employeeName: emp.name,
     date: todayStr,
     checkInTime: timeStr,
     status: isLate ? 'Late' : 'Present',
     workingHours: 0,
-    notes: notes || (isLate ? 'Late arrival' : 'On time')
+    notes: notes || (isLate ? 'Late arrival' : 'On time'),
   };
 
   db.attendance.unshift(newRecord);
   saveDatabase(db);
+  persistBatchIfLive([{ collection: 'attendance', id: newRecord.id, data: newRecord }]);
   logAuditAction('Attendance', 'Staff Check-In', `Staff check-in for ${emp.name} at ${timeStr} (${newRecord.status})`, newRecord.id);
   return newRecord;
 }
@@ -369,8 +551,9 @@ export function markStaffCheckOut(attendanceId: string): void {
   const now = new Date();
   const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
   record.checkOutTime = timeStr;
-  record.workingHours = 8.5; // Calculated or standard shift
+  record.workingHours = 8.5;
   saveDatabase(db);
+  persistBatchIfLive([{ collection: 'attendance', id: record.id, data: { ...record, orgId: ORG_ID } }]);
   logAuditAction('Attendance', 'Staff Check-Out', `Staff checked out: ${record.employeeName} at ${timeStr}`, record.id);
 }
 
@@ -387,17 +570,19 @@ export function checkInVisitor(visitor: Omit<VisitorRecord, 'id' | 'entryTime' |
   const entryDate = now.toISOString().split('T')[0];
   const entryTime = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
 
-  const newVisitor: VisitorRecord = {
+  const newVisitor: VisitorRecord & { orgId?: string } = {
     ...visitor,
-    id: `VIS-${Date.now().toString().slice(-4)}`,
+    id: sanitizeDocId(`VIS-${Date.now().toString().slice(-6)}`),
+    orgId: ORG_ID,
     entryDate,
     entryTime,
     status: 'Inside',
-    createdBy: user.name
+    createdBy: user.name,
   };
 
   db.visitors.unshift(newVisitor);
   saveDatabase(db);
+  persistBatchIfLive([{ collection: 'visitors', id: newVisitor.id, data: newVisitor }]);
   logAuditAction('Visitors', 'Visitor Check-In', `Visitor entry: ${visitor.name} (${visitor.purpose}) to meet ${visitor.personToMeet}`, newVisitor.id);
   return newVisitor;
 }
@@ -411,10 +596,11 @@ export function checkOutVisitor(visitorId: string): void {
   v.exitTime = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
   v.status = 'Checked Out';
   saveDatabase(db);
+  persistBatchIfLive([{ collection: 'visitors', id: v.id, data: { ...v, orgId: ORG_ID } }]);
   logAuditAction('Visitors', 'Visitor Check-Out', `Visitor departed: ${v.name} at ${v.exitTime}`, v.id);
 }
 
-// ---------------- PRODUCTS & SERIALS ----------------
+// ---------------- PRODUCTS, SERIALS & ITEM STOCK LEDGER ----------------
 
 export function getProducts(): Product[] {
   return getDatabase().products;
@@ -426,15 +612,17 @@ export function getProductById(id: string): Product | undefined {
 
 export function saveProduct(product: Product): void {
   const db = getDatabase();
-  const idx = db.products.findIndex(p => p.id === product.id);
+  const payload = { ...product, id: sanitizeDocId(product.id), orgId: ORG_ID };
+  const idx = db.products.findIndex(p => p.id === payload.id);
   if (idx >= 0) {
-    db.products[idx] = product;
-    logAuditAction('Inventory', 'Update Product', `Updated product: ${product.name} (SKU: ${product.sku})`, product.id);
+    db.products[idx] = payload;
+    logAuditAction('Inventory', 'Update Product', `Updated product: ${payload.name} (SKU: ${payload.sku})`, payload.id);
   } else {
-    db.products.unshift(product);
-    logAuditAction('Inventory', 'Add Product', `Added new product: ${product.name} (Qty: ${product.stockQuantity})`, product.id);
+    db.products.unshift(payload);
+    logAuditAction('Inventory', 'Add Product', `Added new product: ${payload.name} (Qty: ${payload.stockQuantity})`, payload.id);
   }
   saveDatabase(db);
+  persistBatchIfLive([{ collection: 'products', id: payload.id, data: payload }]);
 }
 
 export function adjustProductStock(productId: string, adjustmentQty: number, reason: string): void {
@@ -445,10 +633,87 @@ export function adjustProductStock(productId: string, adjustmentQty: number, rea
   const oldQty = p.stockQuantity;
   p.stockQuantity = Math.max(0, p.stockQuantity + adjustmentQty);
   saveDatabase(db);
+  persistBatchIfLive([{ collection: 'products', id: p.id, data: { ...p, orgId: ORG_ID } }]);
   logAuditAction('Inventory', 'Stock Adjustment', `Adjusted stock for ${p.name} from ${oldQty} to ${p.stockQuantity}. Reason: ${reason}`, p.id);
 }
 
-// ---------------- PURCHASES ----------------
+export function getItemStockLedger(productId: string): StockLedgerRow[] {
+  const db = getDatabase();
+  const rows: Omit<StockLedgerRow, 'runningQty'>[] = [];
+
+  db.purchases.forEach(pur => {
+    pur.items.filter(i => i.productId === productId).forEach((item, idx) => {
+      rows.push({
+        id: `STK-PUR-${pur.id}-${idx}`,
+        date: pur.date,
+        refNo: pur.invoiceNumber,
+        type: 'Purchase In',
+        party: pur.supplierName,
+        qtyIn: item.quantity,
+        qtyOut: 0,
+        unitRate: item.purchasePrice,
+        serial: item.serialNumbers?.join(', '),
+      });
+    });
+  });
+
+  db.sales.forEach(sale => {
+    sale.items.filter(i => i.productId === productId).forEach((item, idx) => {
+      rows.push({
+        id: `STK-SAL-${sale.id}-${idx}`,
+        date: sale.date,
+        refNo: sale.invoiceNumber,
+        type: 'Sale Out',
+        party: sale.customerName,
+        qtyIn: 0,
+        qtyOut: item.quantity,
+        unitRate: item.unitPrice,
+        serial: item.selectedSerial,
+      });
+    });
+  });
+
+  (db.salesReturns || []).forEach(ret => {
+    ret.items.filter(i => i.productId === productId).forEach((item, idx) => {
+      rows.push({
+        id: `STK-SRTN-${ret.id}-${idx}`,
+        date: ret.date,
+        refNo: ret.returnNumber,
+        type: 'Sales Return In',
+        party: ret.customerName,
+        qtyIn: item.quantity,
+        qtyOut: 0,
+        unitRate: item.unitPrice,
+        serial: item.serialNumber,
+      });
+    });
+  });
+
+  (db.purchaseReturns || []).forEach(ret => {
+    ret.items.filter(i => i.productId === productId).forEach((item, idx) => {
+      rows.push({
+        id: `STK-PRTN-${ret.id}-${idx}`,
+        date: ret.date,
+        refNo: ret.returnNumber,
+        type: 'Purchase Return Out',
+        party: ret.supplierName,
+        qtyIn: 0,
+        qtyOut: item.quantity,
+        unitRate: item.purchasePrice,
+        serial: item.serialNumber,
+      });
+    });
+  });
+
+  rows.sort((a, b) => a.date.localeCompare(b.date));
+  let running = 0;
+  return rows.map(r => {
+    running += r.qtyIn - r.qtyOut;
+    return { ...r, runningQty: running };
+  });
+}
+
+// ---------------- PURCHASES & PURCHASE RETURNS ----------------
 
 export function getPurchases(): PurchaseInvoice[] {
   return getDatabase().purchases;
@@ -457,18 +722,23 @@ export function getPurchases(): PurchaseInvoice[] {
 export function createPurchaseInvoice(invoice: Omit<PurchaseInvoice, 'id' | 'createdBy'>): PurchaseInvoice {
   const db = getDatabase();
   const user = getActiveUser();
+  const uid = getActorUid();
 
-  const newInvoice: PurchaseInvoice = {
+  const newInvoice: PurchaseInvoice & { orgId?: string; createdByUid?: string } = {
     ...invoice,
-    id: invoice.invoiceNumber || `PINV-${Date.now().toString().slice(-4)}`,
-    createdBy: user.name
+    id: sanitizeDocId(invoice.invoiceNumber || `PINV-${Date.now().toString().slice(-5)}`),
+    orgId: ORG_ID,
+    createdByUid: uid,
+    createdBy: user.name,
   };
 
-  // 1. Update product stock and register serial numbers
+  const batchOps: BatchWriteOp[] = [{ collection: 'purchases', id: newInvoice.id, data: newInvoice }];
+
   newInvoice.items.forEach(item => {
     const prod = db.products.find(p => p.id === item.productId);
     if (prod) {
       prod.stockQuantity += item.quantity;
+      prod.purchasePrice = item.purchasePrice || prod.purchasePrice;
       if (item.serialNumbers && item.serialNumbers.length > 0) {
         if (!prod.serials) prod.serials = [];
         item.serialNumbers.forEach(sn => {
@@ -483,30 +753,34 @@ export function createPurchaseInvoice(invoice: Omit<PurchaseInvoice, 'id' | 'cre
             purchaseInvoiceNo: newInvoice.invoiceNumber,
             purchaseDate: newInvoice.date,
             status: 'In Stock',
-            warrantyMonths: prod.warrantyMonths
+            warrantyMonths: prod.warrantyMonths,
           };
           prod.serials!.push(newUnit);
         });
       }
+      batchOps.push({ collection: 'products', id: prod.id, data: { ...prod, orgId: ORG_ID } });
     }
   });
 
-  // 2. Update supplier balance if balance remains
   const supp = db.suppliers.find(s => s.id === newInvoice.supplierId);
   if (supp && newInvoice.remainingBalance > 0) {
-    supp.currentBalance += newInvoice.remainingBalance;
+    supp.currentBalance = roundMoney(supp.currentBalance + newInvoice.remainingBalance);
+    batchOps.push({ collection: 'suppliers', id: supp.id, data: { ...supp, orgId: ORG_ID } });
   }
 
-  // 3. Deduct paid amount from Cash or Bank asset account
-  if (newInvoice.paidAmount > 0) {
-    const cashAcc = db.accounts.find(a => a.id === 'ACC-101');
-    if (cashAcc) {
-      cashAcc.currentBalance = Math.max(0, cashAcc.currentBalance - newInvoice.paidAmount);
-    }
+  // Balanced double-entry accounting voucher
+  const voucher = buildPurchaseVoucher(newInvoice, user.name, uid);
+  db.accounts = applyVoucherToAccounts(db.accounts, voucher.entries);
+  db.vouchers.unshift(voucher);
+  batchOps.push({ collection: 'vouchers', id: voucher.id, data: { ...voucher, orgId: ORG_ID } });
+  for (const entry of voucher.entries) {
+    const acc = db.accounts.find(a => a.id === entry.accountId);
+    if (acc) batchOps.push({ collection: 'accounts', id: acc.id, data: { ...acc, orgId: ORG_ID } });
   }
 
   db.purchases.unshift(newInvoice);
   saveDatabase(db);
+  persistBatchIfLive(batchOps);
   logAuditAction('Purchases', 'Create Purchase Invoice', `Created invoice #${newInvoice.invoiceNumber} from ${newInvoice.supplierName} total: PKR ${newInvoice.grandTotal.toLocaleString()}`, newInvoice.id);
   return newInvoice;
 }
@@ -518,58 +792,61 @@ export function getPurchaseReturns(): PurchaseReturn[] {
 export function createPurchaseReturn(returnData: Omit<PurchaseReturn, 'id' | 'processedBy'>): PurchaseReturn {
   const db = getDatabase();
   const user = getActiveUser();
+  const uid = getActorUid();
 
-  const newReturn: PurchaseReturn = {
+  const newReturn: PurchaseReturn & { orgId?: string; createdByUid?: string } = {
     ...returnData,
-    id: returnData.returnNumber || `PRTN-${Date.now().toString().slice(-4)}`,
-    processedBy: user.name
+    id: sanitizeDocId(returnData.returnNumber || `PRTN-${Date.now().toString().slice(-5)}`),
+    orgId: ORG_ID,
+    createdByUid: uid,
+    processedBy: user.name,
   };
 
-  // 1. Deduct product stock and update serial unit status
+  const batchOps: BatchWriteOp[] = [{ collection: 'purchaseReturns', id: newReturn.id, data: newReturn }];
+
   newReturn.items.forEach(item => {
     const prod = db.products.find(p => p.id === item.productId);
     if (prod) {
       prod.stockQuantity = Math.max(0, prod.stockQuantity - item.quantity);
       if (item.serialNumber && prod.serials) {
         const serialUnit = prod.serials.find(s => s.serialNumber === item.serialNumber);
-        if (serialUnit) {
-          serialUnit.status = 'Returned';
-        }
+        if (serialUnit) serialUnit.status = 'Returned';
       }
+      batchOps.push({ collection: 'products', id: prod.id, data: { ...prod, orgId: ORG_ID } });
     }
   });
 
-  // 2. Adjust supplier balance or record refund
   if (newReturn.refundMethod === 'Deduct Payable') {
     const supp = db.suppliers.find(s => s.id === newReturn.supplierId);
     if (supp) {
-      supp.currentBalance = Math.max(0, supp.currentBalance - newReturn.grandTotal);
-    }
-  } else if (newReturn.refundMethod === 'Cash Refund') {
-    const cashAcc = db.accounts.find(a => a.id === 'ACC-101');
-    if (cashAcc) {
-      cashAcc.currentBalance += newReturn.grandTotal;
-    }
-  } else if (newReturn.refundMethod === 'Bank Refund') {
-    const bankAcc = db.accounts.find(a => a.id === 'ACC-102');
-    if (bankAcc) {
-      bankAcc.currentBalance += newReturn.grandTotal;
+      supp.currentBalance = Math.max(0, roundMoney(supp.currentBalance - newReturn.grandTotal));
+      batchOps.push({ collection: 'suppliers', id: supp.id, data: { ...supp, orgId: ORG_ID } });
     }
   }
 
-  // 3. Mark original purchase as Returned if applicable
   const origPurchase = db.purchases.find(p => p.invoiceNumber === newReturn.originalPurchaseNo);
   if (origPurchase) {
     origPurchase.status = 'Returned';
+    batchOps.push({ collection: 'purchases', id: origPurchase.id, data: { ...origPurchase, orgId: ORG_ID } });
+  }
+
+  const voucher = buildPurchaseReturnVoucher(newReturn, user.name, uid);
+  db.accounts = applyVoucherToAccounts(db.accounts, voucher.entries);
+  db.vouchers.unshift(voucher);
+  batchOps.push({ collection: 'vouchers', id: voucher.id, data: { ...voucher, orgId: ORG_ID } });
+  for (const entry of voucher.entries) {
+    const acc = db.accounts.find(a => a.id === entry.accountId);
+    if (acc) batchOps.push({ collection: 'accounts', id: acc.id, data: { ...acc, orgId: ORG_ID } });
   }
 
   db.purchaseReturns.unshift(newReturn);
   saveDatabase(db);
+  persistBatchIfLive(batchOps);
   logAuditAction('Purchase Return', 'Process Purchase Return', `Processed Purchase Return #${newReturn.returnNumber} to ${newReturn.supplierName} (PKR ${newReturn.grandTotal.toLocaleString()})`, newReturn.id);
   return newReturn;
 }
 
-// ---------------- SALES & POS ----------------
+// ---------------- SALES, POS & SALES RETURNS ----------------
 
 export function getSales(): SalesInvoice[] {
   return getDatabase().sales;
@@ -577,14 +854,19 @@ export function getSales(): SalesInvoice[] {
 
 export function createSalesInvoice(saleData: Omit<SalesInvoice, 'id' | 'status'>): SalesInvoice {
   const db = getDatabase();
+  const user = getActiveUser();
+  const uid = getActorUid();
 
-  const newSale: SalesInvoice = {
+  const newSale: SalesInvoice & { orgId?: string; createdByUid?: string } = {
     ...saleData,
-    id: saleData.invoiceNumber || `INV-${Date.now().toString().slice(-4)}`,
-    status: 'Completed'
+    id: sanitizeDocId(saleData.invoiceNumber || `INV-${Date.now().toString().slice(-5)}`),
+    orgId: ORG_ID,
+    createdByUid: uid,
+    status: 'Completed',
   };
 
-  // 1. Deduct Product Stock & Update Serial Unit status
+  const batchOps: BatchWriteOp[] = [{ collection: 'sales', id: newSale.id, data: newSale }];
+
   newSale.items.forEach(item => {
     const prod = db.products.find(p => p.id === item.productId);
     if (prod) {
@@ -599,28 +881,30 @@ export function createSalesInvoice(saleData: Omit<SalesInvoice, 'id' | 'status'>
           serialUnit.customerName = newSale.customerName;
         }
       }
+      batchOps.push({ collection: 'products', id: prod.id, data: { ...prod, orgId: ORG_ID } });
     }
   });
 
-  // 2. Customer Balance update for credit sales
   if (newSale.saleType === 'Credit' && newSale.remainingBalance > 0) {
     const cust = db.customers.find(c => c.id === newSale.customerId);
     if (cust) {
-      cust.currentBalance += newSale.remainingBalance;
+      cust.currentBalance = roundMoney(cust.currentBalance + newSale.remainingBalance);
+      batchOps.push({ collection: 'customers', id: cust.id, data: { ...cust, orgId: ORG_ID } });
     }
   }
 
-  // 3. Increase Cash in Hand or Bank
-  if (newSale.paidAmount > 0) {
-    const targetAccId = newSale.paymentMethod === 'Bank Transfer' ? 'ACC-102' : 'ACC-101';
-    const acc = db.accounts.find(a => a.id === targetAccId);
-    if (acc) {
-      acc.currentBalance += newSale.paidAmount;
-    }
+  const voucher = buildSalesVoucher(newSale, user.name, uid);
+  db.accounts = applyVoucherToAccounts(db.accounts, voucher.entries);
+  db.vouchers.unshift(voucher);
+  batchOps.push({ collection: 'vouchers', id: voucher.id, data: { ...voucher, orgId: ORG_ID } });
+  for (const entry of voucher.entries) {
+    const acc = db.accounts.find(a => a.id === entry.accountId);
+    if (acc) batchOps.push({ collection: 'accounts', id: acc.id, data: { ...acc, orgId: ORG_ID } });
   }
 
   db.sales.unshift(newSale);
   saveDatabase(db);
+  persistBatchIfLive(batchOps);
   logAuditAction('Sales & POS', 'Post Sales Invoice', `Completed ${newSale.saleType} Sale #${newSale.invoiceNumber} for ${newSale.customerName} - PKR ${newSale.grandTotal.toLocaleString()}`, newSale.id);
   return newSale;
 }
@@ -632,18 +916,24 @@ export function getSalesReturns(): SalesReturn[] {
 export function createSalesReturn(returnData: Omit<SalesReturn, 'id' | 'processedBy'>): SalesReturn {
   const db = getDatabase();
   const user = getActiveUser();
+  const uid = getActorUid();
 
-  const newReturn: SalesReturn = {
+  const newReturn: SalesReturn & { orgId?: string; createdByUid?: string } = {
     ...returnData,
-    id: returnData.returnNumber || `SRTN-${Date.now().toString().slice(-4)}`,
-    processedBy: user.name
+    id: sanitizeDocId(returnData.returnNumber || `SRTN-${Date.now().toString().slice(-5)}`),
+    orgId: ORG_ID,
+    createdByUid: uid,
+    processedBy: user.name,
   };
 
-  // 1. Restore product stock and reset serial unit status
+  const batchOps: BatchWriteOp[] = [{ collection: 'salesReturns', id: newReturn.id, data: newReturn }];
+  let cogsRestore = 0;
+
   newReturn.items.forEach(item => {
     const prod = db.products.find(p => p.id === item.productId);
     if (prod) {
       prod.stockQuantity += item.quantity;
+      cogsRestore += roundMoney((prod.purchasePrice || 0) * item.quantity);
       if (item.serialNumber && prod.serials) {
         const serialUnit = prod.serials.find(s => s.serialNumber === item.serialNumber);
         if (serialUnit) {
@@ -654,35 +944,36 @@ export function createSalesReturn(returnData: Omit<SalesReturn, 'id' | 'processe
           serialUnit.customerName = undefined;
         }
       }
+      batchOps.push({ collection: 'products', id: prod.id, data: { ...prod, orgId: ORG_ID } });
     }
   });
 
-  // 2. Customer balance adjustment or cash refund
   if (newReturn.refundMethod === 'Credit Note') {
     const cust = db.customers.find(c => c.id === newReturn.customerId);
     if (cust) {
-      cust.currentBalance = Math.max(0, cust.currentBalance - newReturn.grandTotal);
-    }
-  } else if (newReturn.refundMethod === 'Cash') {
-    const cashAcc = db.accounts.find(a => a.id === 'ACC-101');
-    if (cashAcc) {
-      cashAcc.currentBalance = Math.max(0, cashAcc.currentBalance - newReturn.grandTotal);
-    }
-  } else if (newReturn.refundMethod === 'Bank') {
-    const bankAcc = db.accounts.find(a => a.id === 'ACC-102');
-    if (bankAcc) {
-      bankAcc.currentBalance = Math.max(0, bankAcc.currentBalance - newReturn.grandTotal);
+      cust.currentBalance = Math.max(0, roundMoney(cust.currentBalance - newReturn.grandTotal));
+      batchOps.push({ collection: 'customers', id: cust.id, data: { ...cust, orgId: ORG_ID } });
     }
   }
 
-  // 3. Mark original invoice status as Returned if fully returned
   const origSale = db.sales.find(s => s.invoiceNumber === newReturn.originalInvoiceNo);
   if (origSale) {
     origSale.status = 'Returned';
+    batchOps.push({ collection: 'sales', id: origSale.id, data: { ...origSale, orgId: ORG_ID } });
+  }
+
+  const voucher = buildSalesReturnVoucher(newReturn, cogsRestore, user.name, uid);
+  db.accounts = applyVoucherToAccounts(db.accounts, voucher.entries);
+  db.vouchers.unshift(voucher);
+  batchOps.push({ collection: 'vouchers', id: voucher.id, data: { ...voucher, orgId: ORG_ID } });
+  for (const entry of voucher.entries) {
+    const acc = db.accounts.find(a => a.id === entry.accountId);
+    if (acc) batchOps.push({ collection: 'accounts', id: acc.id, data: { ...acc, orgId: ORG_ID } });
   }
 
   db.salesReturns.unshift(newReturn);
   saveDatabase(db);
+  persistBatchIfLive(batchOps);
   logAuditAction('Sales Return', 'Process Sales Return', `Processed Sales Return #${newReturn.returnNumber} for invoice #${newReturn.originalInvoiceNo} (PKR ${newReturn.grandTotal.toLocaleString()})`, newReturn.id);
   return newReturn;
 }
@@ -695,24 +986,40 @@ export function getInstallmentAccounts(): InstallmentAccount[] {
 
 export function createInstallmentAccount(account: Omit<InstallmentAccount, 'id' | 'totalReceived' | 'status' | 'remainingBalance'>): InstallmentAccount {
   const db = getDatabase();
+  const user = getActiveUser();
+  const uid = getActorUid();
 
-  const newAccount: InstallmentAccount = {
+  const newAccount: InstallmentAccount & { orgId?: string; createdByUid?: string } = {
     ...account,
-    id: account.accountNumber || `INST-${Date.now().toString().slice(-4)}`,
+    id: sanitizeDocId(account.accountNumber || `INST-${Date.now().toString().slice(-5)}`),
+    orgId: ORG_ID,
+    createdByUid: uid,
     totalReceived: account.downPayment,
     remainingBalance: account.totalFinancedPayable,
-    status: 'Active'
+    status: 'Active',
   };
 
-  // Link to customer receivable portfolio
+  const batchOps: BatchWriteOp[] = [{ collection: 'installments', id: newAccount.id, data: newAccount }];
+
   const cust = db.customers.find(c => c.id === newAccount.customerId);
   if (cust) {
-    cust.currentBalance += newAccount.totalFinancedPayable;
+    cust.currentBalance = roundMoney(cust.currentBalance + newAccount.totalFinancedPayable);
     cust.customerType = 'Installment';
+    batchOps.push({ collection: 'customers', id: cust.id, data: { ...cust, orgId: ORG_ID } });
+  }
+
+  const voucher = buildInstallmentCreationVoucher(newAccount, user.name, uid);
+  db.accounts = applyVoucherToAccounts(db.accounts, voucher.entries);
+  db.vouchers.unshift(voucher);
+  batchOps.push({ collection: 'vouchers', id: voucher.id, data: { ...voucher, orgId: ORG_ID } });
+  for (const entry of voucher.entries) {
+    const acc = db.accounts.find(a => a.id === entry.accountId);
+    if (acc) batchOps.push({ collection: 'accounts', id: acc.id, data: { ...acc, orgId: ORG_ID } });
   }
 
   db.installments.unshift(newAccount);
   saveDatabase(db);
+  persistBatchIfLive(batchOps);
   logAuditAction('Installments', 'New Installment Account', `Opened installment account #${newAccount.accountNumber} for ${newAccount.customerName} - Total: PKR ${newAccount.totalPayableWithDown.toLocaleString()}`, newAccount.id);
   return newAccount;
 }
@@ -724,67 +1031,140 @@ export function receiveInstallmentPayment(
   remarks?: string
 ): { receiptNo: string; updatedAccount: InstallmentAccount } {
   const db = getDatabase();
+  const user = getActiveUser();
+  const uid = getActorUid();
   const account = db.installments.find(a => a.id === accountId);
   if (!account) throw new Error('Installment account not found');
 
-  const receiptNo = `RCT-${Date.now().toString().slice(-4)}`;
+  const receiptNo = `RCT-${Date.now().toString().slice(-5)}`;
   const today = new Date().toISOString().split('T')[0];
 
-  // Distribute payment to schedule items
-  let remainingToAllocate = amount;
-  const allocatedItems: number[] = [];
-
+  let remainingToAllocate = roundMoney(amount);
   for (const item of account.schedule) {
     if (remainingToAllocate <= 0) break;
     if (item.status !== 'Paid') {
       const needed = item.remainingAmount;
       if (remainingToAllocate >= needed) {
-        item.paidAmount += needed;
+        item.paidAmount = roundMoney(item.paidAmount + needed);
         item.remainingAmount = 0;
         item.status = 'Paid';
         item.paidDate = today;
         item.receiptNo = receiptNo;
-        remainingToAllocate -= needed;
-        allocatedItems.push(item.installmentNumber);
+        remainingToAllocate = roundMoney(remainingToAllocate - needed);
       } else {
-        item.paidAmount += remainingToAllocate;
-        item.remainingAmount -= remainingToAllocate;
+        item.paidAmount = roundMoney(item.paidAmount + remainingToAllocate);
+        item.remainingAmount = roundMoney(item.remainingAmount - remainingToAllocate);
         item.status = 'Partially Paid';
         item.paidDate = today;
         item.receiptNo = receiptNo;
         remainingToAllocate = 0;
-        allocatedItems.push(item.installmentNumber);
       }
     }
   }
 
-  account.totalReceived += amount;
-  account.remainingBalance = Math.max(0, account.remainingBalance - amount);
+  account.totalReceived = roundMoney(account.totalReceived + amount);
+  account.remainingBalance = Math.max(0, roundMoney(account.remainingBalance - amount));
 
   if (account.remainingBalance === 0) {
     account.status = 'Completed';
   } else {
-    // Check if any overdue
     const hasOverdue = account.schedule.some(s => s.status === 'Overdue');
     account.status = hasOverdue ? 'Overdue' : 'Active';
   }
 
-  // Update customer balance
+  const batchOps: BatchWriteOp[] = [{ collection: 'installments', id: account.id, data: { ...account, orgId: ORG_ID } }];
+
   const cust = db.customers.find(c => c.id === account.customerId);
   if (cust) {
-    cust.currentBalance = Math.max(0, cust.currentBalance - amount);
+    cust.currentBalance = Math.max(0, roundMoney(cust.currentBalance - amount));
+    batchOps.push({ collection: 'customers', id: cust.id, data: { ...cust, orgId: ORG_ID } });
   }
 
-  // Increase Cash drawer
-  const cashAcc = db.accounts.find(a => a.id === (paymentMethod === 'Bank' ? 'ACC-102' : 'ACC-101'));
-  if (cashAcc) {
-    cashAcc.currentBalance += amount;
+  const voucher = buildInstallmentReceiptVoucher(account, receiptNo, amount, paymentMethod, user.name, uid);
+  db.accounts = applyVoucherToAccounts(db.accounts, voucher.entries);
+  db.vouchers.unshift(voucher);
+  batchOps.push({ collection: 'vouchers', id: voucher.id, data: { ...voucher, orgId: ORG_ID } });
+  for (const entry of voucher.entries) {
+    const acc = db.accounts.find(a => a.id === entry.accountId);
+    if (acc) batchOps.push({ collection: 'accounts', id: acc.id, data: { ...acc, orgId: ORG_ID } });
   }
 
   saveDatabase(db);
-  logAuditAction('Recovery', 'Receive Installment', `Received installment PKR ${amount.toLocaleString()} for account #${account.accountNumber} (${account.customerName}) Receipt: ${receiptNo}`, account.id);
+  persistBatchIfLive(batchOps);
+  logAuditAction('Recovery', 'Receive Installment', `Received installment PKR ${amount.toLocaleString()} for account #${account.accountNumber} (${account.customerName}) Receipt: ${receiptNo}. ${remarks || ''}`, account.id);
 
-  return { receiptNo, updatedAccount: account };
+  return { receiptNo, updatedAccount: { ...account } };
+}
+
+export function closeInstallmentAccountEarly(
+  accountId: string,
+  settlementAmount: number,
+  paymentMethod: 'Cash' | 'Bank' | 'Cheque',
+  notes?: string
+): { receiptNo: string; updatedAccount: InstallmentAccount } {
+  const db = getDatabase();
+  const user = getActiveUser();
+  const uid = getActorUid();
+  const account = db.installments.find(a => a.id === accountId);
+  if (!account) throw new Error('Installment account not found');
+
+  const receiptNo = `CLOSE-${Date.now().toString().slice(-5)}`;
+  const today = new Date().toISOString().split('T')[0];
+  const previousBalance = roundMoney(account.remainingBalance);
+  const paid = roundMoney(Math.max(0, settlementAmount));
+
+  account.schedule.forEach(item => {
+    if (item.status !== 'Paid') {
+      item.paidAmount = item.totalDue;
+      item.remainingAmount = 0;
+      item.status = 'Paid';
+      item.paidDate = today;
+      item.receiptNo = receiptNo;
+    }
+  });
+
+  account.totalReceived = roundMoney(account.totalReceived + paid);
+  account.remainingBalance = 0;
+  account.status = 'Closed Early';
+  account.notes = notes || `Closed early with settlement PKR ${paid.toLocaleString()} (Prior bal: PKR ${previousBalance.toLocaleString()})`;
+
+  const batchOps: BatchWriteOp[] = [{ collection: 'installments', id: account.id, data: { ...account, orgId: ORG_ID } }];
+
+  const cust = db.customers.find(c => c.id === account.customerId);
+  if (cust) {
+    cust.currentBalance = Math.max(0, roundMoney(cust.currentBalance - previousBalance));
+    batchOps.push({ collection: 'customers', id: cust.id, data: { ...cust, orgId: ORG_ID } });
+  }
+
+  if (paid > 0) {
+    const voucher = buildInstallmentReceiptVoucher(account, receiptNo, paid, paymentMethod, user.name, uid);
+    db.accounts = applyVoucherToAccounts(db.accounts, voucher.entries);
+    db.vouchers.unshift(voucher);
+    batchOps.push({ collection: 'vouchers', id: voucher.id, data: { ...voucher, orgId: ORG_ID } });
+    for (const entry of voucher.entries) {
+      const acc = db.accounts.find(a => a.id === entry.accountId);
+      if (acc) batchOps.push({ collection: 'accounts', id: acc.id, data: { ...acc, orgId: ORG_ID } });
+    }
+  }
+
+  saveDatabase(db);
+  persistBatchIfLive(batchOps);
+  logAuditAction('Installments', 'Early Account Closure', `Closed account #${account.accountNumber} early. Settlement: PKR ${paid.toLocaleString()}`, account.id);
+  return { receiptNo, updatedAccount: { ...account } };
+}
+
+export function updateInstallmentAccountDetails(
+  accountId: string,
+  updates: Partial<Pick<InstallmentAccount, 'guarantor1Name' | 'guarantor1Phone' | 'guarantor1Cnic' | 'guarantor1Relation' | 'recoveryOfficerName' | 'notes'>>
+): InstallmentAccount | null {
+  const db = getDatabase();
+  const account = db.installments.find(a => a.id === accountId);
+  if (!account) return null;
+  Object.assign(account, updates);
+  saveDatabase(db);
+  persistBatchIfLive([{ collection: 'installments', id: account.id, data: { ...account, orgId: ORG_ID } }]);
+  logAuditAction('Installments', 'Update Account Plan', `Updated plan details for #${account.accountNumber}`, account.id);
+  return { ...account };
 }
 
 // ---------------- ACCOUNTS, VOUCHERS & LEDGERS ----------------
@@ -795,14 +1175,16 @@ export function getChartOfAccounts(): AccountHead[] {
 
 export function saveAccountHead(account: AccountHead): void {
   const db = getDatabase();
-  const idx = db.accounts.findIndex(a => a.id === account.id);
+  const payload = { ...account, id: sanitizeDocId(account.id), orgId: ORG_ID };
+  const idx = db.accounts.findIndex(a => a.id === payload.id);
   if (idx >= 0) {
-    db.accounts[idx] = account;
+    db.accounts[idx] = payload;
   } else {
-    db.accounts.push(account);
+    db.accounts.push(payload);
   }
   saveDatabase(db);
-  logAuditAction('Accounting', 'Chart of Accounts', `Saved account head: ${account.name} (${account.code})`, account.id);
+  persistBatchIfLive([{ collection: 'accounts', id: payload.id, data: payload }]);
+  logAuditAction('Accounting', 'Chart of Accounts', `Saved account head: ${payload.name} (${payload.code})`, payload.id);
 }
 
 export function getVouchers(): Voucher[] {
@@ -812,36 +1194,32 @@ export function getVouchers(): Voucher[] {
 export function createVoucher(voucher: Omit<Voucher, 'id' | 'createdBy' | 'status'>): Voucher {
   const db = getDatabase();
   const user = getActiveUser();
+  const uid = getActorUid();
 
-  // Validate balanced double entry: Debits = Credits
-  const totalDebit = voucher.entries.reduce((sum, e) => sum + (e.debit || 0), 0);
-  const totalCredit = voucher.entries.reduce((sum, e) => sum + (e.credit || 0), 0);
-
-  if (Math.abs(totalDebit - totalCredit) > 0.01) {
-    throw new Error(`Double entry unbalanced! Total Debits (PKR ${totalDebit}) must equal Total Credits (PKR ${totalCredit})`);
+  const check = sumVoucherSides(voucher.entries);
+  if (!check.isBalanced) {
+    throw new Error(`Double entry unbalanced! Total Debits (PKR ${check.debit}) must equal Total Credits (PKR ${check.credit})`);
   }
 
   const newVoucher: Voucher = {
     ...voucher,
-    id: voucher.voucherNumber || `VOUCH-${Date.now().toString().slice(-4)}`,
+    id: sanitizeDocId(voucher.voucherNumber || `VOUCH-${Date.now().toString().slice(-5)}`),
+    orgId: ORG_ID,
+    createdByUid: uid,
     createdBy: user.name,
-    status: 'Posted'
+    status: 'Posted',
   };
 
-  // Adjust account balances
-  voucher.entries.forEach(entry => {
+  db.accounts = applyVoucherToAccounts(db.accounts, newVoucher.entries);
+  const batchOps: BatchWriteOp[] = [{ collection: 'vouchers', id: newVoucher.id, data: newVoucher }];
+  for (const entry of newVoucher.entries) {
     const acc = db.accounts.find(a => a.id === entry.accountId);
-    if (acc) {
-      if (acc.category === 'Asset' || acc.category === 'Expense') {
-        acc.currentBalance += (entry.debit - entry.credit);
-      } else {
-        acc.currentBalance += (entry.credit - entry.debit);
-      }
-    }
-  });
+    if (acc) batchOps.push({ collection: 'accounts', id: acc.id, data: { ...acc, orgId: ORG_ID } });
+  }
 
   db.vouchers.unshift(newVoucher);
   saveDatabase(db);
+  persistBatchIfLive(batchOps);
   logAuditAction('Accounting', 'Post Voucher', `Posted ${newVoucher.voucherType} #${newVoucher.voucherNumber} amount PKR ${newVoucher.amount.toLocaleString()}`, newVoucher.id);
   return newVoucher;
 }
@@ -854,7 +1232,6 @@ export function getCustomerLedgerEntries(customerId: string): LedgerEntry[] {
   const entries: LedgerEntry[] = [];
   let runningBalance = cust.openingBalance || 0;
 
-  // Opening balance row
   entries.push({
     id: 'op-1',
     date: cust.createdAt,
@@ -865,48 +1242,65 @@ export function getCustomerLedgerEntries(customerId: string): LedgerEntry[] {
     credit: cust.openingBalance < 0 ? Math.abs(cust.openingBalance) : 0,
     balance: runningBalance,
     partyId: customerId,
-    partyType: 'Customer'
+    partyType: 'Customer',
   });
 
-  // Sales invoices
-  const customerSales = db.sales.filter(s => s.customerId === customerId);
-  customerSales.forEach(s => {
-    runningBalance += s.grandTotal;
-    entries.push({
-      id: `sale-${s.id}`,
-      date: s.date,
-      voucherNo: s.invoiceNumber,
-      voucherType: 'Sales Invoice',
-      description: `Sold: ${s.items.map(i => `${i.productName} (x${i.quantity})`).join(', ')}`,
-      debit: s.grandTotal,
-      credit: 0,
-      balance: runningBalance,
-      partyId: customerId,
-      partyType: 'Customer'
-    });
-
-    if (s.paidAmount > 0) {
-      runningBalance -= s.paidAmount;
+  db.sales
+    .filter(s => s.customerId === customerId)
+    .forEach(s => {
+      runningBalance = roundMoney(runningBalance + s.grandTotal);
       entries.push({
-        id: `pay-${s.id}`,
+        id: `sale-${s.id}`,
         date: s.date,
         voucherNo: s.invoiceNumber,
-        voucherType: 'Receipt / Payment',
-        description: `Payment received via ${s.paymentMethod}`,
-        debit: 0,
-        credit: s.paidAmount,
+        voucherType: 'Sales Invoice',
+        description: `Sold: ${s.items.map(i => `${i.productName} (x${i.quantity})`).join(', ')}`,
+        debit: s.grandTotal,
+        credit: 0,
         balance: runningBalance,
         partyId: customerId,
-        partyType: 'Customer'
+        partyType: 'Customer',
       });
-    }
-  });
 
-  // Vouchers linked to this customer
-  const customerVouchers = db.vouchers.filter(v => v.partyId === customerId);
-  customerVouchers.forEach(v => {
-    if (v.voucherType === 'Receive Voucher') {
-      runningBalance -= v.amount;
+      if (s.paidAmount > 0) {
+        runningBalance = roundMoney(runningBalance - s.paidAmount);
+        entries.push({
+          id: `pay-${s.id}`,
+          date: s.date,
+          voucherNo: s.invoiceNumber,
+          voucherType: 'Receipt / Payment',
+          description: `Payment received via ${s.paymentMethod}`,
+          debit: 0,
+          credit: s.paidAmount,
+          balance: runningBalance,
+          partyId: customerId,
+          partyType: 'Customer',
+        });
+      }
+    });
+
+  (db.salesReturns || [])
+    .filter(r => r.customerId === customerId && r.refundMethod === 'Credit Note')
+    .forEach(r => {
+      runningBalance = roundMoney(runningBalance - r.grandTotal);
+      entries.push({
+        id: `srtn-${r.id}`,
+        date: r.date,
+        voucherNo: r.returnNumber,
+        voucherType: 'Sales Return',
+        description: `Credit Note for Invoice #${r.originalInvoiceNo}`,
+        debit: 0,
+        credit: r.grandTotal,
+        balance: runningBalance,
+        partyId: customerId,
+        partyType: 'Customer',
+      });
+    });
+
+  db.vouchers
+    .filter(v => v.partyId === customerId && v.voucherType === 'Receive Voucher' && !v.sourceRef?.startsWith('INV-'))
+    .forEach(v => {
+      runningBalance = roundMoney(runningBalance - v.amount);
       entries.push({
         id: `vouch-${v.id}`,
         date: v.date,
@@ -917,10 +1311,9 @@ export function getCustomerLedgerEntries(customerId: string): LedgerEntry[] {
         credit: v.amount,
         balance: runningBalance,
         partyId: customerId,
-        partyType: 'Customer'
+        partyType: 'Customer',
       });
-    }
-  });
+    });
 
   return entries.sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -943,41 +1336,60 @@ export function getSupplierLedgerEntries(supplierId: string): LedgerEntry[] {
     credit: runningBalance,
     balance: runningBalance,
     partyId: supplierId,
-    partyType: 'Supplier'
+    partyType: 'Supplier',
   });
 
-  const supplierPurchases = db.purchases.filter(p => p.supplierId === supplierId);
-  supplierPurchases.forEach(p => {
-    runningBalance += p.grandTotal;
-    entries.push({
-      id: `pur-${p.id}`,
-      date: p.date,
-      voucherNo: p.invoiceNumber,
-      voucherType: 'Purchase Invoice',
-      description: `Purchased: ${p.items.map(i => `${i.productName} (x${i.quantity})`).join(', ')}`,
-      debit: 0,
-      credit: p.grandTotal,
-      balance: runningBalance,
-      partyId: supplierId,
-      partyType: 'Supplier'
-    });
-
-    if (p.paidAmount > 0) {
-      runningBalance -= p.paidAmount;
+  db.purchases
+    .filter(p => p.supplierId === supplierId)
+    .forEach(p => {
+      runningBalance = roundMoney(runningBalance + p.grandTotal);
       entries.push({
-        id: `pur-pay-${p.id}`,
+        id: `pur-${p.id}`,
         date: p.date,
         voucherNo: p.invoiceNumber,
-        voucherType: 'Payment Voucher',
-        description: `Paid via ${p.paymentMethod}`,
-        debit: p.paidAmount,
+        voucherType: 'Purchase Invoice',
+        description: `Purchased: ${p.items.map(i => `${i.productName} (x${i.quantity})`).join(', ')}`,
+        debit: 0,
+        credit: p.grandTotal,
+        balance: runningBalance,
+        partyId: supplierId,
+        partyType: 'Supplier',
+      });
+
+      if (p.paidAmount > 0) {
+        runningBalance = roundMoney(runningBalance - p.paidAmount);
+        entries.push({
+          id: `pur-pay-${p.id}`,
+          date: p.date,
+          voucherNo: p.invoiceNumber,
+          voucherType: 'Payment Voucher',
+          description: `Paid via ${p.paymentMethod}`,
+          debit: p.paidAmount,
+          credit: 0,
+          balance: runningBalance,
+          partyId: supplierId,
+          partyType: 'Supplier',
+        });
+      }
+    });
+
+  (db.purchaseReturns || [])
+    .filter(r => r.supplierId === supplierId && r.refundMethod === 'Deduct Payable')
+    .forEach(r => {
+      runningBalance = roundMoney(runningBalance - r.grandTotal);
+      entries.push({
+        id: `prtn-${r.id}`,
+        date: r.date,
+        voucherNo: r.returnNumber,
+        voucherType: 'Purchase Return',
+        description: `Debit Note against Purchase #${r.originalPurchaseNo}`,
+        debit: r.grandTotal,
         credit: 0,
         balance: runningBalance,
         partyId: supplierId,
-        partyType: 'Supplier'
+        partyType: 'Supplier',
       });
-    }
-  });
+    });
 
   return entries.sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -990,38 +1402,44 @@ export function getCheques(): ChequeRecord[] {
 
 export function saveCheque(cheque: ChequeRecord): void {
   const db = getDatabase();
-  const idx = db.cheques.findIndex(c => c.id === cheque.id);
+  const payload = { ...cheque, id: sanitizeDocId(cheque.id), orgId: ORG_ID };
+  const idx = db.cheques.findIndex(c => c.id === payload.id);
   if (idx >= 0) {
-    db.cheques[idx] = cheque;
-    logAuditAction('Cheques', 'Update Cheque', `Updated cheque #${cheque.chequeNumber} status: ${cheque.status}`, cheque.id);
+    db.cheques[idx] = payload;
+    logAuditAction('Cheques', 'Update Cheque', `Updated cheque #${payload.chequeNumber} status: ${payload.status}`, payload.id);
   } else {
-    db.cheques.unshift(cheque);
-    logAuditAction('Cheques', 'New Cheque', `Recorded ${cheque.type} cheque #${cheque.chequeNumber} amount PKR ${cheque.amount.toLocaleString()}`, cheque.id);
+    db.cheques.unshift(payload);
+    logAuditAction('Cheques', 'New Cheque', `Recorded ${payload.type} cheque #${payload.chequeNumber} amount PKR ${payload.amount.toLocaleString()}`, payload.id);
   }
   saveDatabase(db);
+  persistBatchIfLive([{ collection: 'cheques', id: payload.id, data: payload }]);
 }
 
 export function clearChequeWithAccounting(chequeId: string, clearanceDate: string): boolean {
   const db = getDatabase();
+  const user = getActiveUser();
+  const uid = getActorUid();
   const cheque = db.cheques.find(c => c.id === chequeId);
-  if (!cheque) return false;
+  if (!cheque || cheque.status === 'Cleared') return false;
 
   cheque.status = 'Cleared';
   cheque.clearanceDate = clearanceDate;
 
-  // Real double-entry accounting entry: Bank Account reconciliation
-  const bankAcc = db.accounts.find(a => a.id === 'ACC-102');
-  if (cheque.type === 'Received') {
-    if (bankAcc) {
-      bankAcc.currentBalance += cheque.amount;
-    }
-  } else if (cheque.type === 'Issued') {
-    if (bankAcc) {
-      bankAcc.currentBalance = Math.max(0, bankAcc.currentBalance - cheque.amount);
-    }
+  const voucher = buildChequeClearanceVoucher(cheque, clearanceDate, user.name, uid);
+  db.accounts = applyVoucherToAccounts(db.accounts, voucher.entries);
+  db.vouchers.unshift(voucher);
+
+  const batchOps: BatchWriteOp[] = [
+    { collection: 'cheques', id: cheque.id, data: { ...cheque, orgId: ORG_ID } },
+    { collection: 'vouchers', id: voucher.id, data: { ...voucher, orgId: ORG_ID } },
+  ];
+  for (const entry of voucher.entries) {
+    const acc = db.accounts.find(a => a.id === entry.accountId);
+    if (acc) batchOps.push({ collection: 'accounts', id: acc.id, data: { ...acc, orgId: ORG_ID } });
   }
 
   saveDatabase(db);
+  persistBatchIfLive(batchOps);
   logAuditAction('Cheques', 'Clear Cheque', `Cheque #${cheque.chequeNumber} (${cheque.type}) cleared through ${cheque.bankName} for PKR ${cheque.amount.toLocaleString()}`, cheque.id);
   return true;
 }
@@ -1030,7 +1448,6 @@ export function clearChequeWithAccounting(chequeId: string, clearanceDate: strin
 
 export function getTargets(): Target[] {
   const db = getDatabase();
-  // Dynamically calculate achieved amounts based on real sales and installment collections
   return db.targets.map(t => {
     let actualAchieved = 0;
     if (t.targetType === 'Sales') {
@@ -1057,38 +1474,163 @@ export function getTargets(): Target[] {
     return {
       ...t,
       achievedAmount: actualAchieved,
-      status: isAchieved ? 'Achieved' : 'In Progress'
+      status: isAchieved ? 'Achieved' : 'In Progress',
     };
   });
 }
 
 export function saveTarget(target: Target): void {
   const db = getDatabase();
-  const idx = db.targets.findIndex(t => t.id === target.id);
+  const payload = { ...target, id: sanitizeDocId(target.id), orgId: ORG_ID };
+  const idx = db.targets.findIndex(t => t.id === payload.id);
   if (idx >= 0) {
-    db.targets[idx] = target;
+    db.targets[idx] = payload;
   } else {
-    db.targets.push(target);
+    db.targets.push(payload);
   }
   saveDatabase(db);
-  logAuditAction('Targets', 'Target Updated', `Saved ${target.targetType} target for ${target.assignedTo} (PKR ${target.targetAmount.toLocaleString()})`, target.id);
+  persistBatchIfLive([{ collection: 'targets', id: payload.id, data: payload }]);
+  logAuditAction('Targets', 'Target Updated', `Saved ${payload.targetType} target for ${payload.assignedTo} (PKR ${payload.targetAmount.toLocaleString()})`, payload.id);
+}
+
+// ---------------- REPORTS ANALYTICS HELPERS ----------------
+
+export function getDateWiseProfitReport(startDate?: string, endDate?: string) {
+  const db = getDatabase();
+  const filteredSales = db.sales.filter(s => {
+    if (s.status === 'Returned' || s.status === 'Cancelled') return false;
+    if (startDate && s.date < startDate) return false;
+    if (endDate && s.date > endDate) return false;
+    return true;
+  });
+
+  const byDate = new Map<string, { date: string; invoices: number; revenue: number; cogs: number; grossProfit: number }>();
+  for (const s of filteredSales) {
+    const cogs = roundMoney(s.items.reduce((sum, i) => sum + (i.costPrice || 0) * i.quantity, 0));
+    const rev = roundMoney(s.grandTotal);
+    const cur = byDate.get(s.date) || { date: s.date, invoices: 0, revenue: 0, cogs: 0, grossProfit: 0 };
+    cur.invoices += 1;
+    cur.revenue = roundMoney(cur.revenue + rev);
+    cur.cogs = roundMoney(cur.cogs + cogs);
+    cur.grossProfit = roundMoney(cur.revenue - cur.cogs);
+    byDate.set(s.date, cur);
+  }
+  return Array.from(byDate.values()).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+export function getBrandWiseStockReport() {
+  const db = getDatabase();
+  const byBrand = new Map<string, { brand: string; skuCount: number; totalUnits: number; costValue: number; retailValue: number; potentialMargin: number }>();
+  for (const p of db.products) {
+    const cur = byBrand.get(p.brand) || { brand: p.brand, skuCount: 0, totalUnits: 0, costValue: 0, retailValue: 0, potentialMargin: 0 };
+    cur.skuCount += 1;
+    cur.totalUnits += p.stockQuantity;
+    cur.costValue = roundMoney(cur.costValue + p.purchasePrice * p.stockQuantity);
+    cur.retailValue = roundMoney(cur.retailValue + p.retailPrice * p.stockQuantity);
+    cur.potentialMargin = roundMoney(cur.retailValue - cur.costValue);
+    byBrand.set(p.brand, cur);
+  }
+  return Array.from(byBrand.values()).sort((a, b) => b.costValue - a.costValue);
+}
+
+export function getMonthlyReceivedReport(monthYear: string) {
+  const db = getDatabase();
+  const cashSalesReceived = db.sales
+    .filter(s => s.date.startsWith(monthYear) && s.paidAmount > 0)
+    .map(s => ({
+      date: s.date,
+      source: 'POS / Sales Spot Receipt',
+      ref: s.invoiceNumber,
+      party: s.customerName,
+      method: s.paymentMethod,
+      amount: s.paidAmount,
+    }));
+
+  const installmentReceived = db.vouchers
+    .filter(v => v.date.startsWith(monthYear) && v.voucherType === 'Receive Voucher')
+    .map(v => ({
+      date: v.date,
+      source: v.narration.includes('Installment') ? 'Installment Recovery' : 'Customer Receive Voucher',
+      ref: v.voucherNumber,
+      party: v.partyName || 'Customer',
+      method: v.paymentMethod || 'Cash',
+      amount: v.amount,
+    }));
+
+  return [...cashSalesReceived, ...installmentReceived].sort((a, b) => b.date.localeCompare(a.date));
 }
 
 // ---------------- BACKUP, RESTORE & EXPORT ----------------
 
-export function exportDatabaseJSON(): string {
+export function getDatabaseSnapshot(): Record<string, any> {
   const db = getDatabase();
-  return JSON.stringify(db, null, 2);
+  return {
+    settings: db.settings,
+    customers: db.customers,
+    suppliers: db.suppliers,
+    employees: db.employees,
+    attendance: db.attendance,
+    visitors: db.visitors,
+    products: db.products,
+    purchases: db.purchases,
+    purchaseReturns: db.purchaseReturns,
+    sales: db.sales,
+    salesReturns: db.salesReturns,
+    installments: db.installments,
+    accounts: db.accounts,
+    vouchers: db.vouchers,
+    cheques: db.cheques,
+    targets: db.targets,
+    tasks: db.tasks,
+    auditLogs: db.auditLogs,
+  };
+}
+
+export function getBackupRecords(): BackupRecord[] {
+  const db = getDatabase();
+  if (db.backups.length > 0) {
+    return [...db.backups].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  try {
+    const raw = localStorage.getItem(BACKUP_RECORDS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+export function addBackupRecord(record: BackupRecord): void {
+  const db = getDatabase();
+  db.backups.unshift(record);
+  saveDatabase(db);
+  try {
+    localStorage.setItem(BACKUP_RECORDS_KEY, JSON.stringify(db.backups.slice(0, 100)));
+  } catch {
+    // ignore
+  }
+  if (isCloudConnected()) {
+    persistCloudDoc('backups', record.id, record).catch(err => console.warn('Backup metadata write error:', err));
+  }
+}
+
+export function exportDatabaseJSON(): string {
+  return JSON.stringify(getDatabaseSnapshot(), null, 2);
 }
 
 export function importDatabaseJSON(jsonStr: string): boolean {
   try {
-    const parsed = JSON.parse(jsonStr) as ErpDatabase;
+    const parsed = JSON.parse(jsonStr) as Partial<ErpDatabase>;
     if (!parsed.products || !parsed.sales || !parsed.customers) {
       throw new Error('Invalid ERP backup file structure');
     }
-    saveDatabase(parsed);
-    logAuditAction('Backup', 'Database Restored', 'Database restored from uploaded backup file');
+    const db = getDatabase();
+    Object.assign(db, {
+      ...db,
+      ...parsed,
+    });
+    saveDatabase(db);
+    logAuditAction('Backup', 'Database Restored', 'Database restored from uploaded backup file (local state)');
     return true;
   } catch (err) {
     console.error('Import database failed:', err);
@@ -1097,31 +1639,35 @@ export function importDatabaseJSON(jsonStr: string): boolean {
 }
 
 export function resetToDefaultData(): void {
-  localStorage.removeItem(DB_KEY);
-  dbCache = null;
-  getDatabase(); // reload fresh seed
-  logAuditAction('Backup', 'Database Reset', 'Reset database to official Pakistani Electronics showroom template');
+  if (isDemoMode()) {
+    seedDemoData();
+  } else {
+    clearToProductionEmpty();
+  }
+  logAuditAction('Backup', 'Database Reset', 'Reset workspace database');
   notifySubscribers();
 }
 
 // ---------------- STAFF TASKS & TO-DO MANAGEMENT ----------------
 
 export function getTasks(): StaffTask[] {
-  const db = getDatabase();
-  return db.tasks || [];
+  return getDatabase().tasks || [];
 }
 
 export function saveTask(task: StaffTask): void {
   const db = getDatabase();
+  const uid = getActorUid();
   if (!db.tasks) db.tasks = [];
-  const idx = db.tasks.findIndex(t => t.id === task.id);
+  const payload = { ...task, id: sanitizeDocId(task.id), orgId: ORG_ID, createdByUid: (task as any).createdByUid || uid };
+  const idx = db.tasks.findIndex(t => t.id === payload.id);
   if (idx >= 0) {
-    db.tasks[idx] = task;
+    db.tasks[idx] = payload;
   } else {
-    db.tasks.unshift(task);
+    db.tasks.unshift(payload);
   }
   saveDatabase(db);
-  logAuditAction('Tasks', 'Task Saved', `Saved task: "${task.title}" assigned to ${task.assignedTo}`, task.id);
+  persistBatchIfLive([{ collection: 'tasks', id: payload.id, data: payload }]);
+  logAuditAction('Tasks', 'Task Saved', `Saved task: "${payload.title}" assigned to ${payload.assignedTo}`, payload.id);
 }
 
 export function updateTaskStatus(taskId: string, status: TaskStatus, progressPercent?: number): void {
@@ -1140,6 +1686,7 @@ export function updateTaskStatus(taskId: string, status: TaskStatus, progressPer
       task.completedAt = undefined;
     }
     saveDatabase(db);
+    persistBatchIfLive([{ collection: 'tasks', id: task.id, data: { ...task, orgId: ORG_ID } }]);
     logAuditAction('Tasks', 'Task Status Updated', `Updated task ${task.id} to ${status} (${task.progressPercent}%)`, task.id);
   }
 }
@@ -1151,4 +1698,3 @@ export function deleteTask(taskId: string): void {
   saveDatabase(db);
   logAuditAction('Tasks', 'Task Deleted', `Removed task ${taskId}`, taskId);
 }
-

@@ -1,17 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Search, Bell, UserCheck, ShoppingCart, 
-  UserPlus, Shield, ChevronDown, Check,
-  AlertTriangle, Store
+import {
+  Search, Bell, UserCheck, ShoppingCart,
+  UserPlus, Shield, ChevronDown, LogOut,
+  AlertTriangle, Store, Sparkles, Cloud, HardDrive, ShieldCheck, KeyRound
 } from 'lucide-react';
-import { 
-  getActiveUser, switchRole, getSettings, getProducts, 
-  getInstallmentAccounts, getVisitors, isDemoMode, setDemoMode, seedDemoData 
+import {
+  getSettings, getProducts,
+  getInstallmentAccounts, getVisitors
 } from '../../services/storage';
-import { UserRole } from '../../types/erp';
-import { Sparkles, ShieldCheck, Cloud, HardDrive } from 'lucide-react';
 import { InventoryAlertNotification } from './InventoryAlertNotification';
 import { getCloudPersistenceStatus } from '../../services/firebase';
+import { useAuth } from '../../context/AuthContext';
 
 interface HeaderProps {
   onOpenSearch: () => void;
@@ -30,9 +29,18 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenQuickAttendance,
   onOpenLoginModal
 }) => {
-  const [currentUser, setCurrentUser] = useState(getActiveUser());
-  const [settings] = useState(getSettings());
-  const [showRoleDropdown, setShowRoleDropdown] = useState(false);
+  const {
+    staffUser,
+    isOwner,
+    isDemoSession,
+    connectionStatus,
+    can,
+    exitDemoMode,
+    logout,
+  } = useAuth();
+
+  const settings = getSettings();
+  const [showProfileDropdown, setShowProfileDropdown] = useState(false);
   const [showNotificationDropdown, setShowNotificationDropdown] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -41,30 +49,22 @@ export const Header: React.FC<HeaderProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  // Calculate live alerts
   const lowStockCount = getProducts().filter(p => p.stockQuantity <= p.minStockLevel).length;
   const overdueCount = getInstallmentAccounts().filter(a => a.status === 'Overdue').length;
   const insideVisitors = getVisitors().filter(v => v.status === 'Inside').length;
   const totalAlerts = lowStockCount + overdueCount;
 
-  const roles: { role: UserRole; title: string; desc: string }[] = [
-    { role: 'Owner', title: 'Owner / Super Admin', desc: 'Full Master Access & Audit' },
-    { role: 'Manager', title: 'Showroom Manager', desc: 'Operations & Floor Control' },
-    { role: 'Cashier', title: 'Head Cashier', desc: 'POS Billing & Cash Receipts' },
-    { role: 'Accountant', title: 'Senior Accountant', desc: 'Double-Entry, Vouchers & Ledgers' },
-    { role: 'RecoveryOfficer', title: 'Recovery Officer', desc: 'Installment Collections & Dues' },
-    { role: 'StockManager', title: 'Stock Incharge', desc: 'Warehouse & Serial Numbers' },
-    { role: 'Receptionist', title: 'Front Receptionist', desc: 'Visitor Entry & Staff Attendance' }
-  ];
+  const displayName = isDemoSession
+    ? 'Client Demo Preview'
+    : staffUser?.name || 'Unauthenticated';
+  const displayRole = isDemoSession
+    ? 'Read-Only Showcase'
+    : staffUser?.customRoleName || staffUser?.role || 'Guest';
 
-  const handleSelectRole = (r: UserRole) => {
-    const user = switchRole(r);
-    setCurrentUser(user);
-    setShowRoleDropdown(false);
-  };
+  const cloudStatus = getCloudPersistenceStatus();
 
   return (
-    <header 
+    <header
       style={{ fontFamily: 'Georgia', fontStyle: 'italic', textAlign: 'left', fontSize: '14px' }}
       className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-200 bg-white/95 px-4 sm:px-6 backdrop-blur-md no-print"
     >
@@ -75,51 +75,50 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
         <div>
           <div className="flex items-center gap-2">
-            <h1 
+            <h1
               style={{ fontFamily: 'Georgia', fontSize: '18px' }}
               className="text-sm sm:text-base font-bold text-slate-900 tracking-tight leading-tight"
             >
               {settings.showroomName}
             </h1>
-            {isDemoMode() ? (
+            {isDemoSession ? (
               <button
-                onClick={() => { setDemoMode(false); window.location.reload(); }}
+                onClick={() => exitDemoMode()}
                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100 transition cursor-pointer"
-                title="Click to switch to clean Production Mode (Empty database)"
+                title="Exit Isolated Client Demo Showcase and sign in to Cloud ERP"
               >
                 <Sparkles className="h-3 w-3 text-amber-600" />
-                <span>Demo Mode</span>
+                <span>Demo Showcase (Exit)</span>
               </button>
             ) : (
-              <button
-                onClick={() => { seedDemoData(); setDemoMode(true); window.location.reload(); }}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 transition cursor-pointer"
-                title="Click to load sample showroom dataset for testing"
+              <span
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-300"
+                title="Live Cloud Firestore Production Workspace"
               >
                 <ShieldCheck className="h-3 w-3 text-emerald-600" />
-                <span>Production Mode</span>
-              </button>
+                <span>Live Cloud ERP</span>
+              </span>
             )}
 
-            {getCloudPersistenceStatus().isConfigured ? (
-              <span 
+            {cloudStatus.isConfigured && !isDemoSession ? (
+              <span
                 className="hidden xl:inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200"
-                title={getCloudPersistenceStatus().details}
+                title={connectionStatus.message || cloudStatus.details}
               >
                 <Cloud className="h-3 w-3 text-blue-600" />
-                <span>Cloud Firestore Active</span>
+                <span>{connectionStatus.online ? 'Firestore Synced' : 'Firestore Ready'}</span>
               </span>
             ) : (
-              <span 
+              <span
                 className="hidden xl:inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100/80 text-slate-600 border border-slate-200"
-                title={getCloudPersistenceStatus().details}
+                title="Running in isolated local demo memory"
               >
                 <HardDrive className="h-3 w-3 text-slate-500" />
-                <span>Local Engine</span>
+                <span>Sandbox Memory</span>
               </span>
             )}
           </div>
-          <p 
+          <p
             style={{ fontFamily: 'Times New Roman', fontSize: '8px' }}
             className="text-[11px] text-slate-500 hidden sm:block"
           >
@@ -147,7 +146,6 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Right: Quick Actions, Notifications & Active Profile */}
       <div className="flex items-center gap-2 sm:gap-3">
-        {/* Mobile Search Button */}
         <button
           onClick={onOpenSearch}
           className="md:hidden p-2 text-slate-500 hover:bg-slate-100 rounded-lg"
@@ -156,36 +154,38 @@ export const Header: React.FC<HeaderProps> = ({
           <Search className="h-5 w-5" />
         </button>
 
-        {/* Quick Action: New POS Sale */}
-        <button
-          onClick={onOpenQuickSale}
-          className="hidden sm:inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 px-3 py-1.5 text-xs font-semibold text-white shadow-xs transition active:scale-98"
-        >
-          <ShoppingCart className="h-3.5 w-3.5" />
-          <span>New Sale (POS)</span>
-        </button>
+        {can('pos', 'CREATE') && (
+          <button
+            onClick={onOpenQuickSale}
+            className="hidden sm:inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 px-3 py-1.5 text-xs font-semibold text-white shadow-xs transition active:scale-98"
+          >
+            <ShoppingCart className="h-3.5 w-3.5" />
+            <span>New Sale (POS)</span>
+          </button>
+        )}
 
-        {/* Quick Action: Visitor Entry */}
-        <button
-          onClick={onOpenQuickVisitor}
-          className="hidden lg:inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-xs transition"
-          title="Visitor Check-In"
-        >
-          <UserPlus className="h-3.5 w-3.5 text-emerald-600" />
-          <span>Visitor ({insideVisitors} In)</span>
-        </button>
+        {can('visitors', 'CREATE') && (
+          <button
+            onClick={onOpenQuickVisitor}
+            className="hidden lg:inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-xs transition"
+            title="Visitor Check-In"
+          >
+            <UserPlus className="h-3.5 w-3.5 text-emerald-600" />
+            <span>Visitor ({insideVisitors} In)</span>
+          </button>
+        )}
 
-        {/* Quick Action: Mark Attendance */}
-        <button
-          onClick={onOpenQuickAttendance}
-          className="hidden xl:inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-xs transition"
-          title="Staff Attendance"
-        >
-          <UserCheck className="h-3.5 w-3.5 text-indigo-600" />
-          <span>Attendance</span>
-        </button>
+        {can('attendance', 'CREATE') && (
+          <button
+            onClick={onOpenQuickAttendance}
+            className="hidden xl:inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-xs transition"
+            title="Staff Attendance"
+          >
+            <UserCheck className="h-3.5 w-3.5 text-indigo-600" />
+            <span>Attendance</span>
+          </button>
+        )}
 
-        {/* Clock */}
         <div className="hidden 2xl:flex flex-col text-right font-mono text-[11px] text-slate-500 px-2 border-l border-slate-200">
           <span className="font-semibold text-slate-700">
             {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
@@ -195,7 +195,6 @@ export const Header: React.FC<HeaderProps> = ({
           </span>
         </div>
 
-        {/* Dedicated Inventory Reorder Level Monitor */}
         <InventoryAlertNotification onNavigate={onNavigate} />
 
         {/* Notifications Dropdown */}
@@ -213,7 +212,7 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
 
           {showNotificationDropdown && (
-            <div className="absolute right-0 mt-2 w-80 rounded-2xl bg-white shadow-xl ring-1 ring-slate-900/10 p-3 z-50 animate-in fade-in zoom-in-95">
+            <div className="absolute right-0 mt-2 w-80 rounded-2xl bg-white shadow-xl ring-1 ring-slate-900/10 p-3 z-50">
               <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
                 <p className="text-xs font-bold text-slate-800 uppercase tracking-wider">Business Alerts</p>
                 <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">
@@ -222,7 +221,7 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
               <div className="space-y-2 text-xs">
                 {lowStockCount > 0 && (
-                  <div 
+                  <div
                     onClick={() => { onNavigate('inventory'); setShowNotificationDropdown(false); }}
                     className="flex items-start gap-2.5 p-2 rounded-xl bg-amber-50 border border-amber-100 text-amber-900 cursor-pointer hover:bg-amber-100/60 transition"
                   >
@@ -235,7 +234,7 @@ export const Header: React.FC<HeaderProps> = ({
                 )}
 
                 {overdueCount > 0 && (
-                  <div 
+                  <div
                     onClick={() => { onNavigate('installments'); setShowNotificationDropdown(false); }}
                     className="flex items-start gap-2.5 p-2 rounded-xl bg-rose-50 border border-rose-100 text-rose-900 cursor-pointer hover:bg-rose-100/60 transition"
                   >
@@ -248,7 +247,7 @@ export const Header: React.FC<HeaderProps> = ({
                 )}
 
                 {insideVisitors > 0 && (
-                  <div 
+                  <div
                     onClick={() => { onNavigate('visitors'); setShowNotificationDropdown(false); }}
                     className="flex items-start gap-2.5 p-2 rounded-xl bg-blue-50 border border-blue-100 text-blue-900 cursor-pointer hover:bg-blue-100/60 transition"
                   >
@@ -268,58 +267,61 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
 
-        {/* Role Switcher & User Profile Menu */}
+        {/* Verified User Profile Menu (No insecure 1-click role switching in live mode) */}
         <div className="relative">
           <button
-            onClick={() => setShowRoleDropdown(!showRoleDropdown)}
+            onClick={() => setShowProfileDropdown(!showProfileDropdown)}
             className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/80 p-1.5 sm:px-2.5 hover:bg-slate-100 transition shadow-2xs"
           >
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-100 text-blue-700 font-bold text-xs">
-              {currentUser.name.charAt(0)}
+              {displayName.charAt(0)}
             </div>
             <div className="text-left hidden md:block">
-              <p className="text-xs font-semibold text-slate-800 leading-tight">{currentUser.name}</p>
+              <p className="text-xs font-semibold text-slate-800 leading-tight">{displayName}</p>
               <div className="flex items-center gap-1">
                 <Shield className="h-2.5 w-2.5 text-blue-600" />
-                <span className="text-[10px] font-medium text-blue-600">{currentUser.role}</span>
+                <span className="text-[10px] font-medium text-blue-600">{displayRole}</span>
               </div>
             </div>
             <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
           </button>
 
-          {showRoleDropdown && (
-            <div className="absolute right-0 mt-2 w-72 rounded-2xl bg-white shadow-xl ring-1 ring-slate-900/10 p-2 z-50 animate-in fade-in zoom-in-95">
-              <div className="p-2 border-b border-slate-100 mb-1">
-                <p className="text-xs font-bold text-slate-800">Switch Role / Test Permissions</p>
-                <p className="text-[10px] text-slate-400">Demonstrates granular role-based ERP access</p>
+          {showProfileDropdown && (
+            <div className="absolute right-0 mt-2 w-72 rounded-2xl bg-white shadow-xl ring-1 ring-slate-900/10 p-3 z-50 space-y-2">
+              <div className="pb-2 border-b border-slate-100">
+                <p className="text-xs font-bold text-slate-900">{displayName}</p>
+                <p className="text-[11px] text-slate-500">{isDemoSession ? 'Isolated Demo Mode' : staffUser?.email}</p>
+                <span className="mt-1 inline-block px-2 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-bold">
+                  {displayRole} {staffUser?.mfaEnabled ? '• MFA Protected' : ''}
+                </span>
               </div>
 
-              <div className="space-y-1">
-                {roles.map(r => (
-                  <button
-                    key={r.role}
-                    onClick={() => handleSelectRole(r.role)}
-                    className={`flex items-center justify-between w-full p-2 rounded-xl text-left transition ${
-                      currentUser.role === r.role ? 'bg-blue-50 text-blue-900 font-semibold' : 'hover:bg-slate-50 text-slate-700'
-                    }`}
-                  >
-                    <div>
-                      <p className="text-xs">{r.title}</p>
-                      <p className="text-[10px] text-slate-400">{r.desc}</p>
-                    </div>
-                    {currentUser.role === r.role && <Check className="h-4 w-4 text-blue-600" />}
-                  </button>
-                ))}
-              </div>
-
-              <div className="mt-2 pt-2 border-t border-slate-100">
+              {isOwner && (
                 <button
-                  onClick={() => { setShowRoleDropdown(false); onOpenLoginModal(); }}
-                  className="w-full text-center text-xs font-semibold text-blue-600 hover:text-blue-700 py-1.5 rounded-lg hover:bg-blue-50 transition"
+                  onClick={() => { setShowProfileDropdown(false); onNavigate('admin'); }}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800"
                 >
-                  Open Secure Access Portal (Login Screen)
+                  <KeyRound className="h-3.5 w-3.5" />
+                  <span>Owner Super Admin & Security</span>
                 </button>
-              </div>
+              )}
+
+              {isDemoSession ? (
+                <button
+                  onClick={() => { setShowProfileDropdown(false); exitDemoMode(); onOpenLoginModal(); }}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-blue-700 text-white text-xs font-bold hover:bg-blue-800"
+                >
+                  <span>Exit Demo & Sign In to Cloud ERP</span>
+                </button>
+              ) : (
+                <button
+                  onClick={async () => { setShowProfileDropdown(false); await logout(); }}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold hover:bg-rose-100"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  <span>Sign Out Securely</span>
+                </button>
+              )}
             </div>
           )}
         </div>

@@ -1,25 +1,37 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   FileInput, Plus, Search, Truck, Calendar, 
-  CheckCircle, ArrowUpRight, DollarSign, X, Trash2, Printer 
+  CheckCircle, ArrowUpRight, DollarSign, X, Trash2, Printer, RotateCcw, AlertCircle 
 } from 'lucide-react';
 import { 
-  getPurchases, getSuppliers, getProducts, 
-  createPurchaseInvoice, getSettings, getActiveUser 
+  getPurchases, getPurchaseReturns, getSuppliers, getProducts, 
+  createPurchaseInvoice, createPurchaseReturn, getSettings, getActiveUser, subscribeToDatabase 
 } from '../../services/storage';
-import { PurchaseInvoice, PurchaseItem } from '../../types/erp';
+import { PurchaseInvoice, PurchaseItem, PurchaseReturnItem } from '../../types/erp';
 import { Badge } from '../common/Badge';
 
 export const PurchasesView: React.FC = () => {
-  const [purchases, setPurchases] = useState<PurchaseInvoice[]>(getPurchases());
+  const [, setDbTick] = useState(0);
+  useEffect(() => subscribeToDatabase(() => setDbTick(t => t + 1)), []);
+
+  const purchases = getPurchases();
+  const purchaseReturns = getPurchaseReturns();
   const suppliers = getSuppliers();
   const products = getProducts();
   const settings = getSettings();
-  const currentUser = getActiveUser();
 
+  const [activeTab, setActiveTab] = useState<'purchases' | 'returns'>('purchases');
   const [searchQuery, setSearchQuery] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showReturnModal, setShowReturnModal] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<PurchaseInvoice | null>(null);
+  const [notice, setNotice] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
+
+  // Purchase Return state
+  const [returnPurchaseId, setReturnPurchaseId] = useState('');
+  const [returnMethod, setReturnMethod] = useState<'Deduct Payable' | 'Cash Refund' | 'Bank Refund'>('Deduct Payable');
+  const [returnRemarks, setReturnRemarks] = useState('');
+  const [returnItems, setReturnItems] = useState<PurchaseReturnItem[]>([]);
 
   // Form state (NextERP Screenshot style)
   const [supplierId, setSupplierId] = useState(suppliers[0]?.id || '');
@@ -108,13 +120,13 @@ export const PurchasesView: React.FC = () => {
     e.preventDefault();
     const supp = suppliers.find(s => s.id === supplierId);
     if (!supp) {
-      alert('Please select a valid supplier');
+      setNotice({ type: 'error', text: 'Please select or create a supplier before saving a purchase invoice.' });
       return;
     }
 
     const invNum = `${settings.purchasePrefix}${Date.now().toString().slice(-4)}`;
 
-    const newInv = createPurchaseInvoice({
+    createPurchaseInvoice({
       invoiceNumber: invNum,
       supplierId: supp.id,
       supplierName: supp.companyName,
@@ -132,8 +144,75 @@ export const PurchasesView: React.FC = () => {
       notes
     });
 
-    setPurchases(getPurchases());
     setShowCreateModal(false);
+    setNotice({ type: 'success', text: `Purchase Invoice #${invNum} posted to inventory & accounts.` });
+  };
+
+  const handleOpenReturnModal = (preset?: PurchaseInvoice) => {
+    const target = preset || purchases.find(p => p.status !== 'Returned');
+    if (target) {
+      setReturnPurchaseId(target.id);
+      setReturnItems(
+        target.items.map(i => ({
+          productId: i.productId,
+          productName: i.productName,
+          quantity: i.quantity,
+          purchasePrice: i.purchasePrice,
+          total: i.quantity * i.purchasePrice,
+          serialNumber: i.serialNumbers?.[0],
+          reason: 'Defective / Vendor return',
+        }))
+      );
+      setReturnMethod(target.remainingBalance > 0 ? 'Deduct Payable' : 'Bank Refund');
+    } else {
+      setReturnPurchaseId('');
+      setReturnItems([]);
+    }
+    setReturnRemarks('');
+    setShowReturnModal(true);
+  };
+
+  const handleSelectReturnPurchase = (id: string) => {
+    setReturnPurchaseId(id);
+    const pur = purchases.find(p => p.id === id);
+    if (pur) {
+      setReturnItems(
+        pur.items.map(i => ({
+          productId: i.productId,
+          productName: i.productName,
+          quantity: i.quantity,
+          purchasePrice: i.purchasePrice,
+          total: i.quantity * i.purchasePrice,
+          serialNumber: i.serialNumbers?.[0],
+          reason: 'Defective / Vendor return',
+        }))
+      );
+    }
+  };
+
+  const handleSubmitPurchaseReturn = (e: React.FormEvent) => {
+    e.preventDefault();
+    const orig = purchases.find(p => p.id === returnPurchaseId);
+    const validItems = returnItems.filter(i => i.quantity > 0);
+    if (!orig || validItems.length === 0) {
+      setNotice({ type: 'error', text: 'Select a valid purchase invoice and at least one item to return.' });
+      return;
+    }
+    const total = validItems.reduce((sum, i) => sum + i.total, 0);
+    const created = createPurchaseReturn({
+      returnNumber: `PRTN-${Date.now().toString().slice(-5)}`,
+      originalPurchaseNo: orig.invoiceNumber,
+      supplierId: orig.supplierId,
+      supplierName: orig.supplierName,
+      date: new Date().toISOString().split('T')[0],
+      items: validItems,
+      grandTotal: total,
+      refundMethod: returnMethod,
+      remarks: returnRemarks,
+    });
+    setShowReturnModal(false);
+    setActiveTab('returns');
+    setNotice({ type: 'success', text: `Purchase Return #${created.returnNumber} recorded (PKR ${created.grandTotal.toLocaleString()}). Stock & payable updated.` });
   };
 
   const filteredPurchases = purchases.filter(p => 
@@ -150,18 +229,97 @@ export const PurchasesView: React.FC = () => {
             Purchase Invoices & Consignments
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Record supplier orders, stock intake, landed freight & payable balances
+            Record supplier orders, stock intake, landed freight, purchase returns & payable balances
           </p>
         </div>
 
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            onClick={() => handleOpenReturnModal()}
+            className="flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 px-3.5 py-2.5 text-xs font-bold text-amber-900 transition"
+          >
+            <RotateCcw className="h-4 w-4" />
+            <span>Purchase Return</span>
+          </button>
+
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition active:scale-98"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Create Purchase Invoice</span>
+          </button>
+        </div>
+      </div>
+
+      {notice && (
+        <div className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+          notice.type === 'error' ? 'bg-rose-50 border-rose-200 text-rose-900' : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+        }`}>
+          <div className="flex items-center gap-2">
+            {notice.type === 'error' ? <AlertCircle className="h-4 w-4 text-rose-600" /> : <CheckCircle className="h-4 w-4 text-emerald-600" />}
+            <span>{notice.text}</span>
+          </div>
+          <button onClick={() => setNotice(null)} className="text-slate-400 hover:text-slate-700"><X className="h-4 w-4" /></button>
+        </div>
+      )}
+
+      {/* Tabs */}
+      <div className="flex gap-2">
         <button
-          onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition active:scale-98 shrink-0"
+          onClick={() => setActiveTab('purchases')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold ${
+            activeTab === 'purchases' ? 'bg-blue-600 text-white' : 'bg-white border border-slate-200 text-slate-700'
+          }`}
         >
-          <Plus className="h-4 w-4" />
-          <span>Create Purchase Invoice</span>
+          Purchase Consignments ({purchases.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('returns')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold ${
+            activeTab === 'returns' ? 'bg-amber-600 text-white' : 'bg-white border border-slate-200 text-slate-700'
+          }`}
+        >
+          Purchase Returns / Debit Notes ({purchaseReturns.length})
         </button>
       </div>
+
+      {activeTab === 'returns' ? (
+        <div className="rounded-2xl bg-white border border-slate-200 shadow-2xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50/80 border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px]">
+                <tr>
+                  <th className="py-3 px-4">Return #</th>
+                  <th className="py-3 px-4">Original Purchase</th>
+                  <th className="py-3 px-4">Supplier</th>
+                  <th className="py-3 px-4">Date</th>
+                  <th className="py-3 px-4">Items</th>
+                  <th className="py-3 px-4">Settlement</th>
+                  <th className="py-3 px-4 text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {purchaseReturns.map(r => (
+                  <tr key={r.id} className="hover:bg-slate-50/60">
+                    <td className="py-3 px-4 font-mono font-bold text-amber-700">{r.returnNumber}</td>
+                    <td className="py-3 px-4 font-mono text-blue-700">{r.originalPurchaseNo}</td>
+                    <td className="py-3 px-4 font-semibold text-slate-900">{r.supplierName}</td>
+                    <td className="py-3 px-4 text-slate-500">{r.date}</td>
+                    <td className="py-3 px-4 text-slate-600">{r.items.map(i => `${i.productName} (x${i.quantity})`).join(', ')}</td>
+                    <td className="py-3 px-4"><span className="px-2 py-0.5 rounded bg-slate-100 font-semibold">{r.refundMethod}</span></td>
+                    <td className="py-3 px-4 text-right font-mono font-bold text-amber-800">₨ {r.grandTotal.toLocaleString()}</td>
+                  </tr>
+                ))}
+                {purchaseReturns.length === 0 && (
+                  <tr><td colSpan={7} className="p-8 text-center text-slate-400">No purchase returns recorded yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <>
 
       {/* Purchases List */}
       <div className="rounded-2xl bg-white border border-slate-200 shadow-2xs overflow-hidden">
@@ -233,6 +391,8 @@ export const PurchasesView: React.FC = () => {
           </table>
         </div>
       </div>
+      </>
+      )}
 
       {/* Create Purchase Invoice Modal (NextERP Screenshot style) */}
       {showCreateModal && (
@@ -475,6 +635,106 @@ export const PurchasesView: React.FC = () => {
                 <p className="text-rose-700 font-bold">Balance: ₨ {selectedInvoice.remainingBalance.toLocaleString()}</p>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Purchase Return Modal */}
+      {showReturnModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="text-sm font-bold text-slate-900">Create Purchase Return (Debit Note)</h3>
+              <button onClick={() => setShowReturnModal(false)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+            </div>
+            <form onSubmit={handleSubmitPurchaseReturn} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Original Purchase Invoice *</label>
+                  <select
+                    required
+                    value={returnPurchaseId}
+                    onChange={e => handleSelectReturnPurchase(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white p-2.5"
+                  >
+                    <option value="">Select Purchase Invoice...</option>
+                    {purchases.filter(p => p.status !== 'Returned').map(p => (
+                      <option key={p.id} value={p.id}>
+                        #{p.invoiceNumber} — {p.supplierName} (₨ {p.grandTotal.toLocaleString()})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Settlement Method *</label>
+                  <select
+                    value={returnMethod}
+                    onChange={e => setReturnMethod(e.target.value as any)}
+                    className="w-full rounded-xl border border-slate-200 bg-white p-2.5"
+                  >
+                    <option value="Deduct Payable">Deduct from Supplier Payable</option>
+                    <option value="Cash Refund">Cash Refund Received</option>
+                    <option value="Bank Refund">Bank Refund Received</option>
+                  </select>
+                </div>
+              </div>
+
+              {returnItems.length > 0 && (
+                <div className="border border-slate-200 rounded-xl divide-y divide-slate-100">
+                  {returnItems.map((it, idx) => (
+                    <div key={idx} className="p-3 flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="font-bold text-slate-900">{it.productName}</p>
+                        <p className="text-[11px] text-slate-500">Cost: ₨ {it.purchasePrice.toLocaleString()}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={it.reason}
+                          onChange={e => {
+                            const copy = [...returnItems];
+                            copy[idx] = { ...copy[idx], reason: e.target.value };
+                            setReturnItems(copy);
+                          }}
+                          className="rounded-lg border border-slate-200 px-2 py-1 text-xs w-36"
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          value={it.quantity}
+                          onChange={e => {
+                            const q = Math.max(0, Number(e.target.value) || 0);
+                            const copy = [...returnItems];
+                            copy[idx] = { ...copy[idx], quantity: q, total: q * copy[idx].purchasePrice };
+                            setReturnItems(copy);
+                          }}
+                          className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-center font-mono font-bold"
+                        />
+                        <span className="font-mono font-bold text-slate-900 w-24 text-right">
+                          ₨ {it.total.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Remarks</label>
+                <input
+                  type="text"
+                  value={returnRemarks}
+                  onChange={e => setReturnRemarks(e.target.value)}
+                  placeholder="Optional supplier RMA or damage note..."
+                  className="w-full rounded-xl border border-slate-200 p-2.5"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={() => setShowReturnModal(false)} className="flex-1 rounded-xl border border-slate-200 py-2.5 font-semibold text-slate-600">Cancel</button>
+                <button type="submit" className="flex-1 rounded-xl bg-amber-600 hover:bg-amber-700 py-2.5 font-bold text-white">Post Purchase Return</button>
+              </div>
+            </form>
           </div>
         </div>
       )}

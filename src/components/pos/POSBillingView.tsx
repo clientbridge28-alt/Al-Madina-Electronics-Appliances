@@ -1,25 +1,41 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Search, Barcode, ShoppingCart, Trash2, Plus, Minus, 
   User, CheckCircle2, AlertCircle, RotateCcw, 
-  Printer, CreditCard, Banknote, ShieldAlert
+  Printer, CreditCard, Banknote, ShieldAlert, X, Receipt
 } from 'lucide-react';
 import { 
-  getProducts, getCustomers, createSalesInvoice, 
-  saveCustomer, getActiveUser, getSettings 
+  getProducts, getCustomers, getSales, getSalesReturns,
+  createSalesInvoice, createSalesReturn,
+  saveCustomer, getActiveUser, getSettings, subscribeToDatabase 
 } from '../../services/storage';
-import { Product, Customer, SaleItem, SalesInvoice } from '../../types/erp';
+import { Product, Customer, SaleItem, SalesInvoice, SalesReturnItem } from '../../types/erp';
 import { InvoicePrintModal } from './InvoicePrintModal';
 
 interface POSBillingViewProps {
   initialSearchId?: string;
 }
 
-export const POSBillingView: React.FC<POSBillingViewProps> = ({ initialSearchId }) => {
-  const [products] = useState<Product[]>(getProducts());
-  const [customers, setCustomers] = useState<Customer[]>(getCustomers());
+export const POSBillingView: React.FC<POSBillingViewProps> = () => {
+  const [, setDbTick] = useState(0);
+  useEffect(() => subscribeToDatabase(() => setDbTick(t => t + 1)), []);
+
+  const products = getProducts();
+  const customers = getCustomers();
+  const salesList = getSales();
+  const salesReturns = getSalesReturns();
   const settings = getSettings();
   const currentUser = getActiveUser();
+
+  const [activeTab, setActiveTab] = useState<'pos' | 'invoices' | 'returns'>('pos');
+  const [notice, setNotice] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
+
+  // Sales Return modal state
+  const [showReturnModal, setShowReturnModal] = useState(false);
+  const [returnInvoiceId, setReturnInvoiceId] = useState('');
+  const [returnMethod, setReturnMethod] = useState<'Cash' | 'Credit Note' | 'Bank'>('Cash');
+  const [returnRemarks, setReturnRemarks] = useState('');
+  const [returnItems, setReturnItems] = useState<SalesReturnItem[]>([]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [barcodeInput, setBarcodeInput] = useState('');
@@ -73,15 +89,16 @@ export const POSBillingView: React.FC<POSBillingViewProps> = ({ initialSearchId 
     if (match) {
       addToCart(match);
       setBarcodeInput('');
+      setNotice(null);
     } else {
-      alert(`No product found with barcode / SKU: ${barcodeInput}`);
+      setNotice({ type: 'error', text: `No product found with barcode / SKU: ${barcodeInput}` });
     }
   };
 
   // Add product to cart
   const addToCart = (product: Product) => {
     if (product.stockQuantity <= 0) {
-      alert(`Cannot add ${product.name}: Out of Stock!`);
+      setNotice({ type: 'error', text: `Cannot add ${product.name}: Out of Stock!` });
       return;
     }
 
@@ -89,7 +106,7 @@ export const POSBillingView: React.FC<POSBillingViewProps> = ({ initialSearchId 
       const existing = prev.find(item => item.productId === product.id);
       if (existing) {
         if (existing.quantity >= product.stockQuantity) {
-          alert(`Cannot add more than available stock (${product.stockQuantity} units)`);
+          setNotice({ type: 'error', text: `Cannot add more than available stock (${product.stockQuantity} units)` });
           return prev;
         }
         return prev.map(item => 
@@ -98,7 +115,6 @@ export const POSBillingView: React.FC<POSBillingViewProps> = ({ initialSearchId 
             : item
         );
       } else {
-        // Pick available serial if applicable
         const availableSerial = product.serials?.find(s => s.status === 'In Stock')?.serialNumber;
         return [
           ...prev,
@@ -128,7 +144,7 @@ export const POSBillingView: React.FC<POSBillingViewProps> = ({ initialSearchId 
           const newQty = item.quantity + delta;
           if (newQty <= 0) return null;
           if (prod && newQty > prod.stockQuantity) {
-            alert(`Stock limit reached! Max available: ${prod.stockQuantity}`);
+            setNotice({ type: 'error', text: `Stock limit reached! Max available: ${prod.stockQuantity}` });
             return item;
           }
           return { ...item, quantity: newQty, total: newQty * item.unitPrice };
@@ -193,7 +209,6 @@ export const POSBillingView: React.FC<POSBillingViewProps> = ({ initialSearchId 
     };
 
     saveCustomer(newCustomer);
-    setCustomers(getCustomers());
     setSelectedCustomerId(newCustomer.id);
     setShowNewCustomerModal(false);
     setNewCustName('');
@@ -205,12 +220,12 @@ export const POSBillingView: React.FC<POSBillingViewProps> = ({ initialSearchId 
   // Complete Sale & Post Invoice
   const handleCheckout = () => {
     if (cartItems.length === 0) {
-      alert('Cart is empty! Add products before checking out.');
+      setNotice({ type: 'error', text: 'Cart is empty! Add products before checking out.' });
       return;
     }
 
     if (saleType === 'Credit' && selectedCustomerId === 'walk-in') {
-      alert('Credit sales require selecting or registering a verified customer profile.');
+      setNotice({ type: 'error', text: 'Credit sales require selecting or registering a verified customer profile.' });
       return;
     }
 
@@ -243,14 +258,239 @@ export const POSBillingView: React.FC<POSBillingViewProps> = ({ initialSearchId 
 
     setLastInvoice(newInvoice);
     setShowPrintModal(true);
+    setNotice({ type: 'success', text: `Invoice #${newInvoice.invoiceNumber} posted & stock/accounting updated.` });
 
-    // Clear cart
     setCartItems([]);
     setDiscountAmount(0);
     setSalesNotes('');
   };
 
+  const handleOpenReturnModal = (presetSale?: SalesInvoice) => {
+    const targetSale = presetSale || salesList.find(s => s.status !== 'Returned');
+    if (targetSale) {
+      setReturnInvoiceId(targetSale.id);
+      setReturnItems(
+        targetSale.items.map(i => ({
+          productId: i.productId,
+          productName: i.productName,
+          quantity: i.quantity,
+          unitPrice: i.unitPrice,
+          total: i.quantity * i.unitPrice,
+          serialNumber: i.selectedSerial,
+          reason: 'Customer return',
+        }))
+      );
+      setReturnMethod(targetSale.saleType === 'Credit' ? 'Credit Note' : 'Cash');
+    } else {
+      setReturnInvoiceId('');
+      setReturnItems([]);
+    }
+    setReturnRemarks('');
+    setShowReturnModal(true);
+  };
+
+  const handleSelectReturnInvoice = (id: string) => {
+    setReturnInvoiceId(id);
+    const sale = salesList.find(s => s.id === id);
+    if (sale) {
+      setReturnItems(
+        sale.items.map(i => ({
+          productId: i.productId,
+          productName: i.productName,
+          quantity: i.quantity,
+          unitPrice: i.unitPrice,
+          total: i.quantity * i.unitPrice,
+          serialNumber: i.selectedSerial,
+          reason: 'Customer return',
+        }))
+      );
+      setReturnMethod(sale.saleType === 'Credit' ? 'Credit Note' : 'Cash');
+    }
+  };
+
+  const handleSubmitSalesReturn = (e: React.FormEvent) => {
+    e.preventDefault();
+    const orig = salesList.find(s => s.id === returnInvoiceId);
+    const validItems = returnItems.filter(i => i.quantity > 0);
+    if (!orig || validItems.length === 0) {
+      setNotice({ type: 'error', text: 'Select a valid sales invoice and at least one item to return.' });
+      return;
+    }
+    const total = validItems.reduce((sum, i) => sum + i.total, 0);
+    const created = createSalesReturn({
+      returnNumber: `SRTN-${Date.now().toString().slice(-5)}`,
+      originalInvoiceNo: orig.invoiceNumber,
+      customerId: orig.customerId,
+      customerName: orig.customerName,
+      date: new Date().toISOString().split('T')[0],
+      items: validItems,
+      grandTotal: total,
+      refundMethod: returnMethod,
+      remarks: returnRemarks,
+    });
+    setShowReturnModal(false);
+    setActiveTab('returns');
+    setNotice({ type: 'success', text: `Sales Return #${created.returnNumber} processed (PKR ${created.grandTotal.toLocaleString()}). Inventory & vouchers updated.` });
+  };
+
   return (
+    <div className="space-y-4">
+      {/* Top Mode Tabs */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setActiveTab('pos')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition ${
+              activeTab === 'pos' ? 'bg-blue-600 text-white shadow-xs' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            POS Billing Terminal
+          </button>
+          <button
+            onClick={() => setActiveTab('invoices')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition ${
+              activeTab === 'invoices' ? 'bg-blue-600 text-white shadow-xs' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            Sales Invoices ({salesList.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('returns')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition ${
+              activeTab === 'returns' ? 'bg-rose-600 text-white shadow-xs' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            Sales Returns & Refunds ({salesReturns.length})
+          </button>
+        </div>
+
+        <button
+          onClick={() => handleOpenReturnModal()}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 px-3.5 py-2 text-xs font-bold text-rose-800"
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          <span>Process Sales Return</span>
+        </button>
+      </div>
+
+      {notice && (
+        <div className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+          notice.type === 'error' ? 'bg-rose-50 border-rose-200 text-rose-900' : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+        }`}>
+          <div className="flex items-center gap-2">
+            {notice.type === 'error' ? <AlertCircle className="h-4 w-4 text-rose-600" /> : <CheckCircle2 className="h-4 w-4 text-emerald-600" />}
+            <span>{notice.text}</span>
+          </div>
+          <button onClick={() => setNotice(null)} className="text-slate-400 hover:text-slate-700"><X className="h-4 w-4" /></button>
+        </div>
+      )}
+
+      {activeTab === 'invoices' && (
+        <div className="rounded-2xl bg-white border border-slate-200 shadow-2xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[10px] border-b border-slate-200">
+                <tr>
+                  <th className="p-3.5">Invoice #</th>
+                  <th className="p-3.5">Date</th>
+                  <th className="p-3.5">Customer</th>
+                  <th className="p-3.5">Type</th>
+                  <th className="p-3.5 text-right">Total</th>
+                  <th className="p-3.5 text-right">Paid</th>
+                  <th className="p-3.5 text-center">Status</th>
+                  <th className="p-3.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {salesList.map(inv => (
+                  <tr key={inv.id} className="hover:bg-slate-50/70">
+                    <td className="p-3.5 font-mono font-bold text-blue-700">{inv.invoiceNumber}</td>
+                    <td className="p-3.5 text-slate-500">{inv.date}</td>
+                    <td className="p-3.5 font-semibold text-slate-900">{inv.customerName}</td>
+                    <td className="p-3.5">{inv.saleType}</td>
+                    <td className="p-3.5 text-right font-mono font-bold">₨ {inv.grandTotal.toLocaleString()}</td>
+                    <td className="p-3.5 text-right font-mono text-emerald-700">₨ {inv.paidAmount.toLocaleString()}</td>
+                    <td className="p-3.5 text-center">
+                      <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${
+                        inv.status === 'Returned' ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
+                      }`}>{inv.status}</span>
+                    </td>
+                    <td className="p-3.5 text-right space-x-2">
+                      <button
+                        onClick={() => { setLastInvoice(inv); setShowPrintModal(true); }}
+                        className="px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-slate-100 font-semibold text-[11px]"
+                      >
+                        Print Slip
+                      </button>
+                      {inv.status !== 'Returned' && (
+                        <button
+                          onClick={() => handleOpenReturnModal(inv)}
+                          className="px-2.5 py-1 rounded-lg border border-rose-200 bg-rose-50 text-rose-700 font-semibold text-[11px]"
+                        >
+                          Return
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {salesList.length === 0 && (
+                  <tr><td colSpan={8} className="p-8 text-center text-slate-400">No sales invoices posted yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'returns' && (
+        <div className="rounded-2xl bg-white border border-slate-200 shadow-2xs overflow-hidden">
+          <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Sales Returns & Customer Refund Register</h3>
+              <p className="text-xs text-slate-500">Every return automatically restores stock/serials and posts balanced reversal vouchers</p>
+            </div>
+            <button
+              onClick={() => handleOpenReturnModal()}
+              className="px-3.5 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700"
+            >
+              + New Sales Return
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[10px] border-b border-slate-200">
+                <tr>
+                  <th className="p-3.5">Return #</th>
+                  <th className="p-3.5">Original Invoice</th>
+                  <th className="p-3.5">Date</th>
+                  <th className="p-3.5">Customer</th>
+                  <th className="p-3.5">Items Returned</th>
+                  <th className="p-3.5">Refund Method</th>
+                  <th className="p-3.5 text-right">Refund Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {salesReturns.map(r => (
+                  <tr key={r.id} className="hover:bg-slate-50/70">
+                    <td className="p-3.5 font-mono font-bold text-rose-700">{r.returnNumber}</td>
+                    <td className="p-3.5 font-mono text-blue-700">{r.originalInvoiceNo}</td>
+                    <td className="p-3.5 text-slate-500">{r.date}</td>
+                    <td className="p-3.5 font-semibold text-slate-900">{r.customerName}</td>
+                    <td className="p-3.5 text-slate-600">{r.items.map(i => `${i.productName} (x${i.quantity})`).join(', ')}</td>
+                    <td className="p-3.5"><span className="px-2 py-0.5 rounded bg-slate-100 font-semibold">{r.refundMethod}</span></td>
+                    <td className="p-3.5 text-right font-mono font-bold text-rose-700">₨ {r.grandTotal.toLocaleString()}</td>
+                  </tr>
+                ))}
+                {salesReturns.length === 0 && (
+                  <tr><td colSpan={7} className="p-8 text-center text-slate-400">No sales returns processed yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'pos' && (
     <div className="flex flex-col lg:flex-row gap-5 h-full">
       {/* LEFT COLUMN: Product Catalog & Fast Barcode Search */}
       <div className="flex-1 flex flex-col space-y-4">
@@ -653,6 +893,124 @@ export const POSBillingView: React.FC<POSBillingViewProps> = ({ initialSearchId 
         onClose={() => setShowPrintModal(false)}
         invoice={lastInvoice}
       />
+
+      {/* Sales Return Modal */}
+      {showReturnModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <Receipt className="h-5 w-5 text-rose-600" />
+                <h3 className="text-sm font-bold text-slate-900">Process Sales Return / Refund</h3>
+              </div>
+              <button onClick={() => setShowReturnModal(false)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+            </div>
+
+            <form onSubmit={handleSubmitSalesReturn} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Original Sales Invoice *</label>
+                  <select
+                    required
+                    value={returnInvoiceId}
+                    onChange={e => handleSelectReturnInvoice(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white p-2.5"
+                  >
+                    <option value="">Select Invoice...</option>
+                    {salesList.filter(s => s.status !== 'Returned').map(s => (
+                      <option key={s.id} value={s.id}>
+                        #{s.invoiceNumber} — {s.customerName} (₨ {s.grandTotal.toLocaleString()})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Refund Method *</label>
+                  <select
+                    value={returnMethod}
+                    onChange={e => setReturnMethod(e.target.value as any)}
+                    className="w-full rounded-xl border border-slate-200 bg-white p-2.5"
+                  >
+                    <option value="Cash">Cash Drawer Refund</option>
+                    <option value="Bank">Meezan Bank Refund</option>
+                    <option value="Credit Note">Credit Note (Reduce Customer Balance)</option>
+                  </select>
+                </div>
+              </div>
+
+              {returnItems.length > 0 && (
+                <div className="border border-slate-200 rounded-xl divide-y divide-slate-100">
+                  {returnItems.map((it, idx) => (
+                    <div key={idx} className="p-3 flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="font-bold text-slate-900">{it.productName}</p>
+                        <p className="text-[11px] text-slate-500">Rate: ₨ {it.unitPrice.toLocaleString()} {it.serialNumber ? `• SN: ${it.serialNumber}` : ''}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={it.reason}
+                          onChange={e => {
+                            const copy = [...returnItems];
+                            copy[idx] = { ...copy[idx], reason: e.target.value };
+                            setReturnItems(copy);
+                          }}
+                          placeholder="Return reason"
+                          className="rounded-lg border border-slate-200 px-2 py-1 text-xs w-36"
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          value={it.quantity}
+                          onChange={e => {
+                            const q = Math.max(0, Number(e.target.value) || 0);
+                            const copy = [...returnItems];
+                            copy[idx] = { ...copy[idx], quantity: q, total: q * copy[idx].unitPrice };
+                            setReturnItems(copy);
+                          }}
+                          className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-center font-mono font-bold"
+                        />
+                        <span className="font-mono font-bold text-slate-900 w-24 text-right">
+                          ₨ {it.total.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Remarks</label>
+                <input
+                  type="text"
+                  value={returnRemarks}
+                  onChange={e => setReturnRemarks(e.target.value)}
+                  placeholder="Optional inspection note or fault description..."
+                  className="w-full rounded-xl border border-slate-200 p-2.5"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowReturnModal(false)}
+                  className="flex-1 rounded-xl border border-slate-200 py-2.5 font-semibold text-slate-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 rounded-xl bg-rose-600 hover:bg-rose-700 py-2.5 font-bold text-white"
+                >
+                  Post Return & Restore Stock
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+    )}
     </div>
   );
 };

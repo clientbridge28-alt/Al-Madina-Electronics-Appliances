@@ -1,0 +1,854 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==================== PRIMITIVES & RBAC HELPERS ====================
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedOwner() {
+      return isEmailVerified() && request.auth.token.email == 'clientbridge28@gmail.com';
+    }
+
+    function isAdminDoc() {
+      return isEmailVerified() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function userDocExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isActiveStaff() {
+      return isEmailVerified()
+        && userDocExists()
+        && userDoc().active == true
+        && userDoc().suspended == false
+        && userDoc().orgId == 'al-madina-main';
+    }
+
+    function isOwner() {
+      return isBootstrappedOwner()
+        || isAdminDoc()
+        || (isActiveStaff() && userDoc().role == 'Owner');
+    }
+
+    function hasPermission(moduleKey, action) {
+      return isOwner() || (
+        isActiveStaff()
+        && userDoc().permissions is map
+        && moduleKey in userDoc().permissions
+        && userDoc().permissions[moduleKey] is list
+        && action in userDoc().permissions[moduleKey]
+      );
+    }
+
+    function isStr(val, maxLen) {
+      return val is string && val.size() <= maxLen;
+    }
+
+    function isNonEmptyStr(val, maxLen) {
+      return val is string && val.size() >= 1 && val.size() <= maxLen;
+    }
+
+    function isBoundedList(val, maxItems) {
+      return val is list && val.size() <= maxItems && (val.size() == 0 || val[0] is map || val[0] is string);
+    }
+
+    function isSameOrg(data) {
+      return data.orgId is string && data.orgId == 'al-madina-main';
+    }
+
+    // ==================== VALIDATION BLUEPRINTS ====================
+
+    function isValidAdmin(data) {
+      return data.keys().hasAll(['uid', 'email', 'role', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'email', 'role', 'createdAt'])
+        && isValidId(data.uid)
+        && isNonEmptyStr(data.email, 200)
+        && data.role == 'Owner'
+        && isNonEmptyStr(data.createdAt, 64);
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'uid', 'orgId', 'name', 'email', 'role', 'active', 'suspended', 'sessionVersion', 'permissions'])
+        && data.keys().hasOnly(['id', 'uid', 'orgId', 'name', 'email', 'role', 'customRoleName', 'phone', 'avatar', 'active', 'suspended', 'suspendedReason', 'emailVerified', 'mfaEnabled', 'sessionVersion', 'permissions', 'lastLogin', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.uid)
+        && isSameOrg(data)
+        && isNonEmptyStr(data.name, 120)
+        && isNonEmptyStr(data.email, 200)
+        && data.role in ['Owner', 'Manager', 'Accountant', 'Cashier', 'StockManager', 'RecoveryOfficer', 'Receptionist', 'Custom']
+        && data.active is bool
+        && data.suspended is bool
+        && data.sessionVersion is int && data.sessionVersion >= 1
+        && data.permissions is map
+        && (!('customRoleName' in data) || isStr(data.customRoleName, 80))
+        && (!('phone' in data) || isStr(data.phone, 40))
+        && (!('avatar' in data) || isStr(data.avatar, 500))
+        && (!('suspendedReason' in data) || isStr(data.suspendedReason, 300))
+        && (!('emailVerified' in data) || data.emailVerified is bool)
+        && (!('mfaEnabled' in data) || data.mfaEnabled is bool)
+        && (!('lastLogin' in data) || isStr(data.lastLogin, 64))
+        && (!('createdAt' in data) || isStr(data.createdAt, 64))
+        && (!('updatedAt' in data) || isStr(data.updatedAt, 64));
+    }
+
+    function isValidUserPublic(data) {
+      return data.keys().hasAll(['uid', 'orgId', 'name', 'role', 'active'])
+        && data.keys().hasOnly(['uid', 'orgId', 'name', 'role', 'active'])
+        && isValidId(data.uid)
+        && isSameOrg(data)
+        && isNonEmptyStr(data.name, 120)
+        && isNonEmptyStr(data.role, 60)
+        && data.active is bool;
+    }
+
+    function isValidRole(data) {
+      return data.keys().hasAll(['id', 'orgId', 'name', 'permissions', 'isSystem'])
+        && data.keys().hasOnly(['id', 'orgId', 'name', 'description', 'permissions', 'isSystem', 'updatedAt', 'updatedBy'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isNonEmptyStr(data.name, 80)
+        && data.permissions is map
+        && data.isSystem is bool
+        && (!('description' in data) || isStr(data.description, 300))
+        && (!('updatedAt' in data) || isStr(data.updatedAt, 64))
+        && (!('updatedBy' in data) || isStr(data.updatedBy, 128));
+    }
+
+    function isValidSession(data) {
+      return data.keys().hasAll(['id', 'orgId', 'uid', 'email', 'userName', 'role', 'revoked', 'createdAt', 'lastActiveAt'])
+        && data.keys().hasOnly(['id', 'orgId', 'uid', 'email', 'userName', 'role', 'deviceInfo', 'revoked', 'createdAt', 'lastActiveAt'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isValidId(data.uid)
+        && isNonEmptyStr(data.email, 200)
+        && isNonEmptyStr(data.userName, 120)
+        && isNonEmptyStr(data.role, 60)
+        && data.revoked is bool
+        && isNonEmptyStr(data.createdAt, 64)
+        && isNonEmptyStr(data.lastActiveAt, 64)
+        && (!('deviceInfo' in data) || isStr(data.deviceInfo, 300));
+    }
+
+    function isValidSecurityEvent(data) {
+      return data.keys().hasAll(['id', 'orgId', 'type', 'severity', 'actorUid', 'title', 'details', 'createdAt'])
+        && data.keys().hasOnly(['id', 'orgId', 'type', 'severity', 'actorUid', 'actorEmail', 'title', 'details', 'notifiedOwner', 'emailStatus', 'createdAt'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isNonEmptyStr(data.type, 64)
+        && data.severity in ['INFO', 'WARNING', 'CRITICAL']
+        && isNonEmptyStr(data.actorUid, 128)
+        && isNonEmptyStr(data.title, 160)
+        && isNonEmptyStr(data.details, 1000)
+        && isNonEmptyStr(data.createdAt, 64)
+        && (!('actorEmail' in data) || isStr(data.actorEmail, 200))
+        && (!('notifiedOwner' in data) || data.notifiedOwner is bool)
+        && (!('emailStatus' in data) || isStr(data.emailStatus, 80));
+    }
+
+    function isValidSettings(data) {
+      return data.keys().hasAll(['orgId', 'showroomName', 'ownerName', 'currency', 'printFormat'])
+        && data.keys().hasOnly(['orgId', 'showroomName', 'ownerName', 'phone', 'whatsapp', 'email', 'address', 'city', 'currency', 'currencySymbol', 'ntn', 'strn', 'invoicePrefix', 'purchasePrefix', 'receiptPrefix', 'defaultTaxRate', 'defaultMarkupRate', 'printFormat', 'invoiceFooterNote', 'updatedAt'])
+        && isSameOrg(data)
+        && isNonEmptyStr(data.showroomName, 160)
+        && isNonEmptyStr(data.ownerName, 120)
+        && isNonEmptyStr(data.currency, 10)
+        && data.printFormat in ['A4', 'Thermal']
+        && (!('phone' in data) || isStr(data.phone, 40))
+        && (!('whatsapp' in data) || isStr(data.whatsapp, 40))
+        && (!('email' in data) || isStr(data.email, 200))
+        && (!('address' in data) || isStr(data.address, 300))
+        && (!('city' in data) || isStr(data.city, 80))
+        && (!('currencySymbol' in data) || isStr(data.currencySymbol, 10))
+        && (!('ntn' in data) || isStr(data.ntn, 40))
+        && (!('strn' in data) || isStr(data.strn, 40))
+        && (!('invoicePrefix' in data) || isStr(data.invoicePrefix, 20))
+        && (!('purchasePrefix' in data) || isStr(data.purchasePrefix, 20))
+        && (!('receiptPrefix' in data) || isStr(data.receiptPrefix, 20))
+        && (!('defaultTaxRate' in data) || data.defaultTaxRate is number)
+        && (!('defaultMarkupRate' in data) || data.defaultMarkupRate is number)
+        && (!('invoiceFooterNote' in data) || isStr(data.invoiceFooterNote, 600))
+        && (!('updatedAt' in data) || isStr(data.updatedAt, 64));
+    }
+
+    function isValidCustomer(data) {
+      return data.keys().hasAll(['id', 'orgId', 'createdByUid', 'name', 'phone', 'cnic', 'openingBalance', 'currentBalance', 'creditLimit', 'customerType', 'createdAt'])
+        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'name', 'fatherName', 'phone', 'whatsapp', 'cnic', 'email', 'address', 'city', 'openingBalance', 'currentBalance', 'creditLimit', 'customerType', 'createdAt', 'notes'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isValidId(data.createdByUid)
+        && isNonEmptyStr(data.name, 160)
+        && isNonEmptyStr(data.phone, 40)
+        && isStr(data.cnic, 32)
+        && data.openingBalance is number
+        && data.currentBalance is number
+        && data.creditLimit is number && data.creditLimit >= 0
+        && data.customerType in ['Retail', 'Wholesale', 'Installment', 'Credit']
+        && isNonEmptyStr(data.createdAt, 64)
+        && (!('fatherName' in data) || isStr(data.fatherName, 160))
+        && (!('whatsapp' in data) || isStr(data.whatsapp, 40))
+        && (!('email' in data) || isStr(data.email, 200))
+        && (!('address' in data) || isStr(data.address, 300))
+        && (!('city' in data) || isStr(data.city, 80))
+        && (!('notes' in data) || isStr(data.notes, 500));
+    }
+
+    function isValidSupplier(data) {
+      return data.keys().hasAll(['id', 'orgId', 'createdByUid', 'companyName', 'contactPerson', 'phone', 'openingBalance', 'currentBalance', 'createdAt'])
+        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'companyName', 'contactPerson', 'phone', 'whatsapp', 'email', 'address', 'city', 'ntn', 'openingBalance', 'currentBalance', 'paymentTerms', 'createdAt'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isValidId(data.createdByUid)
+        && isNonEmptyStr(data.companyName, 180)
+        && isStr(data.contactPerson, 120)
+        && isNonEmptyStr(data.phone, 40)
+        && data.openingBalance is number
+        && data.currentBalance is number
+        && isNonEmptyStr(data.createdAt, 64)
+        && (!('whatsapp' in data) || isStr(data.whatsapp, 40))
+        && (!('email' in data) || isStr(data.email, 200))
+        && (!('address' in data) || isStr(data.address, 300))
+        && (!('city' in data) || isStr(data.city, 80))
+        && (!('ntn' in data) || isStr(data.ntn, 40))
+        && (!('paymentTerms' in data) || isStr(data.paymentTerms, 80));
+    }
+
+    function isValidEmployee(data) {
+      return data.keys().hasAll(['id', 'orgId', 'name', 'phone', 'designation', 'status'])
+        && data.keys().hasOnly(['id', 'orgId', 'name', 'fatherName', 'phone', 'cnic', 'designation', 'department', 'joiningDate', 'salary', 'status', 'shift'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isNonEmptyStr(data.name, 120)
+        && isStr(data.phone, 40)
+        && isNonEmptyStr(data.designation, 80)
+        && data.status in ['Active', 'On Leave', 'Terminated']
+        && (!('fatherName' in data) || isStr(data.fatherName, 120))
+        && (!('cnic' in data) || isStr(data.cnic, 32))
+        && (!('department' in data) || isStr(data.department, 80))
+        && (!('joiningDate' in data) || isStr(data.joiningDate, 64))
+        && (!('salary' in data) || data.salary is number)
+        && (!('shift' in data) || isStr(data.shift, 80));
+    }
+
+    function isValidAttendance(data) {
+      return data.keys().hasAll(['id', 'orgId', 'employeeId', 'employeeName', 'date', 'checkInTime', 'status'])
+        && data.keys().hasOnly(['id', 'orgId', 'employeeId', 'employeeName', 'date', 'checkInTime', 'checkOutTime', 'status', 'workingHours', 'notes'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isValidId(data.employeeId)
+        && isNonEmptyStr(data.employeeName, 120)
+        && isNonEmptyStr(data.date, 32)
+        && isNonEmptyStr(data.checkInTime, 32)
+        && data.status in ['Present', 'Late', 'Half Day', 'Absent', 'On Leave']
+        && (!('checkOutTime' in data) || isStr(data.checkOutTime, 32))
+        && (!('workingHours' in data) || data.workingHours is number)
+        && (!('notes' in data) || isStr(data.notes, 300));
+    }
+
+    function isValidVisitor(data) {
+      return data.keys().hasAll(['id', 'orgId', 'name', 'phone', 'purpose', 'entryDate', 'entryTime', 'status'])
+        && data.keys().hasOnly(['id', 'orgId', 'name', 'phone', 'cnic', 'purpose', 'personToMeet', 'entryDate', 'entryTime', 'exitTime', 'status', 'remarks', 'createdBy'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isNonEmptyStr(data.name, 120)
+        && isNonEmptyStr(data.phone, 40)
+        && isNonEmptyStr(data.purpose, 80)
+        && isNonEmptyStr(data.entryDate, 32)
+        && isNonEmptyStr(data.entryTime, 32)
+        && data.status in ['Inside', 'Checked Out']
+        && (!('cnic' in data) || isStr(data.cnic, 32))
+        && (!('personToMeet' in data) || isStr(data.personToMeet, 120))
+        && (!('exitTime' in data) || isStr(data.exitTime, 32))
+        && (!('remarks' in data) || isStr(data.remarks, 400))
+        && (!('createdBy' in data) || isStr(data.createdBy, 120));
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['id', 'orgId', 'name', 'category', 'brand', 'modelNumber', 'sku', 'purchasePrice', 'retailPrice', 'stockQuantity', 'minStockLevel'])
+        && data.keys().hasOnly(['id', 'orgId', 'name', 'category', 'subCategory', 'brand', 'modelNumber', 'sku', 'barcode', 'unit', 'purchasePrice', 'retailPrice', 'minSalePrice', 'stockQuantity', 'minStockLevel', 'warrantyMonths', 'hasSerialTracking', 'image', 'description', 'serials'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isNonEmptyStr(data.name, 200)
+        && isNonEmptyStr(data.category, 80)
+        && isNonEmptyStr(data.brand, 80)
+        && isStr(data.modelNumber, 80)
+        && isNonEmptyStr(data.sku, 80)
+        && data.purchasePrice is number && data.purchasePrice >= 0
+        && data.retailPrice is number && data.retailPrice >= 0
+        && data.stockQuantity is int && data.stockQuantity >= 0
+        && data.minStockLevel is int && data.minStockLevel >= 0
+        && (!('subCategory' in data) || isStr(data.subCategory, 80))
+        && (!('barcode' in data) || isStr(data.barcode, 80))
+        && (!('unit' in data) || isStr(data.unit, 32))
+        && (!('minSalePrice' in data) || data.minSalePrice is number)
+        && (!('warrantyMonths' in data) || data.warrantyMonths is int)
+        && (!('hasSerialTracking' in data) || data.hasSerialTracking is bool)
+        && (!('image' in data) || isStr(data.image, 500))
+        && (!('description' in data) || isStr(data.description, 1000))
+        && (!('serials' in data) || isBoundedList(data.serials, 500));
+    }
+
+    function isValidPurchase(data) {
+      return data.keys().hasAll(['id', 'orgId', 'createdByUid', 'invoiceNumber', 'supplierId', 'supplierName', 'date', 'items', 'grandTotal', 'paidAmount', 'remainingBalance', 'status'])
+        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'invoiceNumber', 'supplierId', 'supplierName', 'date', 'items', 'subTotal', 'discount', 'tax', 'freightCharges', 'grandTotal', 'paidAmount', 'remainingBalance', 'paymentMethod', 'status', 'notes', 'createdBy', 'idempotencyKey'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isValidId(data.createdByUid)
+        && isNonEmptyStr(data.invoiceNumber, 64)
+        && isValidId(data.supplierId)
+        && isNonEmptyStr(data.supplierName, 180)
+        && isNonEmptyStr(data.date, 32)
+        && isBoundedList(data.items, 100) && data.items.size() >= 1
+        && data.grandTotal is number && data.grandTotal >= 0
+        && data.paidAmount is number && data.paidAmount >= 0
+        && data.remainingBalance is number && data.remainingBalance >= 0
+        && data.status in ['Received', 'Returned', 'Draft']
+        && (!('subTotal' in data) || data.subTotal is number)
+        && (!('discount' in data) || data.discount is number)
+        && (!('tax' in data) || data.tax is number)
+        && (!('freightCharges' in data) || data.freightCharges is number)
+        && (!('paymentMethod' in data) || data.paymentMethod in ['Cash', 'Bank Transfer', 'Cheque', 'Credit'])
+        && (!('notes' in data) || isStr(data.notes, 500))
+        && (!('createdBy' in data) || isStr(data.createdBy, 120))
+        && (!('idempotencyKey' in data) || isStr(data.idempotencyKey, 128));
+    }
+
+    function isValidPurchaseReturn(data) {
+      return data.keys().hasAll(['id', 'orgId', 'createdByUid', 'returnNumber', 'originalPurchaseNo', 'supplierId', 'date', 'items', 'grandTotal', 'refundMethod'])
+        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'returnNumber', 'originalPurchaseNo', 'supplierId', 'supplierName', 'date', 'items', 'grandTotal', 'refundMethod', 'remarks', 'processedBy'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isValidId(data.createdByUid)
+        && isNonEmptyStr(data.returnNumber, 64)
+        && isNonEmptyStr(data.originalPurchaseNo, 64)
+        && isValidId(data.supplierId)
+        && isNonEmptyStr(data.date, 32)
+        && isBoundedList(data.items, 100) && data.items.size() >= 1
+        && data.grandTotal is number && data.grandTotal >= 0
+        && data.refundMethod in ['Deduct Payable', 'Cash Refund', 'Bank Refund']
+        && (!('supplierName' in data) || isStr(data.supplierName, 180))
+        && (!('remarks' in data) || isStr(data.remarks, 500))
+        && (!('processedBy' in data) || isStr(data.processedBy, 120));
+    }
+
+    function isValidSale(data) {
+      return data.keys().hasAll(['id', 'orgId', 'createdByUid', 'invoiceNumber', 'customerId', 'customerName', 'saleType', 'date', 'items', 'grandTotal', 'paidAmount', 'remainingBalance', 'status'])
+        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'invoiceNumber', 'customerId', 'customerName', 'customerPhone', 'saleType', 'date', 'items', 'subTotal', 'discount', 'tax', 'grandTotal', 'paidAmount', 'changeAmount', 'remainingBalance', 'paymentMethod', 'status', 'salesPerson', 'notes', 'installmentAccountId', 'idempotencyKey'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isValidId(data.createdByUid)
+        && isNonEmptyStr(data.invoiceNumber, 64)
+        && isValidId(data.customerId)
+        && isNonEmptyStr(data.customerName, 160)
+        && data.saleType in ['Cash', 'Credit', 'Installment']
+        && isNonEmptyStr(data.date, 32)
+        && isBoundedList(data.items, 100) && data.items.size() >= 1
+        && data.grandTotal is number && data.grandTotal >= 0
+        && data.paidAmount is number && data.paidAmount >= 0
+        && data.remainingBalance is number && data.remainingBalance >= 0
+        && data.status in ['Completed', 'Returned', 'Cancelled']
+        && (!('customerPhone' in data) || isStr(data.customerPhone, 40))
+        && (!('subTotal' in data) || data.subTotal is number)
+        && (!('discount' in data) || data.discount is number)
+        && (!('tax' in data) || data.tax is number)
+        && (!('changeAmount' in data) || data.changeAmount is number)
+        && (!('paymentMethod' in data) || data.paymentMethod in ['Cash', 'Bank Transfer', 'Card', 'Cheque', 'Split'])
+        && (!('salesPerson' in data) || isStr(data.salesPerson, 120))
+        && (!('notes' in data) || isStr(data.notes, 500))
+        && (!('installmentAccountId' in data) || isStr(data.installmentAccountId, 128))
+        && (!('idempotencyKey' in data) || isStr(data.idempotencyKey, 128));
+    }
+
+    function isValidSalesReturn(data) {
+      return data.keys().hasAll(['id', 'orgId', 'createdByUid', 'returnNumber', 'originalInvoiceNo', 'customerId', 'date', 'items', 'grandTotal', 'refundMethod'])
+        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'returnNumber', 'originalInvoiceNo', 'customerId', 'customerName', 'date', 'items', 'grandTotal', 'refundMethod', 'remarks', 'processedBy'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isValidId(data.createdByUid)
+        && isNonEmptyStr(data.returnNumber, 64)
+        && isNonEmptyStr(data.originalInvoiceNo, 64)
+        && isValidId(data.customerId)
+        && isNonEmptyStr(data.date, 32)
+        && isBoundedList(data.items, 100) && data.items.size() >= 1
+        && data.grandTotal is number && data.grandTotal >= 0
+        && data.refundMethod in ['Cash', 'Credit Note', 'Bank']
+        && (!('customerName' in data) || isStr(data.customerName, 160))
+        && (!('remarks' in data) || isStr(data.remarks, 500))
+        && (!('processedBy' in data) || isStr(data.processedBy, 120));
+    }
+
+    function isValidInstallment(data) {
+      return data.keys().hasAll(['id', 'orgId', 'createdByUid', 'accountNumber', 'customerId', 'customerName', 'productId', 'cashPrice', 'totalFinancedPayable', 'remainingBalance', 'status', 'schedule'])
+        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'accountNumber', 'customerId', 'customerName', 'customerPhone', 'customerCnic', 'customerAddress', 'productId', 'productName', 'productModel', 'productSerial', 'salesInvoiceNo', 'cashPrice', 'downPayment', 'financedAmount', 'markupPercentage', 'markupAmount', 'totalFinancedPayable', 'totalPayableWithDown', 'durationMonths', 'monthlyInstallment', 'startDate', 'firstDueDate', 'guarantor1Name', 'guarantor1Phone', 'guarantor1Cnic', 'guarantor1Relation', 'guarantor2Name', 'guarantor2Phone', 'guarantor2Cnic', 'recoveryOfficerId', 'recoveryOfficerName', 'totalReceived', 'remainingBalance', 'status', 'schedule', 'notes'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isValidId(data.createdByUid)
+        && isNonEmptyStr(data.accountNumber, 64)
+        && isValidId(data.customerId)
+        && isNonEmptyStr(data.customerName, 160)
+        && isValidId(data.productId)
+        && data.cashPrice is number && data.cashPrice >= 0
+        && data.totalFinancedPayable is number && data.totalFinancedPayable >= 0
+        && data.remainingBalance is number && data.remainingBalance >= 0
+        && data.status in ['Active', 'Completed', 'Overdue', 'Defaulted', 'Closed Early']
+        && isBoundedList(data.schedule, 60)
+        && (!('customerPhone' in data) || isStr(data.customerPhone, 40))
+        && (!('customerCnic' in data) || isStr(data.customerCnic, 32))
+        && (!('customerAddress' in data) || isStr(data.customerAddress, 300))
+        && (!('productName' in data) || isStr(data.productName, 200))
+        && (!('productModel' in data) || isStr(data.productModel, 80))
+        && (!('productSerial' in data) || isStr(data.productSerial, 120))
+        && (!('salesInvoiceNo' in data) || isStr(data.salesInvoiceNo, 64))
+        && (!('downPayment' in data) || data.downPayment is number)
+        && (!('financedAmount' in data) || data.financedAmount is number)
+        && (!('markupPercentage' in data) || data.markupPercentage is number)
+        && (!('markupAmount' in data) || data.markupAmount is number)
+        && (!('totalPayableWithDown' in data) || data.totalPayableWithDown is number)
+        && (!('durationMonths' in data) || data.durationMonths is int)
+        && (!('monthlyInstallment' in data) || data.monthlyInstallment is number)
+        && (!('startDate' in data) || isStr(data.startDate, 32))
+        && (!('firstDueDate' in data) || isStr(data.firstDueDate, 32))
+        && (!('guarantor1Name' in data) || isStr(data.guarantor1Name, 120))
+        && (!('guarantor1Phone' in data) || isStr(data.guarantor1Phone, 40))
+        && (!('guarantor1Cnic' in data) || isStr(data.guarantor1Cnic, 32))
+        && (!('guarantor1Relation' in data) || isStr(data.guarantor1Relation, 60))
+        && (!('guarantor2Name' in data) || isStr(data.guarantor2Name, 120))
+        && (!('guarantor2Phone' in data) || isStr(data.guarantor2Phone, 40))
+        && (!('guarantor2Cnic' in data) || isStr(data.guarantor2Cnic, 32))
+        && (!('recoveryOfficerId' in data) || isStr(data.recoveryOfficerId, 128))
+        && (!('recoveryOfficerName' in data) || isStr(data.recoveryOfficerName, 120))
+        && (!('totalReceived' in data) || data.totalReceived is number)
+        && (!('notes' in data) || isStr(data.notes, 500));
+    }
+
+    function isValidAccount(data) {
+      return data.keys().hasAll(['id', 'orgId', 'code', 'name', 'category', 'subCategory', 'currentBalance'])
+        && data.keys().hasOnly(['id', 'orgId', 'code', 'name', 'category', 'subCategory', 'currentBalance'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isNonEmptyStr(data.code, 32)
+        && isNonEmptyStr(data.name, 160)
+        && data.category in ['Asset', 'Liability', 'Equity', 'Income', 'Expense']
+        && isNonEmptyStr(data.subCategory, 80)
+        && data.currentBalance is number;
+    }
+
+    function isValidVoucher(data) {
+      return data.keys().hasAll(['id', 'orgId', 'createdByUid', 'voucherNumber', 'voucherType', 'date', 'amount', 'entries', 'narration', 'createdBy', 'status'])
+        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'voucherNumber', 'voucherType', 'date', 'partyType', 'partyId', 'partyName', 'amount', 'paymentMethod', 'entries', 'narration', 'createdBy', 'status', 'reversedByVoucherId', 'sourceRef'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isValidId(data.createdByUid)
+        && isNonEmptyStr(data.voucherNumber, 64)
+        && data.voucherType in ['Payment Voucher', 'Receive Voucher', 'Journal Voucher', 'Contra Voucher']
+        && isNonEmptyStr(data.date, 32)
+        && data.amount is number && data.amount >= 0
+        && isBoundedList(data.entries, 50) && data.entries.size() >= 2
+        && isNonEmptyStr(data.narration, 500)
+        && isNonEmptyStr(data.createdBy, 120)
+        && data.status in ['Posted', 'Cancelled']
+        && (!('partyType' in data) || isStr(data.partyType, 32))
+        && (!('partyId' in data) || isStr(data.partyId, 128))
+        && (!('partyName' in data) || isStr(data.partyName, 180))
+        && (!('paymentMethod' in data) || isStr(data.paymentMethod, 32))
+        && (!('reversedByVoucherId' in data) || isStr(data.reversedByVoucherId, 128))
+        && (!('sourceRef' in data) || isStr(data.sourceRef, 128));
+    }
+
+    function isValidCheque(data) {
+      return data.keys().hasAll(['id', 'orgId', 'chequeNumber', 'type', 'bankName', 'partyName', 'amount', 'chequeDate', 'status'])
+        && data.keys().hasOnly(['id', 'orgId', 'chequeNumber', 'type', 'bankName', 'partyName', 'amount', 'issueDate', 'chequeDate', 'clearanceDate', 'status', 'remarks'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isNonEmptyStr(data.chequeNumber, 64)
+        && data.type in ['Received', 'Issued']
+        && isNonEmptyStr(data.bankName, 120)
+        && isNonEmptyStr(data.partyName, 160)
+        && data.amount is number && data.amount > 0
+        && isNonEmptyStr(data.chequeDate, 32)
+        && data.status in ['Pending', 'Deposited', 'Cleared', 'Bounced', 'Cancelled']
+        && (!('issueDate' in data) || isStr(data.issueDate, 32))
+        && (!('clearanceDate' in data) || isStr(data.clearanceDate, 32))
+        && (!('remarks' in data) || isStr(data.remarks, 400));
+    }
+
+    function isValidTarget(data) {
+      return data.keys().hasAll(['id', 'orgId', 'targetType', 'period', 'monthYear', 'targetAmount', 'assignedTo', 'status'])
+        && data.keys().hasOnly(['id', 'orgId', 'targetType', 'period', 'monthYear', 'targetAmount', 'achievedAmount', 'assignedTo', 'status'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && data.targetType in ['Sales', 'Recovery']
+        && data.period in ['Daily', 'Monthly']
+        && isNonEmptyStr(data.monthYear, 16)
+        && data.targetAmount is number && data.targetAmount >= 0
+        && (!('achievedAmount' in data) || data.achievedAmount is number)
+        && isNonEmptyStr(data.assignedTo, 120)
+        && data.status in ['In Progress', 'Achieved', 'Missed'];
+    }
+
+    function isValidTask(data) {
+      return data.keys().hasAll(['id', 'orgId', 'createdByUid', 'title', 'assignedTo', 'priority', 'status', 'dueDate', 'createdAt', 'progressPercent'])
+        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'title', 'description', 'assignedTo', 'assignedBy', 'priority', 'status', 'category', 'dueDate', 'completedAt', 'createdAt', 'progressPercent', 'notes'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isValidId(data.createdByUid)
+        && isNonEmptyStr(data.title, 200)
+        && isNonEmptyStr(data.assignedTo, 120)
+        && data.priority in ['Low', 'Medium', 'High', 'Urgent']
+        && data.status in ['Pending', 'In Progress', 'Completed', 'Deferred']
+        && isNonEmptyStr(data.dueDate, 32)
+        && isNonEmptyStr(data.createdAt, 64)
+        && data.progressPercent is int && data.progressPercent >= 0 && data.progressPercent <= 100
+        && (!('description' in data) || isStr(data.description, 1000))
+        && (!('assignedBy' in data) || isStr(data.assignedBy, 120))
+        && (!('category' in data) || isStr(data.category, 80))
+        && (!('completedAt' in data) || isStr(data.completedAt, 64))
+        && (!('notes' in data) || isStr(data.notes, 500));
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['id', 'orgId', 'timestamp', 'userId', 'userName', 'userRole', 'module', 'action', 'details'])
+        && data.keys().hasOnly(['id', 'orgId', 'timestamp', 'userId', 'userName', 'userRole', 'module', 'action', 'details', 'recordId'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isNonEmptyStr(data.timestamp, 64)
+        && isNonEmptyStr(data.userId, 128)
+        && isNonEmptyStr(data.userName, 120)
+        && isNonEmptyStr(data.userRole, 60)
+        && isNonEmptyStr(data.module, 80)
+        && isNonEmptyStr(data.action, 120)
+        && isNonEmptyStr(data.details, 1000)
+        && (!('recordId' in data) || isStr(data.recordId, 128));
+    }
+
+    function isValidBackup(data) {
+      return data.keys().hasAll(['id', 'orgId', 'type', 'format', 'recordCount', 'checksum', 'status', 'createdAt', 'createdBy'])
+        && data.keys().hasOnly(['id', 'orgId', 'type', 'format', 'recordCount', 'checksum', 'wpStatus', 'wpRef', 'status', 'createdAt', 'createdBy', 'notes'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && data.type in ['Manual', 'ScheduledDaily', 'ScheduledWeekly', 'ScheduledMonthly', 'PreRestore']
+        && data.format in ['XLSX', 'CSV', 'JSON', 'WordPressMirror']
+        && data.recordCount is int && data.recordCount >= 0
+        && isNonEmptyStr(data.checksum, 128)
+        && data.status in ['Success', 'Failed', 'Verified']
+        && isNonEmptyStr(data.createdAt, 64)
+        && isNonEmptyStr(data.createdBy, 120)
+        && (!('wpStatus' in data) || isStr(data.wpStatus, 60))
+        && (!('wpRef' in data) || isStr(data.wpRef, 300))
+        && (!('notes' in data) || isStr(data.notes, 500));
+    }
+
+    // ==================== COLLECTION MATCH BLOCKS ====================
+
+    match /test/{docId} {
+      allow get: if isValidId(docId) && isSignedIn();
+      allow write: if false;
+    }
+
+    match /admins/{adminId} {
+      allow get: if isValidId(adminId) && (isBootstrappedOwner() || request.auth.uid == adminId);
+      allow list: if isBootstrappedOwner();
+      allow create, update: if isValidId(adminId) && isValidAdmin(incoming()) && isBootstrappedOwner() && incoming().uid == adminId;
+      allow delete: if isValidId(adminId) && isBootstrappedOwner() && adminId != request.auth.uid;
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isEmailVerified() && (request.auth.uid == userId || isOwner());
+      allow list: if isEmailVerified() && (isBootstrappedOwner() || resource.data.uid == request.auth.uid);
+      allow create: if isValidId(userId) && isEmailVerified() && isValidUser(incoming()) && incoming().uid == userId && (
+        isOwner() || (isBootstrappedOwner() && request.auth.uid == userId && incoming().role == 'Owner')
+      );
+      allow update: if isValidId(userId) && isEmailVerified() && isValidUser(incoming()) && (
+        (isOwner() && incoming().uid == existing().uid && incoming().orgId == existing().orgId) ||
+        (request.auth.uid == userId
+          && incoming().uid == existing().uid
+          && incoming().orgId == existing().orgId
+          && incoming().role == existing().role
+          && incoming().permissions == existing().permissions
+          && incoming().active == existing().active
+          && incoming().suspended == existing().suspended
+          && incoming().mfaEnabled == existing().mfaEnabled
+          && incoming().sessionVersion == existing().sessionVersion
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'avatar', 'emailVerified', 'lastLogin', 'updatedAt']))
+      );
+      allow delete: if isValidId(userId) && isOwner() && userId != request.auth.uid;
+    }
+
+    match /users_public/{userId} {
+      allow get: if isValidId(userId) && isActiveStaff();
+      allow list: if isActiveStaff() && isSameOrg(resource.data);
+      allow create, update: if isValidId(userId) && isValidUserPublic(incoming()) && isOwner();
+      allow delete: if isValidId(userId) && isOwner();
+    }
+
+    match /roles/{roleId} {
+      allow get: if isValidId(roleId) && (isOwner() || hasPermission('admin', 'VIEW'));
+      allow list: if (isOwner() || hasPermission('admin', 'VIEW')) && isSameOrg(resource.data);
+      allow create, update: if isValidId(roleId) && isValidRole(incoming()) && isOwner();
+      allow delete: if isValidId(roleId) && isOwner() && existing().isSystem == false;
+    }
+
+    match /sessions/{sessionId} {
+      allow get: if isValidId(sessionId) && isEmailVerified() && (existing().uid == request.auth.uid || isOwner());
+      allow list: if isEmailVerified() && (isBootstrappedOwner() || resource.data.uid == request.auth.uid);
+      allow create: if isValidId(sessionId) && isEmailVerified() && isValidSession(incoming()) && (
+        (incoming().uid == request.auth.uid && incoming().revoked == false) || isOwner()
+      );
+      allow update: if isValidId(sessionId) && isEmailVerified() && isValidSession(incoming()) && (
+        isOwner() ||
+        (existing().uid == request.auth.uid
+          && incoming().uid == existing().uid
+          && incoming().revoked == existing().revoked
+          && incoming().diff(existing()).affectedKeys().hasOnly(['lastActiveAt']))
+      );
+      allow delete: if isValidId(sessionId) && isOwner();
+    }
+
+    match /securityEvents/{eventId} {
+      allow get: if isValidId(eventId) && isOwner();
+      allow list: if isOwner() && isSameOrg(resource.data);
+      allow create: if isValidId(eventId) && isEmailVerified() && isValidSecurityEvent(incoming()) && (
+        incoming().actorUid == request.auth.uid || isOwner()
+      );
+      allow update, delete: if false;
+    }
+
+    match /settings/{settingId} {
+      allow get: if isValidId(settingId) && (isOwner() || isActiveStaff());
+      allow list: if isActiveStaff() && isSameOrg(resource.data);
+      allow create, update: if isValidId(settingId) && isValidSettings(incoming()) && (isOwner() || hasPermission('settings', 'EDIT'));
+      allow delete: if false;
+    }
+
+    match /customers/{customerId} {
+      allow get: if isValidId(customerId) && hasPermission('customers', 'VIEW');
+      allow list: if hasPermission('customers', 'VIEW') && isSameOrg(resource.data);
+      allow create: if isValidId(customerId) && isValidCustomer(incoming()) && incoming().createdByUid == request.auth.uid && hasPermission('customers', 'CREATE');
+      allow update: if isValidId(customerId) && isValidCustomer(incoming())
+        && incoming().id == existing().id
+        && incoming().orgId == existing().orgId
+        && incoming().createdByUid == existing().createdByUid
+        && (
+          hasPermission('customers', 'EDIT') ||
+          (hasPermission('pos', 'CREATE') && incoming().diff(existing()).affectedKeys().hasOnly(['currentBalance'])) ||
+          (hasPermission('salesReturns', 'CREATE') && incoming().diff(existing()).affectedKeys().hasOnly(['currentBalance'])) ||
+          (hasPermission('installments', 'CREATE') && incoming().diff(existing()).affectedKeys().hasOnly(['currentBalance', 'customerType']))
+        );
+      allow delete: if isValidId(customerId) && hasPermission('customers', 'DELETE') && isOwner();
+    }
+
+    match /suppliers/{supplierId} {
+      allow get: if isValidId(supplierId) && hasPermission('suppliers', 'VIEW');
+      allow list: if hasPermission('suppliers', 'VIEW') && isSameOrg(resource.data);
+      allow create: if isValidId(supplierId) && isValidSupplier(incoming()) && incoming().createdByUid == request.auth.uid && hasPermission('suppliers', 'CREATE');
+      allow update: if isValidId(supplierId) && isValidSupplier(incoming())
+        && incoming().id == existing().id
+        && incoming().orgId == existing().orgId
+        && incoming().createdByUid == existing().createdByUid
+        && (
+          hasPermission('suppliers', 'EDIT') ||
+          (hasPermission('purchases', 'CREATE') && incoming().diff(existing()).affectedKeys().hasOnly(['currentBalance'])) ||
+          (hasPermission('purchaseReturns', 'CREATE') && incoming().diff(existing()).affectedKeys().hasOnly(['currentBalance']))
+        );
+      allow delete: if isValidId(supplierId) && hasPermission('suppliers', 'DELETE') && isOwner();
+    }
+
+    match /employees/{employeeId} {
+      allow get: if isValidId(employeeId) && (hasPermission('attendance', 'VIEW') || hasPermission('targets', 'VIEW'));
+      allow list: if (hasPermission('attendance', 'VIEW') || hasPermission('targets', 'VIEW')) && isSameOrg(resource.data);
+      allow create, update: if isValidId(employeeId) && isValidEmployee(incoming()) && (isOwner() || hasPermission('attendance', 'MANAGE'));
+      allow delete: if isValidId(employeeId) && isOwner();
+    }
+
+    match /attendance/{attendanceId} {
+      allow get: if isValidId(attendanceId) && hasPermission('attendance', 'VIEW');
+      allow list: if hasPermission('attendance', 'VIEW') && isSameOrg(resource.data);
+      allow create: if isValidId(attendanceId) && isValidAttendance(incoming()) && hasPermission('attendance', 'CREATE');
+      allow update: if isValidId(attendanceId) && isValidAttendance(incoming())
+        && incoming().id == existing().id
+        && incoming().orgId == existing().orgId
+        && (isOwner() || (hasPermission('attendance', 'EDIT') && incoming().diff(existing()).affectedKeys().hasOnly(['checkOutTime', 'workingHours', 'status', 'notes'])));
+      allow delete: if isValidId(attendanceId) && isOwner();
+    }
+
+    match /visitors/{visitorId} {
+      allow get: if isValidId(visitorId) && hasPermission('visitors', 'VIEW');
+      allow list: if hasPermission('visitors', 'VIEW') && isSameOrg(resource.data);
+      allow create: if isValidId(visitorId) && isValidVisitor(incoming()) && hasPermission('visitors', 'CREATE');
+      allow update: if isValidId(visitorId) && isValidVisitor(incoming())
+        && incoming().id == existing().id
+        && incoming().orgId == existing().orgId
+        && (isOwner() || (hasPermission('visitors', 'EDIT') && incoming().diff(existing()).affectedKeys().hasOnly(['exitTime', 'status', 'remarks'])));
+      allow delete: if isValidId(visitorId) && isOwner();
+    }
+
+    match /products/{productId} {
+      allow get: if isValidId(productId) && (hasPermission('inventory', 'VIEW') || hasPermission('pos', 'VIEW') || hasPermission('purchases', 'VIEW'));
+      allow list: if (hasPermission('inventory', 'VIEW') || hasPermission('pos', 'VIEW') || hasPermission('purchases', 'VIEW')) && isSameOrg(resource.data);
+      allow create: if isValidId(productId) && isValidProduct(incoming()) && hasPermission('inventory', 'CREATE');
+      allow update: if isValidId(productId) && isValidProduct(incoming())
+        && incoming().id == existing().id
+        && incoming().orgId == existing().orgId
+        && (
+          hasPermission('inventory', 'EDIT') ||
+          ((hasPermission('pos', 'CREATE') || hasPermission('purchases', 'CREATE') || hasPermission('salesReturns', 'CREATE') || hasPermission('purchaseReturns', 'CREATE')) && incoming().diff(existing()).affectedKeys().hasOnly(['stockQuantity', 'serials']))
+        );
+      allow delete: if isValidId(productId) && hasPermission('inventory', 'DELETE') && isOwner();
+    }
+
+    match /purchases/{purchaseId} {
+      allow get: if isValidId(purchaseId) && hasPermission('purchases', 'VIEW');
+      allow list: if hasPermission('purchases', 'VIEW') && isSameOrg(resource.data);
+      allow create: if isValidId(purchaseId) && isValidPurchase(incoming()) && incoming().createdByUid == request.auth.uid && hasPermission('purchases', 'CREATE');
+      allow update: if isValidId(purchaseId) && isValidPurchase(incoming())
+        && incoming().id == existing().id
+        && incoming().orgId == existing().orgId
+        && incoming().createdByUid == existing().createdByUid
+        && existing().status != 'Returned'
+        && (isOwner() || ((hasPermission('purchases', 'EDIT') || hasPermission('purchaseReturns', 'CREATE')) && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'notes'])));
+      allow delete: if false;
+    }
+
+    match /purchaseReturns/{returnId} {
+      allow get: if isValidId(returnId) && (hasPermission('purchaseReturns', 'VIEW') || hasPermission('purchases', 'VIEW') || hasPermission('reports', 'VIEW'));
+      allow list: if (hasPermission('purchaseReturns', 'VIEW') || hasPermission('purchases', 'VIEW') || hasPermission('reports', 'VIEW')) && isSameOrg(resource.data);
+      allow create: if isValidId(returnId) && isValidPurchaseReturn(incoming()) && incoming().createdByUid == request.auth.uid && hasPermission('purchaseReturns', 'CREATE');
+      allow update, delete: if false;
+    }
+
+    match /sales/{saleId} {
+      allow get: if isValidId(saleId) && (hasPermission('pos', 'VIEW') || hasPermission('reports', 'VIEW') || hasPermission('ledgers', 'VIEW'));
+      allow list: if (hasPermission('pos', 'VIEW') || hasPermission('reports', 'VIEW') || hasPermission('ledgers', 'VIEW')) && isSameOrg(resource.data);
+      allow create: if isValidId(saleId) && isValidSale(incoming()) && incoming().createdByUid == request.auth.uid && hasPermission('pos', 'CREATE');
+      allow update: if isValidId(saleId) && isValidSale(incoming())
+        && incoming().id == existing().id
+        && incoming().orgId == existing().orgId
+        && incoming().createdByUid == existing().createdByUid
+        && existing().status != 'Returned'
+        && (isOwner() || ((hasPermission('pos', 'EDIT') || hasPermission('salesReturns', 'CREATE')) && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'notes'])));
+      allow delete: if false;
+    }
+
+    match /salesReturns/{returnId} {
+      allow get: if isValidId(returnId) && (hasPermission('salesReturns', 'VIEW') || hasPermission('pos', 'VIEW') || hasPermission('reports', 'VIEW'));
+      allow list: if (hasPermission('salesReturns', 'VIEW') || hasPermission('pos', 'VIEW') || hasPermission('reports', 'VIEW')) && isSameOrg(resource.data);
+      allow create: if isValidId(returnId) && isValidSalesReturn(incoming()) && incoming().createdByUid == request.auth.uid && hasPermission('salesReturns', 'CREATE');
+      allow update, delete: if false;
+    }
+
+    match /installments/{installmentId} {
+      allow get: if isValidId(installmentId) && hasPermission('installments', 'VIEW');
+      allow list: if hasPermission('installments', 'VIEW') && isSameOrg(resource.data);
+      allow create: if isValidId(installmentId) && isValidInstallment(incoming()) && incoming().createdByUid == request.auth.uid && hasPermission('installments', 'CREATE');
+      allow update: if isValidId(installmentId) && isValidInstallment(incoming())
+        && incoming().id == existing().id
+        && incoming().orgId == existing().orgId
+        && incoming().createdByUid == existing().createdByUid
+        && (isOwner() || (hasPermission('installments', 'EDIT') && incoming().diff(existing()).affectedKeys().hasOnly(['totalReceived', 'remainingBalance', 'status', 'schedule', 'notes'])));
+      allow delete: if false;
+    }
+
+    match /accounts/{accountId} {
+      allow get: if isValidId(accountId) && (hasPermission('accounting', 'VIEW') || hasPermission('ledgers', 'VIEW') || hasPermission('reports', 'VIEW'));
+      allow list: if (hasPermission('accounting', 'VIEW') || hasPermission('ledgers', 'VIEW') || hasPermission('reports', 'VIEW')) && isSameOrg(resource.data);
+      allow create: if isValidId(accountId) && isValidAccount(incoming()) && hasPermission('accounting', 'CREATE');
+      allow update: if isValidId(accountId) && isValidAccount(incoming())
+        && incoming().id == existing().id
+        && incoming().orgId == existing().orgId
+        && (
+          hasPermission('accounting', 'EDIT') ||
+          ((hasPermission('pos', 'CREATE') || hasPermission('purchases', 'CREATE') || hasPermission('salesReturns', 'CREATE') || hasPermission('purchaseReturns', 'CREATE') || hasPermission('installments', 'EDIT') || hasPermission('cheques', 'EDIT'))
+            && incoming().diff(existing()).affectedKeys().hasOnly(['currentBalance']))
+        );
+      allow delete: if false;
+    }
+
+    match /vouchers/{voucherId} {
+      allow get: if isValidId(voucherId) && (hasPermission('accounting', 'VIEW') || hasPermission('ledgers', 'VIEW'));
+      allow list: if (hasPermission('accounting', 'VIEW') || hasPermission('ledgers', 'VIEW')) && isSameOrg(resource.data);
+      allow create: if isValidId(voucherId) && isValidVoucher(incoming()) && incoming().createdByUid == request.auth.uid && (
+        hasPermission('accounting', 'CREATE') || hasPermission('pos', 'CREATE') || hasPermission('purchases', 'CREATE') || hasPermission('salesReturns', 'CREATE') || hasPermission('purchaseReturns', 'CREATE') || hasPermission('installments', 'EDIT') || hasPermission('cheques', 'EDIT')
+      );
+      allow update: if isValidId(voucherId) && isValidVoucher(incoming())
+        && existing().status == 'Posted'
+        && incoming().status == 'Cancelled'
+        && incoming().amount == existing().amount
+        && incoming().entries == existing().entries
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'reversedByVoucherId'])
+        && (isOwner() || hasPermission('accounting', 'APPROVE'));
+      allow delete: if false;
+    }
+
+    match /cheques/{chequeId} {
+      allow get: if isValidId(chequeId) && hasPermission('cheques', 'VIEW');
+      allow list: if hasPermission('cheques', 'VIEW') && isSameOrg(resource.data);
+      allow create: if isValidId(chequeId) && isValidCheque(incoming()) && hasPermission('cheques', 'CREATE');
+      allow update: if isValidId(chequeId) && isValidCheque(incoming())
+        && incoming().id == existing().id
+        && incoming().orgId == existing().orgId
+        && existing().status != 'Cleared'
+        && (isOwner() || (hasPermission('cheques', 'EDIT') && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'clearanceDate', 'remarks'])));
+      allow delete: if false;
+    }
+
+    match /targets/{targetId} {
+      allow get: if isValidId(targetId) && hasPermission('targets', 'VIEW');
+      allow list: if hasPermission('targets', 'VIEW') && isSameOrg(resource.data);
+      allow create, update: if isValidId(targetId) && isValidTarget(incoming()) && hasPermission('targets', 'EDIT');
+      allow delete: if isValidId(targetId) && isOwner();
+    }
+
+    match /tasks/{taskId} {
+      allow get: if isValidId(taskId) && hasPermission('tasks', 'VIEW');
+      allow list: if hasPermission('tasks', 'VIEW') && isSameOrg(resource.data);
+      allow create: if isValidId(taskId) && isValidTask(incoming()) && incoming().createdByUid == request.auth.uid && hasPermission('tasks', 'CREATE');
+      allow update: if isValidId(taskId) && isValidTask(incoming())
+        && incoming().id == existing().id
+        && incoming().orgId == existing().orgId
+        && (isOwner() || hasPermission('tasks', 'EDIT'));
+      allow delete: if isValidId(taskId) && (isOwner() || hasPermission('tasks', 'DELETE'));
+    }
+
+    match /auditLogs/{logId} {
+      allow get: if isValidId(logId) && (isOwner() || hasPermission('audit', 'VIEW'));
+      allow list: if (isOwner() || hasPermission('audit', 'VIEW')) && isSameOrg(resource.data);
+      allow create: if isValidId(logId) && isEmailVerified() && isValidAuditLog(incoming()) && incoming().userId == request.auth.uid && (isOwner() || isActiveStaff());
+      allow update, delete: if false;
+    }
+
+    match /backups/{backupId} {
+      allow get: if isValidId(backupId) && (isOwner() || hasPermission('audit', 'VIEW'));
+      allow list: if (isOwner() || hasPermission('audit', 'VIEW')) && isSameOrg(resource.data);
+      allow create: if isValidId(backupId) && isValidBackup(incoming()) && (isOwner() || hasPermission('audit', 'EXPORT'));
+      allow update: if isValidId(backupId) && isValidBackup(incoming()) && isOwner() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'wpStatus', 'wpRef', 'notes']);
+      allow delete: if false;
+    }
+  }
+}

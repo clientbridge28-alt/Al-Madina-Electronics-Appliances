@@ -1,11 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Package, Plus, Search, Filter, AlertTriangle, 
   CheckCircle, SlidersHorizontal, ShieldCheck, 
   Barcode, Layers, X, Edit, ArrowDown, ArrowUp,
-  FileSpreadsheet, Upload, Download, Globe, RefreshCw
+  FileSpreadsheet, Upload, Download, Globe, RefreshCw, History
 } from 'lucide-react';
-import { getProducts, saveProduct, adjustProductStock, getSuppliers } from '../../services/storage';
+import { getProducts, saveProduct, adjustProductStock, getItemStockLedger, subscribeToDatabase } from '../../services/storage';
 import { Product, SerialUnit } from '../../types/erp';
 import { Badge } from '../common/Badge';
 import { 
@@ -14,11 +14,13 @@ import {
   processProductExcelBuffer 
 } from '../../services/excelService';
 import { ExcelImportModal } from '../common/ExcelImportModal';
-import { syncProductToWooCommerce, getWordPressSettings } from '../../services/wordpressService';
+import { syncProductToWooCommerce } from '../../services/wordpressService';
 
 export const InventoryView: React.FC = () => {
-  const [products, setProducts] = useState<Product[]>(getProducts());
-  const suppliers = getSuppliers();
+  const [, setDbTick] = useState(0);
+  useEffect(() => subscribeToDatabase(() => setDbTick(t => t + 1)), []);
+
+  const products = getProducts();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -29,6 +31,7 @@ export const InventoryView: React.FC = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [showSerialModal, setShowSerialModal] = useState(false);
+  const [showLedgerModal, setShowLedgerModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
@@ -104,7 +107,6 @@ export const InventoryView: React.FC = () => {
     };
 
     saveProduct(newProd);
-    setProducts(getProducts());
     setShowAddModal(false);
   };
 
@@ -114,7 +116,6 @@ export const InventoryView: React.FC = () => {
     if (!selectedProduct) return;
     const finalDelta = adjustType === 'In' ? adjustQty : -adjustQty;
     adjustProductStock(selectedProduct.id, finalDelta, adjustReason);
-    setProducts(getProducts());
     setShowAdjustModal(false);
   };
 
@@ -134,32 +135,34 @@ export const InventoryView: React.FC = () => {
       warrantyMonths: selectedProduct.warrantyMonths
     };
 
-    if (!selectedProduct.serials) selectedProduct.serials = [];
-    selectedProduct.serials.push(unit);
-    selectedProduct.stockQuantity = selectedProduct.serials.filter(s => s.status === 'In Stock').length;
+    const updatedSerials = [...(selectedProduct.serials || []), unit];
+    const updatedProduct: Product = {
+      ...selectedProduct,
+      serials: updatedSerials,
+      stockQuantity: updatedSerials.filter(s => s.status === 'In Stock').length,
+    };
 
-    saveProduct(selectedProduct);
-    setProducts(getProducts());
+    saveProduct(updatedProduct);
+    setSelectedProduct(updatedProduct);
     setNewSerialNo('');
   };
 
   const handleSyncToWooCommerce = async () => {
-    const wpSettings = getWordPressSettings();
-    if (!wpSettings.consumerKey || !wpSettings.siteUrl) {
-      setSyncNotice('WooCommerce API not configured yet. Please configure credentials in Settings.');
-      setTimeout(() => setSyncNotice(null), 5000);
-      return;
-    }
-
     setSyncingWoo(true);
-    setSyncNotice('Syncing showroom catalog to WooCommerce...');
+    setSyncNotice('Syncing showroom catalog via secure server-side WooCommerce proxy...');
     try {
       let synced = 0;
+      let lastError = '';
       for (const p of filteredProducts.slice(0, 10)) {
-        await syncProductToWooCommerce(p);
-        synced++;
+        const res = await syncProductToWooCommerce(p);
+        if (res.success) synced++;
+        else lastError = res.message;
       }
-      setSyncNotice(`Successfully synchronized ${synced} products with online WooCommerce store.`);
+      if (synced > 0) {
+        setSyncNotice(`Successfully synchronized ${synced} products with online WooCommerce store.`);
+      } else {
+        setSyncNotice(`WooCommerce Sync skipped/failed: ${lastError || 'Configure WordPress / WooCommerce in Settings first.'}`);
+      }
     } catch (err: any) {
       setSyncNotice(`WooCommerce Sync: ${err.message}`);
     } finally {
@@ -390,6 +393,14 @@ export const InventoryView: React.FC = () => {
 
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => { setSelectedProduct(p); setShowLedgerModal(true); }}
+                          className="px-2.5 py-1 rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 font-semibold text-[11px] inline-flex items-center gap-1 transition"
+                          title="View Item Stock Movement Ledger"
+                        >
+                          <History className="h-3 w-3" />
+                          <span>Ledger</span>
+                        </button>
                         {p.hasSerialTracking && (
                           <button
                             onClick={() => { setSelectedProduct(p); setShowSerialModal(true); }}
@@ -746,6 +757,59 @@ export const InventoryView: React.FC = () => {
         </div>
       )}
 
+      {/* Item Stock Ledger Modal */}
+      {showLedgerModal && selectedProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="w-full max-w-3xl rounded-2xl bg-white p-6 shadow-2xl space-y-4 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Item Stock Ledger — {selectedProduct.name}</h3>
+                <p className="text-xs text-slate-500 font-mono">
+                  SKU: {selectedProduct.sku} • Current Physical Stock: {selectedProduct.stockQuantity} units
+                </p>
+              </div>
+              <button onClick={() => setShowLedgerModal(false)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+            </div>
+            {(() => {
+              const rows = getItemStockLedger(selectedProduct.id);
+              return (
+                <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[10px] border-b border-slate-200">
+                      <tr>
+                        <th className="p-3">Date</th>
+                        <th className="p-3">Ref #</th>
+                        <th className="p-3">Movement</th>
+                        <th className="p-3">Party</th>
+                        <th className="p-3 text-right">In</th>
+                        <th className="p-3 text-right">Out</th>
+                        <th className="p-3 text-right">Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-mono">
+                      {rows.map(r => (
+                        <tr key={r.id} className="hover:bg-slate-50/70">
+                          <td className="p-3 font-sans text-slate-600">{r.date}</td>
+                          <td className="p-3 font-bold text-blue-700">{r.refNo}</td>
+                          <td className="p-3 font-sans font-semibold">{r.type}</td>
+                          <td className="p-3 font-sans text-slate-700">{r.party}</td>
+                          <td className="p-3 text-right text-emerald-700">{r.qtyIn > 0 ? `+${r.qtyIn}` : '—'}</td>
+                          <td className="p-3 text-right text-rose-700">{r.qtyOut > 0 ? `-${r.qtyOut}` : '—'}</td>
+                          <td className="p-3 text-right font-bold text-slate-900">{r.runningQty}</td>
+                        </tr>
+                      ))}
+                      {rows.length === 0 && (
+                        <tr><td colSpan={7} className="p-6 text-center font-sans text-slate-400">No purchase, sale, or return movements recorded for this item yet.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
       {/* Excel Import Modal for Products */}
       <ExcelImportModal
         isOpen={showImportModal}
@@ -755,7 +819,6 @@ export const InventoryView: React.FC = () => {
         onProcessFile={processProductExcelBuffer}
         onCommitImport={(validRows: Product[]) => {
           validRows.forEach(p => saveProduct(p));
-          setProducts(getProducts());
         }}
       />
     </div>

@@ -1,0 +1,657 @@
+{
+  "entities": {
+    "AdminBootstrap": {
+      "title": "AdminBootstrap",
+      "description": "Trusted owner/super-admin identity record.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 200 },
+        "role": { "type": "string", "enum": ["Owner"] },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["uid", "email", "role", "createdAt"]
+    },
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "Authenticated staff or owner account with RBAC permissions and session controls.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "email": { "type": "string", "format": "email", "maxLength": 200 },
+        "role": { "type": "string", "enum": ["Owner", "Manager", "Accountant", "Cashier", "StockManager", "RecoveryOfficer", "Receptionist", "Custom"] },
+        "customRoleName": { "type": "string", "maxLength": 80 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "avatar": { "type": "string", "maxLength": 500 },
+        "active": { "type": "boolean" },
+        "suspended": { "type": "boolean" },
+        "suspendedReason": { "type": "string", "maxLength": 300 },
+        "emailVerified": { "type": "boolean" },
+        "mfaEnabled": { "type": "boolean" },
+        "sessionVersion": { "type": "integer" },
+        "permissions": { "type": "object", "description": "Map of module keys to allowed action arrays." },
+        "lastLogin": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "uid", "orgId", "name", "email", "role", "active", "suspended", "sessionVersion", "permissions"]
+    },
+    "UserPublicSummary": {
+      "title": "UserPublicSummary",
+      "description": "Non-PII staff summary for showroom dropdowns and assignment lists.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "role": { "type": "string", "maxLength": 60 },
+        "active": { "type": "boolean" }
+      },
+      "required": ["uid", "orgId", "name", "role", "active"]
+    },
+    "RoleTemplate": {
+      "title": "RoleTemplate",
+      "description": "Reusable custom role definition and permission matrix.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "description": { "type": "string", "maxLength": 300 },
+        "permissions": { "type": "object" },
+        "isSystem": { "type": "boolean" },
+        "updatedAt": { "type": "string", "maxLength": 64 },
+        "updatedBy": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "orgId", "name", "permissions", "isSystem"]
+    },
+    "UserSession": {
+      "title": "UserSession",
+      "description": "Active device session record for session revocation and audit.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 200 },
+        "userName": { "type": "string", "maxLength": 120 },
+        "role": { "type": "string", "maxLength": 60 },
+        "deviceInfo": { "type": "string", "maxLength": 300 },
+        "revoked": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "lastActiveAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "orgId", "uid", "email", "userName", "role", "revoked", "createdAt", "lastActiveAt"]
+    },
+    "SecurityEvent": {
+      "title": "SecurityEvent",
+      "description": "Security notification event for Owner alerting (logins, permission edits, backups, failed attempts).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "type": { "type": "string", "maxLength": 64 },
+        "severity": { "type": "string", "enum": ["INFO", "WARNING", "CRITICAL"] },
+        "actorUid": { "type": "string", "maxLength": 128 },
+        "actorEmail": { "type": "string", "maxLength": 200 },
+        "title": { "type": "string", "maxLength": 160 },
+        "details": { "type": "string", "maxLength": 1000 },
+        "notifiedOwner": { "type": "boolean" },
+        "emailStatus": { "type": "string", "maxLength": 80 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "orgId", "type", "severity", "actorUid", "title", "details", "createdAt"]
+    },
+    "ShowroomSettings": {
+      "title": "ShowroomSettings",
+      "description": "Showroom identity, tax, prefix, and invoice layout configuration.",
+      "type": "object",
+      "properties": {
+        "orgId": { "type": "string", "maxLength": 64 },
+        "showroomName": { "type": "string", "maxLength": 160 },
+        "ownerName": { "type": "string", "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "whatsapp": { "type": "string", "maxLength": 40 },
+        "email": { "type": "string", "maxLength": 200 },
+        "address": { "type": "string", "maxLength": 300 },
+        "city": { "type": "string", "maxLength": 80 },
+        "currency": { "type": "string", "maxLength": 10 },
+        "currencySymbol": { "type": "string", "maxLength": 10 },
+        "ntn": { "type": "string", "maxLength": 40 },
+        "strn": { "type": "string", "maxLength": 40 },
+        "invoicePrefix": { "type": "string", "maxLength": 20 },
+        "purchasePrefix": { "type": "string", "maxLength": 20 },
+        "receiptPrefix": { "type": "string", "maxLength": 20 },
+        "defaultTaxRate": { "type": "number" },
+        "defaultMarkupRate": { "type": "number" },
+        "printFormat": { "type": "string", "enum": ["A4", "Thermal"] },
+        "invoiceFooterNote": { "type": "string", "maxLength": 600 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["orgId", "showroomName", "ownerName", "currency", "printFormat"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Showroom customer profile with receivable balance and credit limit.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "fatherName": { "type": "string", "maxLength": 160 },
+        "phone": { "type": "string", "minLength": 3, "maxLength": 40 },
+        "whatsapp": { "type": "string", "maxLength": 40 },
+        "cnic": { "type": "string", "maxLength": 32 },
+        "email": { "type": "string", "maxLength": 200 },
+        "address": { "type": "string", "maxLength": 300 },
+        "city": { "type": "string", "maxLength": 80 },
+        "openingBalance": { "type": "number" },
+        "currentBalance": { "type": "number" },
+        "creditLimit": { "type": "number" },
+        "customerType": { "type": "string", "enum": ["Retail", "Wholesale", "Installment", "Credit"] },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["id", "orgId", "name", "phone", "cnic", "openingBalance", "currentBalance", "creditLimit", "customerType", "createdAt"]
+    },
+    "Supplier": {
+      "title": "Supplier",
+      "description": "Electronics vendor or distributor with payable balance.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "companyName": { "type": "string", "minLength": 1, "maxLength": 180 },
+        "contactPerson": { "type": "string", "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "whatsapp": { "type": "string", "maxLength": 40 },
+        "email": { "type": "string", "maxLength": 200 },
+        "address": { "type": "string", "maxLength": 300 },
+        "city": { "type": "string", "maxLength": 80 },
+        "ntn": { "type": "string", "maxLength": 40 },
+        "openingBalance": { "type": "number" },
+        "currentBalance": { "type": "number" },
+        "paymentTerms": { "type": "string", "maxLength": 80 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "orgId", "companyName", "contactPerson", "phone", "openingBalance", "currentBalance", "createdAt"]
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "Showroom staff member record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "fatherName": { "type": "string", "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "cnic": { "type": "string", "maxLength": 32 },
+        "designation": { "type": "string", "maxLength": 80 },
+        "department": { "type": "string", "maxLength": 80 },
+        "joiningDate": { "type": "string", "maxLength": 64 },
+        "salary": { "type": "number" },
+        "status": { "type": "string", "enum": ["Active", "On Leave", "Terminated"] },
+        "shift": { "type": "string", "maxLength": 80 }
+      },
+      "required": ["id", "orgId", "name", "phone", "designation", "status"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Daily staff attendance check-in/out entry.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "employeeId": { "type": "string", "maxLength": 128 },
+        "employeeName": { "type": "string", "maxLength": 120 },
+        "date": { "type": "string", "maxLength": 32 },
+        "checkInTime": { "type": "string", "maxLength": 32 },
+        "checkOutTime": { "type": "string", "maxLength": 32 },
+        "status": { "type": "string", "enum": ["Present", "Late", "Half Day", "Absent", "On Leave"] },
+        "workingHours": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 300 }
+      },
+      "required": ["id", "orgId", "employeeId", "employeeName", "date", "checkInTime", "status"]
+    },
+    "VisitorRecord": {
+      "title": "VisitorRecord",
+      "description": "Showroom visitor check-in and departure log.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "cnic": { "type": "string", "maxLength": 32 },
+        "purpose": { "type": "string", "maxLength": 80 },
+        "personToMeet": { "type": "string", "maxLength": 120 },
+        "entryDate": { "type": "string", "maxLength": 32 },
+        "entryTime": { "type": "string", "maxLength": 32 },
+        "exitTime": { "type": "string", "maxLength": 32 },
+        "status": { "type": "string", "enum": ["Inside", "Checked Out"] },
+        "remarks": { "type": "string", "maxLength": 400 },
+        "createdBy": { "type": "string", "maxLength": 120 }
+      },
+      "required": ["id", "orgId", "name", "phone", "purpose", "entryDate", "entryTime", "status"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Showroom electronics product with pricing, stock, and bounded serial units.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "category": { "type": "string", "maxLength": 80 },
+        "subCategory": { "type": "string", "maxLength": 80 },
+        "brand": { "type": "string", "maxLength": 80 },
+        "modelNumber": { "type": "string", "maxLength": 80 },
+        "sku": { "type": "string", "maxLength": 80 },
+        "barcode": { "type": "string", "maxLength": 80 },
+        "unit": { "type": "string", "maxLength": 32 },
+        "purchasePrice": { "type": "number" },
+        "retailPrice": { "type": "number" },
+        "minSalePrice": { "type": "number" },
+        "stockQuantity": { "type": "integer" },
+        "minStockLevel": { "type": "integer" },
+        "warrantyMonths": { "type": "integer" },
+        "hasSerialTracking": { "type": "boolean" },
+        "image": { "type": "string", "maxLength": 500 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "serials": { "type": "array", "description": "Bounded array of tracked unit serials." }
+      },
+      "required": ["id", "orgId", "name", "category", "brand", "modelNumber", "sku", "purchasePrice", "retailPrice", "stockQuantity", "minStockLevel"]
+    },
+    "PurchaseInvoice": {
+      "title": "PurchaseInvoice",
+      "description": "Supplier purchase consignment invoice.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "invoiceNumber": { "type": "string", "maxLength": 64 },
+        "supplierId": { "type": "string", "maxLength": 128 },
+        "supplierName": { "type": "string", "maxLength": 180 },
+        "date": { "type": "string", "maxLength": 32 },
+        "items": { "type": "array" },
+        "subTotal": { "type": "number" },
+        "discount": { "type": "number" },
+        "tax": { "type": "number" },
+        "freightCharges": { "type": "number" },
+        "grandTotal": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "remainingBalance": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["Cash", "Bank Transfer", "Cheque", "Credit"] },
+        "status": { "type": "string", "enum": ["Received", "Returned", "Draft"] },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdBy": { "type": "string", "maxLength": 120 },
+        "idempotencyKey": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "orgId", "invoiceNumber", "supplierId", "supplierName", "date", "items", "grandTotal", "paidAmount", "remainingBalance", "status"]
+    },
+    "PurchaseReturn": {
+      "title": "PurchaseReturn",
+      "description": "Supplier purchase return debit note.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "returnNumber": { "type": "string", "maxLength": 64 },
+        "originalPurchaseNo": { "type": "string", "maxLength": 64 },
+        "supplierId": { "type": "string", "maxLength": 128 },
+        "supplierName": { "type": "string", "maxLength": 180 },
+        "date": { "type": "string", "maxLength": 32 },
+        "items": { "type": "array" },
+        "grandTotal": { "type": "number" },
+        "refundMethod": { "type": "string", "enum": ["Deduct Payable", "Cash Refund", "Bank Refund"] },
+        "remarks": { "type": "string", "maxLength": 500 },
+        "processedBy": { "type": "string", "maxLength": 120 }
+      },
+      "required": ["id", "orgId", "returnNumber", "originalPurchaseNo", "supplierId", "date", "items", "grandTotal", "refundMethod"]
+    },
+    "SalesInvoice": {
+      "title": "SalesInvoice",
+      "description": "POS or showroom sales invoice.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "invoiceNumber": { "type": "string", "maxLength": 64 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "maxLength": 160 },
+        "customerPhone": { "type": "string", "maxLength": 40 },
+        "saleType": { "type": "string", "enum": ["Cash", "Credit", "Installment"] },
+        "date": { "type": "string", "maxLength": 32 },
+        "items": { "type": "array" },
+        "subTotal": { "type": "number" },
+        "discount": { "type": "number" },
+        "tax": { "type": "number" },
+        "grandTotal": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "changeAmount": { "type": "number" },
+        "remainingBalance": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["Cash", "Bank Transfer", "Card", "Cheque", "Split"] },
+        "status": { "type": "string", "enum": ["Completed", "Returned", "Cancelled"] },
+        "salesPerson": { "type": "string", "maxLength": 120 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "installmentAccountId": { "type": "string", "maxLength": 128 },
+        "idempotencyKey": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "orgId", "invoiceNumber", "customerId", "customerName", "saleType", "date", "items", "grandTotal", "paidAmount", "remainingBalance", "status"]
+    },
+    "SalesReturn": {
+      "title": "SalesReturn",
+      "description": "Customer sales return credit note or refund.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "returnNumber": { "type": "string", "maxLength": 64 },
+        "originalInvoiceNo": { "type": "string", "maxLength": 64 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "maxLength": 160 },
+        "date": { "type": "string", "maxLength": 32 },
+        "items": { "type": "array" },
+        "grandTotal": { "type": "number" },
+        "refundMethod": { "type": "string", "enum": ["Cash", "Credit Note", "Bank"] },
+        "remarks": { "type": "string", "maxLength": 500 },
+        "processedBy": { "type": "string", "maxLength": 120 }
+      },
+      "required": ["id", "orgId", "returnNumber", "originalInvoiceNo", "customerId", "date", "items", "grandTotal", "refundMethod"]
+    },
+    "InstallmentAccount": {
+      "title": "InstallmentAccount",
+      "description": "Hire-purchase installment plan with monthly schedule and guarantors.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "accountNumber": { "type": "string", "maxLength": 64 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "maxLength": 160 },
+        "customerPhone": { "type": "string", "maxLength": 40 },
+        "customerCnic": { "type": "string", "maxLength": 32 },
+        "customerAddress": { "type": "string", "maxLength": 300 },
+        "productId": { "type": "string", "maxLength": 128 },
+        "productName": { "type": "string", "maxLength": 200 },
+        "productModel": { "type": "string", "maxLength": 80 },
+        "productSerial": { "type": "string", "maxLength": 120 },
+        "salesInvoiceNo": { "type": "string", "maxLength": 64 },
+        "cashPrice": { "type": "number" },
+        "downPayment": { "type": "number" },
+        "financedAmount": { "type": "number" },
+        "markupPercentage": { "type": "number" },
+        "markupAmount": { "type": "number" },
+        "totalFinancedPayable": { "type": "number" },
+        "totalPayableWithDown": { "type": "number" },
+        "durationMonths": { "type": "integer" },
+        "monthlyInstallment": { "type": "number" },
+        "startDate": { "type": "string", "maxLength": 32 },
+        "firstDueDate": { "type": "string", "maxLength": 32 },
+        "guarantor1Name": { "type": "string", "maxLength": 120 },
+        "guarantor1Phone": { "type": "string", "maxLength": 40 },
+        "guarantor1Cnic": { "type": "string", "maxLength": 32 },
+        "guarantor1Relation": { "type": "string", "maxLength": 60 },
+        "recoveryOfficerId": { "type": "string", "maxLength": 128 },
+        "recoveryOfficerName": { "type": "string", "maxLength": 120 },
+        "totalReceived": { "type": "number" },
+        "remainingBalance": { "type": "number" },
+        "status": { "type": "string", "enum": ["Active", "Completed", "Overdue", "Defaulted", "Closed Early"] },
+        "schedule": { "type": "array" },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["id", "orgId", "accountNumber", "customerId", "customerName", "productId", "cashPrice", "totalFinancedPayable", "remainingBalance", "status", "schedule"]
+    },
+    "AccountHead": {
+      "title": "AccountHead",
+      "description": "Chart of Accounts head with category and current balance.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "code": { "type": "string", "maxLength": 32 },
+        "name": { "type": "string", "maxLength": 160 },
+        "category": { "type": "string", "enum": ["Asset", "Liability", "Equity", "Income", "Expense"] },
+        "subCategory": { "type": "string", "maxLength": 80 },
+        "currentBalance": { "type": "number" }
+      },
+      "required": ["id", "orgId", "code", "name", "category", "subCategory", "currentBalance"]
+    },
+    "Voucher": {
+      "title": "Voucher",
+      "description": "Balanced double-entry accounting voucher.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "voucherNumber": { "type": "string", "maxLength": 64 },
+        "voucherType": { "type": "string", "enum": ["Payment Voucher", "Receive Voucher", "Journal Voucher", "Contra Voucher"] },
+        "date": { "type": "string", "maxLength": 32 },
+        "partyType": { "type": "string", "maxLength": 32 },
+        "partyId": { "type": "string", "maxLength": 128 },
+        "partyName": { "type": "string", "maxLength": 180 },
+        "amount": { "type": "number" },
+        "paymentMethod": { "type": "string", "maxLength": 32 },
+        "entries": { "type": "array" },
+        "narration": { "type": "string", "maxLength": 500 },
+        "createdBy": { "type": "string", "maxLength": 120 },
+        "status": { "type": "string", "enum": ["Posted", "Cancelled"] },
+        "reversedByVoucherId": { "type": "string", "maxLength": 128 },
+        "sourceRef": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "orgId", "voucherNumber", "voucherType", "date", "amount", "entries", "narration", "createdBy", "status"]
+    },
+    "ChequeRecord": {
+      "title": "ChequeRecord",
+      "description": "Post-dated and clearing cheque record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "chequeNumber": { "type": "string", "maxLength": 64 },
+        "type": { "type": "string", "enum": ["Received", "Issued"] },
+        "bankName": { "type": "string", "maxLength": 120 },
+        "partyName": { "type": "string", "maxLength": 160 },
+        "amount": { "type": "number" },
+        "issueDate": { "type": "string", "maxLength": 32 },
+        "chequeDate": { "type": "string", "maxLength": 32 },
+        "clearanceDate": { "type": "string", "maxLength": 32 },
+        "status": { "type": "string", "enum": ["Pending", "Deposited", "Cleared", "Bounced", "Cancelled"] },
+        "remarks": { "type": "string", "maxLength": 400 }
+      },
+      "required": ["id", "orgId", "chequeNumber", "type", "bankName", "partyName", "amount", "chequeDate", "status"]
+    },
+    "Target": {
+      "title": "Target",
+      "description": "Sales or recovery performance target.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "targetType": { "type": "string", "enum": ["Sales", "Recovery"] },
+        "period": { "type": "string", "enum": ["Daily", "Monthly"] },
+        "monthYear": { "type": "string", "maxLength": 16 },
+        "targetAmount": { "type": "number" },
+        "achievedAmount": { "type": "number" },
+        "assignedTo": { "type": "string", "maxLength": 120 },
+        "status": { "type": "string", "enum": ["In Progress", "Achieved", "Missed"] }
+      },
+      "required": ["id", "orgId", "targetType", "period", "monthYear", "targetAmount", "assignedTo", "status"]
+    },
+    "StaffTask": {
+      "title": "StaffTask",
+      "description": "Showroom staff daily task and progress tracker.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "assignedTo": { "type": "string", "maxLength": 120 },
+        "assignedBy": { "type": "string", "maxLength": 120 },
+        "priority": { "type": "string", "enum": ["Low", "Medium", "High", "Urgent"] },
+        "status": { "type": "string", "enum": ["Pending", "In Progress", "Completed", "Deferred"] },
+        "category": { "type": "string", "maxLength": 80 },
+        "dueDate": { "type": "string", "maxLength": 32 },
+        "completedAt": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "progressPercent": { "type": "integer" },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["id", "orgId", "title", "assignedTo", "priority", "status", "dueDate", "createdAt", "progressPercent"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Append-only immutable audit log entry.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 120 },
+        "userRole": { "type": "string", "maxLength": 60 },
+        "module": { "type": "string", "maxLength": 80 },
+        "action": { "type": "string", "maxLength": 120 },
+        "details": { "type": "string", "maxLength": 1000 },
+        "recordId": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "orgId", "timestamp", "userId", "userName", "userRole", "module", "action", "details"]
+    },
+    "BackupRecord": {
+      "title": "BackupRecord",
+      "description": "Versioned backup metadata, checksum, schedule type, and WordPress mirror status.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "type": { "type": "string", "enum": ["Manual", "ScheduledDaily", "ScheduledWeekly", "ScheduledMonthly", "PreRestore"] },
+        "format": { "type": "string", "enum": ["XLSX", "CSV", "JSON", "WordPressMirror"] },
+        "recordCount": { "type": "integer" },
+        "checksum": { "type": "string", "maxLength": 128 },
+        "wpStatus": { "type": "string", "maxLength": 60 },
+        "wpRef": { "type": "string", "maxLength": 300 },
+        "status": { "type": "string", "enum": ["Success", "Failed", "Verified"] },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "createdBy": { "type": "string", "maxLength": 120 },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["id", "orgId", "type", "format", "recordCount", "checksum", "status", "createdAt", "createdBy"]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminBootstrap" },
+      "description": "Bootstrapped showroom Owner/Admin UIDs."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserAccount" },
+      "description": "User profiles, PII, RBAC permissions matrix, and suspension controls."
+    },
+    "/users_public/{userId}": {
+      "schema": { "$ref": "#/entities/UserPublicSummary" },
+      "description": "Non-PII staff names and roles for operational selectors."
+    },
+    "/roles/{roleId}": {
+      "schema": { "$ref": "#/entities/RoleTemplate" },
+      "description": "Custom role templates and permission matrices."
+    },
+    "/sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/UserSession" },
+      "description": "User device sessions and revocation state."
+    },
+    "/securityEvents/{eventId}": {
+      "schema": { "$ref": "#/entities/SecurityEvent" },
+      "description": "Owner security notification logs."
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/ShowroomSettings" },
+      "description": "Showroom configuration and invoice defaults."
+    },
+    "/customers/{customerId}": {
+      "schema": { "$ref": "#/entities/Customer" },
+      "description": "Customer directory and credit receivables."
+    },
+    "/suppliers/{supplierId}": {
+      "schema": { "$ref": "#/entities/Supplier" },
+      "description": "Supplier directory and payables."
+    },
+    "/employees/{employeeId}": {
+      "schema": { "$ref": "#/entities/Employee" },
+      "description": "Showroom employee roster."
+    },
+    "/attendance/{attendanceId}": {
+      "schema": { "$ref": "#/entities/AttendanceRecord" },
+      "description": "Daily staff attendance records."
+    },
+    "/visitors/{visitorId}": {
+      "schema": { "$ref": "#/entities/VisitorRecord" },
+      "description": "Showroom visitor entry and exit register."
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Electronics inventory catalog and serialized units."
+    },
+    "/purchases/{purchaseId}": {
+      "schema": { "$ref": "#/entities/PurchaseInvoice" },
+      "description": "Supplier purchase invoices."
+    },
+    "/purchaseReturns/{returnId}": {
+      "schema": { "$ref": "#/entities/PurchaseReturn" },
+      "description": "Purchase return debit notes."
+    },
+    "/sales/{saleId}": {
+      "schema": { "$ref": "#/entities/SalesInvoice" },
+      "description": "Showroom and POS sales invoices."
+    },
+    "/salesReturns/{returnId}": {
+      "schema": { "$ref": "#/entities/SalesReturn" },
+      "description": "Sales return credit notes and refunds."
+    },
+    "/installments/{installmentId}": {
+      "schema": { "$ref": "#/entities/InstallmentAccount" },
+      "description": "Hire-purchase installment contracts and schedules."
+    },
+    "/accounts/{accountId}": {
+      "schema": { "$ref": "#/entities/AccountHead" },
+      "description": "Chart of Accounts heads and balances."
+    },
+    "/vouchers/{voucherId}": {
+      "schema": { "$ref": "#/entities/Voucher" },
+      "description": "Double-entry financial vouchers."
+    },
+    "/cheques/{chequeId}": {
+      "schema": { "$ref": "#/entities/ChequeRecord" },
+      "description": "Cheque clearing register."
+    },
+    "/targets/{targetId}": {
+      "schema": { "$ref": "#/entities/Target" },
+      "description": "Sales and recovery targets."
+    },
+    "/tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/StaffTask" },
+      "description": "Staff tasks and daily operational checklist."
+    },
+    "/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Immutable append-only audit trail."
+    },
+    "/backups/{backupId}": {
+      "schema": { "$ref": "#/entities/BackupRecord" },
+      "description": "Backup snapshots, checksums, and WordPress secondary backup logs."
+    }
+  }
+}

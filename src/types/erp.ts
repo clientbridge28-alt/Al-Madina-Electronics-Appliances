@@ -1,21 +1,27 @@
-export type UserRole = 
-  | 'Owner' 
-  | 'Manager' 
-  | 'Accountant' 
-  | 'Cashier' 
-  | 'StockManager' 
-  | 'RecoveryOfficer' 
-  | 'Receptionist';
+import type { ExtendedUserRole, PermissionsMatrix } from './rbac';
+
+export type UserRole = ExtendedUserRole;
 
 export interface User {
   id: string;
+  uid?: string;
+  orgId?: string;
   name: string;
   email: string;
   role: UserRole;
+  customRoleName?: string;
   phone: string;
   avatar?: string;
   active: boolean;
+  suspended?: boolean;
+  suspendedReason?: string;
+  emailVerified?: boolean;
+  mfaEnabled?: boolean;
+  sessionVersion?: number;
+  permissions?: PermissionsMatrix;
   lastLogin: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Customer {
@@ -324,6 +330,8 @@ export interface VoucherEntry {
 
 export interface Voucher {
   id: string;
+  orgId?: string;
+  createdByUid?: string;
   voucherNumber: string;
   voucherType: 'Payment Voucher' | 'Receive Voucher' | 'Journal Voucher' | 'Contra Voucher';
   date: string;
@@ -336,6 +344,8 @@ export interface Voucher {
   narration: string;
   createdBy: string;
   status: 'Posted' | 'Cancelled';
+  sourceRef?: string;
+  reversedByVoucherId?: string;
 }
 
 export interface LedgerEntry {

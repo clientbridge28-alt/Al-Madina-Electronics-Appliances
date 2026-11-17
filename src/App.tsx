@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Lock, Sparkles } from 'lucide-react';
 import { Header } from './components/layout/Header';
 import { Sidebar } from './components/layout/Sidebar';
 import { GlobalSearchModal } from './components/layout/GlobalSearchModal';
@@ -21,14 +22,18 @@ import { ReportsView } from './components/reports/ReportsView';
 import { TargetsView } from './components/targets/TargetsView';
 import { AuditBackupView } from './components/audit/AuditBackupView';
 import { SettingsView } from './components/settings/SettingsView';
+import { SuperAdminView } from './components/admin/SuperAdminView';
 
 import { subscribeToDatabase, checkInVisitor, markStaffCheckIn, getEmployees } from './services/storage';
+import { useAuth } from './context/AuthContext';
+import type { ModulePermissionKey } from './types/rbac';
 
 export default function App() {
+  const { status, isOwner, isDemoSession, can, exitDemoMode } = useAuth();
   const [currentModule, setCurrentModule] = useState<string>('dashboard');
   const [showSearchModal, setShowSearchModal] = useState<boolean>(false);
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
-  const [dbVersion, setDbVersion] = useState<number>(0);
+  const [, setDbVersion] = useState<number>(0);
 
   // Quick Action Modals
   const [showQuickVisitor, setShowQuickVisitor] = useState(false);
@@ -38,7 +43,6 @@ export default function App() {
   const [visPurpose, setVisPurpose] = useState('Product Inquiry');
   const [selectedEmpId, setSelectedEmpId] = useState('');
 
-  // Subscribe to persistent storage updates
   useEffect(() => {
     const unsubscribe = subscribeToDatabase(() => {
       setDbVersion(v => v + 1);
@@ -46,7 +50,6 @@ export default function App() {
     return unsubscribe;
   }, []);
 
-  // Keyboard shortcut listener for Ctrl+K
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
@@ -62,6 +65,30 @@ export default function App() {
     setCurrentModule(module);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  if (status === 'loading') {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 space-y-3">
+        <div className="h-10 w-10 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
+        <p className="text-sm font-bold tracking-wide">Verifying Secure Showroom Session...</p>
+        <p className="text-xs text-slate-400">Al-Madina Electronics & Appliances ERP</p>
+      </div>
+    );
+  }
+
+  if (
+    status === 'unauthenticated' ||
+    status === 'needs_verification' ||
+    status === 'needs_mfa' ||
+    status === 'suspended' ||
+    status === 'no_staff_profile'
+  ) {
+    return (
+      <div className="min-h-screen bg-slate-950">
+        <LoginModal isOpen={true} onClose={() => {}} requireGate={true} />
+      </div>
+    );
+  }
 
   const employees = getEmployees();
 
@@ -89,8 +116,28 @@ export default function App() {
     setShowQuickAttendance(false);
   };
 
+  const modulePermKey = (currentModule === 'admin' ? 'admin' : currentModule) as ModulePermissionKey;
+  const hasViewAccess = currentModule === 'admin' ? isOwner : can(modulePermKey, 'VIEW');
+
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 flex flex-col antialiased">
+      {isDemoSession && (
+        <div className="bg-amber-500 text-slate-950 px-4 py-2 text-xs font-bold flex flex-wrap items-center justify-between gap-2 no-print">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 shrink-0" />
+            <span>
+              ISOLATED CLIENT DEMO SHOWCASE (Read-Only Sample Dataset) — Demo data never touches live Cloud Firestore production records.
+            </span>
+          </div>
+          <button
+            onClick={() => exitDemoMode()}
+            className="px-3 py-1 rounded-lg bg-slate-950 text-white text-[11px] font-bold hover:bg-slate-800 transition"
+          >
+            Exit to Live Cloud Login
+          </button>
+        </div>
+      )}
+
       {/* Top Application Header */}
       <Header
         onOpenSearch={() => setShowSearchModal(true)}
@@ -111,30 +158,43 @@ export default function App() {
 
         {/* Viewport Workspace */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full overflow-x-hidden">
-          {currentModule === 'dashboard' && (
-            <DashboardView
-              onNavigate={handleNavigate}
-              onOpenQuickSale={() => setCurrentModule('pos')}
-              onOpenQuickVisitor={() => setShowQuickVisitor(true)}
-            />
-          )}
+          {!hasViewAccess ? (
+            <div className="rounded-2xl bg-white border border-rose-200 p-8 text-center max-w-md mx-auto mt-10 shadow-xs">
+              <Lock className="h-9 w-9 text-rose-600 mx-auto mb-3" />
+              <h2 className="text-base font-bold text-slate-900">Access Restricted</h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Your current role does not have permission to view the <strong>{currentModule}</strong> module. Contact the Owner Admin to request access.
+              </p>
+            </div>
+          ) : (
+            <>
+              {currentModule === 'dashboard' && (
+                <DashboardView
+                  onNavigate={handleNavigate}
+                  onOpenQuickSale={() => setCurrentModule('pos')}
+                  onOpenQuickVisitor={() => setShowQuickVisitor(true)}
+                />
+              )}
 
-          {currentModule === 'pos' && <POSBillingView />}
-          {currentModule === 'inventory' && <InventoryView />}
-          {currentModule === 'purchases' && <PurchasesView />}
-          {currentModule === 'installments' && <InstallmentsView />}
-          {currentModule === 'customers' && <CustomersView />}
-          {currentModule === 'suppliers' && <SuppliersView />}
-          {currentModule === 'attendance' && <AttendanceView />}
-          {currentModule === 'tasks' && <TasksView />}
-          {currentModule === 'visitors' && <VisitorsView />}
-          {currentModule === 'accounting' && <AccountingView />}
-          {currentModule === 'ledgers' && <LedgersView />}
-          {currentModule === 'cheques' && <ChequesView />}
-          {currentModule === 'reports' && <ReportsView />}
-          {currentModule === 'targets' && <TargetsView />}
-          {currentModule === 'audit' && <AuditBackupView />}
-          {currentModule === 'settings' && <SettingsView />}
+              {currentModule === 'pos' && <POSBillingView />}
+              {currentModule === 'inventory' && <InventoryView />}
+              {currentModule === 'purchases' && <PurchasesView />}
+              {currentModule === 'installments' && <InstallmentsView />}
+              {currentModule === 'customers' && <CustomersView />}
+              {currentModule === 'suppliers' && <SuppliersView />}
+              {currentModule === 'attendance' && <AttendanceView />}
+              {currentModule === 'tasks' && <TasksView />}
+              {currentModule === 'visitors' && <VisitorsView />}
+              {currentModule === 'accounting' && <AccountingView />}
+              {currentModule === 'ledgers' && <LedgersView />}
+              {currentModule === 'cheques' && <ChequesView />}
+              {currentModule === 'reports' && <ReportsView />}
+              {currentModule === 'targets' && <TargetsView />}
+              {currentModule === 'audit' && <AuditBackupView />}
+              {currentModule === 'settings' && <SettingsView />}
+              {currentModule === 'admin' && <SuperAdminView />}
+            </>
+          )}
         </main>
       </div>
 

@@ -1,31 +1,51 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Calendar, Plus, Search, DollarSign, CheckCircle, 
   AlertTriangle, Clock, UserCheck, Shield, ChevronRight, 
-  Printer, X, ArrowUpRight, FileText
+  Printer, X, ArrowUpRight, FileText, Edit3, CheckSquare, AlertCircle
 } from 'lucide-react';
 import { 
   getInstallmentAccounts, createInstallmentAccount, 
-  receiveInstallmentPayment, getCustomers, getProducts, 
-  getEmployees, getSettings 
+  receiveInstallmentPayment, closeInstallmentAccountEarly,
+  updateInstallmentAccountDetails, getCustomers, getProducts, 
+  getEmployees, getSettings, subscribeToDatabase 
 } from '../../services/storage';
 import { InstallmentAccount, InstallmentScheduleItem } from '../../types/erp';
 import { Badge } from '../common/Badge';
 
 export const InstallmentsView: React.FC = () => {
-  const [installments, setInstallments] = useState<InstallmentAccount[]>(getInstallmentAccounts());
+  const [, setDbTick] = useState(0);
+  useEffect(() => subscribeToDatabase(() => setDbTick(t => t + 1)), []);
+
+  const installments = getInstallmentAccounts();
   const customers = getCustomers();
   const products = getProducts();
   const employees = getEmployees();
   const settings = getSettings();
 
+  const [viewMode, setViewMode] = useState<'accounts' | 'dueSchedule'>('accounts');
+  const [dueFilter, setDueFilter] = useState<'all' | 'overdue' | 'today' | 'week'>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Overdue' | 'Completed'>('All');
+  const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Overdue' | 'Completed' | 'Closed Early'>('All');
+  const [notice, setNotice] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
 
   // Modals
   const [showNewModal, setShowNewModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showCloseModal, setShowCloseModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<InstallmentAccount | null>(null);
+
+  // Early Closure & Edit state
+  const [settlementAmount, setSettlementAmount] = useState<number>(0);
+  const [settlementMethod, setSettlementMethod] = useState<'Cash' | 'Bank' | 'Cheque'>('Cash');
+  const [settlementNotes, setSettlementNotes] = useState('');
+  const [editGuarantorName, setEditGuarantorName] = useState('');
+  const [editGuarantorPhone, setEditGuarantorPhone] = useState('');
+  const [editGuarantorCnic, setEditGuarantorCnic] = useState('');
+  const [editGuarantorRel, setEditGuarantorRel] = useState('');
+  const [editOfficerName, setEditOfficerName] = useState('');
+  const [editNotes, setEditNotes] = useState('');
 
   // New Installment form
   const [customerId, setCustomerId] = useState(customers[0]?.id || '');
@@ -100,13 +120,12 @@ export const InstallmentsView: React.FC = () => {
     const recOfficer = employees.find(e => e.id === recoveryOfficerId);
 
     if (!cust || !prod) {
-      alert('Please select valid customer and product');
+      setNotice({ type: 'error', text: 'Please select or create a valid customer and product first.' });
       return;
     }
 
     const accountNo = `INST-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`;
 
-    // Generate monthly schedule
     const scheduleItems: InstallmentScheduleItem[] = [];
     const monthlyPrincipal = Math.round(financedAmount / durationMonths);
     const monthlyMarkup = Math.round(markupAmount / durationMonths);
@@ -160,8 +179,8 @@ export const InstallmentsView: React.FC = () => {
       schedule: scheduleItems
     });
 
-    setInstallments(getInstallmentAccounts());
     setShowNewModal(false);
+    setNotice({ type: 'success', text: `Installment Account #${accountNo} created with ${durationMonths}-month schedule.` });
   };
 
   // Submit installment receipt payment
@@ -177,11 +196,78 @@ export const InstallmentsView: React.FC = () => {
     );
 
     setLastReceiptNo(result.receiptNo);
-    setInstallments(getInstallmentAccounts());
     setSelectedAccount(result.updatedAccount);
     setPaymentAmount(0);
     setPaymentRemarks('');
   };
+
+  const handleCloseEarlySubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedAccount) return;
+    const res = closeInstallmentAccountEarly(
+      selectedAccount.id,
+      settlementAmount,
+      settlementMethod,
+      settlementNotes
+    );
+    setShowCloseModal(false);
+    setSelectedAccount(null);
+    setNotice({
+      type: 'success',
+      text: `Account #${res.updatedAccount.accountNumber} closed early (Receipt: ${res.receiptNo}). Remaining balance is now PKR 0.`,
+    });
+  };
+
+  const handleEditPlanSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedAccount) return;
+    updateInstallmentAccountDetails(selectedAccount.id, {
+      guarantor1Name: editGuarantorName,
+      guarantor1Phone: editGuarantorPhone,
+      guarantor1Cnic: editGuarantorCnic,
+      guarantor1Relation: editGuarantorRel,
+      recoveryOfficerName: editOfficerName,
+      notes: editNotes,
+    });
+    setShowEditModal(false);
+    setSelectedAccount(null);
+    setNotice({ type: 'success', text: `Updated guarantor / recovery details for #${selectedAccount.accountNumber}.` });
+  };
+
+  // Due Date Schedule flattened list
+  const dueScheduleRows = useMemo(() => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const weekLater = new Date();
+    weekLater.setDate(weekLater.getDate() + 7);
+    const weekStr = weekLater.toISOString().split('T')[0];
+
+    const rows: {
+      account: InstallmentAccount;
+      item: InstallmentScheduleItem;
+      isOverdue: boolean;
+      isToday: boolean;
+      isWeek: boolean;
+    }[] = [];
+
+    for (const acc of installments) {
+      if (acc.status === 'Completed' || acc.status === 'Closed Early') continue;
+      for (const item of acc.schedule) {
+        if (item.status === 'Paid' || item.remainingAmount <= 0) continue;
+        const isOverdue = item.status === 'Overdue' || item.dueDate < todayStr;
+        const isToday = item.dueDate === todayStr;
+        const isWeek = item.dueDate >= todayStr && item.dueDate <= weekStr;
+        if (
+          dueFilter === 'all' ||
+          (dueFilter === 'overdue' && isOverdue) ||
+          (dueFilter === 'today' && isToday) ||
+          (dueFilter === 'week' && isWeek)
+        ) {
+          rows.push({ account: acc, item, isOverdue, isToday, isWeek });
+        }
+      }
+    }
+    return rows.sort((a, b) => a.item.dueDate.localeCompare(b.item.dueDate));
+  }, [installments, dueFilter]);
 
   return (
     <div className="space-y-6">
@@ -192,18 +278,44 @@ export const InstallmentsView: React.FC = () => {
             Installments & Recovery Portfolio
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Appliance financing, automated monthly schedules, recovery receipts & guarantor files
+            Appliance financing, automated monthly schedules, due date calendar, early closure & guarantor files
           </p>
         </div>
 
-        <button
-          onClick={() => setShowNewModal(true)}
-          className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition active:scale-98 shrink-0"
-        >
-          <Plus className="h-4 w-4" />
-          <span>New Installment Plan</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setViewMode(viewMode === 'accounts' ? 'dueSchedule' : 'accounts')}
+            className={`flex items-center gap-1.5 rounded-xl border px-3.5 py-2.5 text-xs font-bold transition ${
+              viewMode === 'dueSchedule'
+                ? 'bg-indigo-600 text-white border-indigo-600'
+                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            <Clock className="h-4 w-4" />
+            <span>{viewMode === 'dueSchedule' ? 'Back to Accounts' : 'Due Date Schedule'}</span>
+          </button>
+
+          <button
+            onClick={() => setShowNewModal(true)}
+            className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition active:scale-98 shrink-0"
+          >
+            <Plus className="h-4 w-4" />
+            <span>New Installment Plan</span>
+          </button>
+        </div>
       </div>
+
+      {notice && (
+        <div className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+          notice.type === 'error' ? 'bg-rose-50 border-rose-200 text-rose-900' : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+        }`}>
+          <div className="flex items-center gap-2">
+            {notice.type === 'error' ? <AlertCircle className="h-4 w-4 text-rose-600" /> : <CheckCircle className="h-4 w-4 text-emerald-600" />}
+            <span>{notice.text}</span>
+          </div>
+          <button onClick={() => setNotice(null)} className="text-slate-400 hover:text-slate-700"><X className="h-4 w-4" /></button>
+        </div>
+      )}
 
       {/* KPI Cards (Payment Schedules style) */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
@@ -242,10 +354,82 @@ export const InstallmentsView: React.FC = () => {
         </div>
       </div>
 
+      {viewMode === 'dueSchedule' ? (
+        <div className="space-y-4">
+          <div className="rounded-2xl bg-white p-4 border border-slate-200 shadow-2xs flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap gap-2 text-xs font-bold">
+              {[
+                { id: 'all', label: 'All Pending Dues' },
+                { id: 'overdue', label: 'Overdue' },
+                { id: 'today', label: 'Due Today' },
+                { id: 'week', label: 'Due Next 7 Days' },
+              ].map(f => (
+                <button
+                  key={f.id}
+                  onClick={() => setDueFilter(f.id as any)}
+                  className={`px-3 py-1.5 rounded-xl ${
+                    dueFilter === f.id ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-700'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-slate-500 font-semibold">{dueScheduleRows.length} Upcoming / Due Installments</span>
+          </div>
+
+          <div className="rounded-2xl bg-white border border-slate-200 shadow-2xs overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[10px] border-b border-slate-200">
+                  <tr>
+                    <th className="p-3.5">Due Date</th>
+                    <th className="p-3.5">Account #</th>
+                    <th className="p-3.5">Customer & Phone</th>
+                    <th className="p-3.5">Inst #</th>
+                    <th className="p-3.5">Officer</th>
+                    <th className="p-3.5 text-right">Remaining Due</th>
+                    <th className="p-3.5 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {dueScheduleRows.map(({ account, item, isOverdue }) => (
+                    <tr key={`${account.id}-${item.installmentNumber}`} className="hover:bg-slate-50/70">
+                      <td className={`p-3.5 font-mono font-bold ${isOverdue ? 'text-rose-600' : 'text-slate-800'}`}>
+                        {item.dueDate} {isOverdue && <span className="ml-1 text-[10px] bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded">OVERDUE</span>}
+                      </td>
+                      <td className="p-3.5 font-mono font-bold text-blue-700">{account.accountNumber}</td>
+                      <td className="p-3.5">
+                        <p className="font-bold text-slate-900">{account.customerName}</p>
+                        <p className="text-[11px] text-slate-500">{account.customerPhone}</p>
+                      </td>
+                      <td className="p-3.5 font-mono">#{item.installmentNumber}</td>
+                      <td className="p-3.5 text-slate-600">{account.recoveryOfficerName}</td>
+                      <td className="p-3.5 text-right font-mono font-bold text-rose-700">₨ {item.remainingAmount.toLocaleString()}</td>
+                      <td className="p-3.5 text-right">
+                        <button
+                          onClick={() => { setSelectedAccount(account); setPaymentAmount(item.remainingAmount); setShowPaymentModal(true); }}
+                          className="px-3 py-1 rounded-lg bg-emerald-600 text-white font-bold text-[11px] hover:bg-emerald-700"
+                        >
+                          Collect Now
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {dueScheduleRows.length === 0 && (
+                    <tr><td colSpan={7} className="p-8 text-center text-slate-400">No installments match this due-date filter.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : (
+      <>
       {/* Filter Tabs & Search */}
       <div className="rounded-2xl bg-white p-4 border border-slate-200 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-1.5 overflow-x-auto text-xs font-semibold text-slate-600">
-          {(['All', 'Active', 'Overdue', 'Completed'] as const).map(tab => (
+          {(['All', 'Active', 'Overdue', 'Completed', 'Closed Early'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setStatusFilter(tab)}
@@ -313,12 +497,44 @@ export const InstallmentsView: React.FC = () => {
                     </Badge>
                   </td>
                   <td className="py-3.5 px-4 text-right">
-                    <div className="flex items-center justify-end gap-1.5">
+                    <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                      {a.remainingBalance > 0 && (
+                        <>
+                          <button
+                            onClick={() => { setSelectedAccount(a); setPaymentAmount(a.monthlyInstallment); setShowPaymentModal(true); }}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition shadow-2xs"
+                          >
+                            Receive
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedAccount(a);
+                              setSettlementAmount(a.remainingBalance);
+                              setSettlementNotes('');
+                              setShowCloseModal(true);
+                            }}
+                            className="px-2.5 py-1 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-semibold text-[11px]"
+                            title="Early Settlement / Close Account"
+                          >
+                            Close Early
+                          </button>
+                        </>
+                      )}
                       <button
-                        onClick={() => { setSelectedAccount(a); setPaymentAmount(a.monthlyInstallment); setShowPaymentModal(true); }}
-                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition shadow-2xs"
+                        onClick={() => {
+                          setSelectedAccount(a);
+                          setEditGuarantorName(a.guarantor1Name || '');
+                          setEditGuarantorPhone(a.guarantor1Phone || '');
+                          setEditGuarantorCnic(a.guarantor1Cnic || '');
+                          setEditGuarantorRel(a.guarantor1Relation || '');
+                          setEditOfficerName(a.recoveryOfficerName || '');
+                          setEditNotes(a.notes || '');
+                          setShowEditModal(true);
+                        }}
+                        className="px-2 py-1 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-700 font-medium text-[11px]"
+                        title="Edit Guarantor / Officer"
                       >
-                        Receive
+                        <Edit3 className="h-3.5 w-3.5" />
                       </button>
                       <button
                         onClick={() => setSelectedAccount(a)}
@@ -334,6 +550,8 @@ export const InstallmentsView: React.FC = () => {
           </table>
         </div>
       </div>
+      </>
+      )}
 
       {/* New Installment Plan Modal */}
       {showNewModal && (
@@ -598,7 +816,7 @@ export const InstallmentsView: React.FC = () => {
       )}
 
       {/* Account Schedule Inspector Drawer/Modal */}
-      {selectedAccount && !showPaymentModal && (
+      {selectedAccount && !showPaymentModal && !showCloseModal && !showEditModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
           <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl space-y-4 max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -615,7 +833,6 @@ export const InstallmentsView: React.FC = () => {
               </button>
             </div>
 
-            {/* Schedule Table */}
             <div className="border border-slate-200 rounded-xl overflow-hidden text-xs">
               <table className="w-full text-left">
                 <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px]">
@@ -646,6 +863,107 @@ export const InstallmentsView: React.FC = () => {
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Early Account Closure Modal */}
+      {showCloseModal && selectedAccount && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <h3 className="text-sm font-bold text-slate-900">Early Settlement & Account Closure</h3>
+              <button onClick={() => setShowCloseModal(false)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+            </div>
+            <form onSubmit={handleCloseEarlySubmit} className="space-y-3 text-xs">
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-950">
+                <p className="font-bold">{selectedAccount.customerName} (#{selectedAccount.accountNumber})</p>
+                <p>Remaining Balance: <strong>₨ {selectedAccount.remainingBalance.toLocaleString()}</strong></p>
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Final Settlement Amount (₨) *</label>
+                <input
+                  type="number"
+                  min={0}
+                  required
+                  value={settlementAmount}
+                  onChange={e => setSettlementAmount(Number(e.target.value) || 0)}
+                  className="w-full rounded-xl border border-slate-200 p-2.5 font-mono font-bold"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Payment Method</label>
+                <select
+                  value={settlementMethod}
+                  onChange={e => setSettlementMethod(e.target.value as any)}
+                  className="w-full rounded-xl border border-slate-200 bg-white p-2.5"
+                >
+                  <option value="Cash">Cash Drawer</option>
+                  <option value="Bank">Meezan Bank Online</option>
+                  <option value="Cheque">Cheque</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Closure Remarks</label>
+                <input
+                  type="text"
+                  value={settlementNotes}
+                  onChange={e => setSettlementNotes(e.target.value)}
+                  placeholder="Early payoff rebate / full settlement..."
+                  className="w-full rounded-xl border border-slate-200 p-2.5"
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={() => setShowCloseModal(false)} className="flex-1 rounded-xl border border-slate-200 py-2.5 font-semibold text-slate-600">Cancel</button>
+                <button type="submit" className="flex-1 rounded-xl bg-amber-600 hover:bg-amber-700 py-2.5 font-bold text-white">Close Account</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Plan / Guarantor Modal */}
+      {showEditModal && selectedAccount && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <h3 className="text-sm font-bold text-slate-900">Edit Guarantor & Recovery Details</h3>
+              <button onClick={() => setShowEditModal(false)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+            </div>
+            <form onSubmit={handleEditPlanSubmit} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Guarantor Full Name</label>
+                <input type="text" required value={editGuarantorName} onChange={e => setEditGuarantorName(e.target.value)} className="w-full rounded-xl border border-slate-200 p-2.5" />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Guarantor Phone</label>
+                  <input type="text" required value={editGuarantorPhone} onChange={e => setEditGuarantorPhone(e.target.value)} className="w-full rounded-xl border border-slate-200 p-2.5" />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Guarantor CNIC</label>
+                  <input type="text" required value={editGuarantorCnic} onChange={e => setEditGuarantorCnic(e.target.value)} className="w-full rounded-xl border border-slate-200 p-2.5" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Relation</label>
+                  <input type="text" value={editGuarantorRel} onChange={e => setEditGuarantorRel(e.target.value)} className="w-full rounded-xl border border-slate-200 p-2.5" />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Recovery Officer</label>
+                  <input type="text" value={editOfficerName} onChange={e => setEditOfficerName(e.target.value)} className="w-full rounded-xl border border-slate-200 p-2.5" />
+                </div>
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Account Notes</label>
+                <input type="text" value={editNotes} onChange={e => setEditNotes(e.target.value)} className="w-full rounded-xl border border-slate-200 p-2.5" />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={() => setShowEditModal(false)} className="flex-1 rounded-xl border border-slate-200 py-2.5 font-semibold text-slate-600">Cancel</button>
+                <button type="submit" className="flex-1 rounded-xl bg-blue-600 hover:bg-blue-700 py-2.5 font-bold text-white">Save Changes</button>
+              </div>
+            </form>
           </div>
         </div>
       )}
