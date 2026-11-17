@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import {
   Shield, Lock, Mail, ArrowRight, AlertCircle,
-  CheckCircle2, Sparkles, KeyRound, LogOut, RefreshCw, X
+  CheckCircle2, Sparkles, KeyRound, LogOut, RefreshCw, X, Wrench
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { getFirebaseRuntimeDiagnostics } from '../../services/firebase';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -32,8 +33,12 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, require
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
 
   if (!isOpen && !requireGate) return null;
+
+  const diag = getFirebaseRuntimeDiagnostics();
+  const firebaseReady = diag.isConfigured && diag.authInitialized && diag.firestoreInitialized;
 
   const handleRequestMfa = async () => {
     setErrorMsg(null);
@@ -264,7 +269,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, require
               <>
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={busy || !firebaseReady}
                   onClick={handleGoogleSignIn}
                   className="w-full flex items-center justify-center gap-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 py-3 px-4 text-xs font-bold text-slate-800 shadow-xs transition disabled:opacity-50"
                 >
@@ -331,13 +336,48 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, require
 
                   <button
                     type="submit"
-                    disabled={busy}
+                    disabled={busy || !firebaseReady}
                     className="w-full flex items-center justify-center gap-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-semibold py-3 text-xs shadow-md shadow-blue-500/20 transition disabled:opacity-50"
                   >
                     <span>Sign In to Live Cloud ERP</span>
                     <ArrowRight className="h-4 w-4" />
                   </button>
                 </form>
+
+                {/* Production Configuration Diagnostics */}
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowDiagnostics(v => !v)}
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-[11px] font-semibold text-slate-700 transition"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Wrench className="h-3.5 w-3.5 text-slate-500" />
+                      Production Configuration Diagnostics
+                    </span>
+                    <span className={firebaseReady ? 'text-emerald-700 font-bold' : 'text-rose-700 font-bold'}>
+                      {firebaseReady ? 'Firebase Ready' : 'Action Required'}
+                    </span>
+                  </button>
+
+                  {(showDiagnostics || !firebaseReady) && (
+                    <div className="mt-2 p-3 rounded-xl bg-slate-900 text-slate-200 font-mono text-[10px] space-y-1">
+                      <div>Project ID: <span className="text-white">{diag.projectId}</span> ({diag.configuredVia})</div>
+                      <div>Auth Domain: <span className="text-white">{diag.authDomain}</span></div>
+                      <div>Firestore DB: <span className="text-white">{diag.firestoreDatabaseId}</span></div>
+                      <div>App Origin: <span className="text-white">{diag.origin}</span></div>
+                      <div>Backend API: <span className="text-white">{diag.apiBaseUrl}</span></div>
+                      <div>
+                        SDKs: Auth={diag.authInitialized ? 'OK' : 'OFF'} | Firestore={diag.firestoreInitialized ? 'OK' : 'OFF'} | API Key={diag.apiKeyPresent ? 'SET' : 'MISSING'} | App ID={diag.appIdPresent ? 'SET' : 'MISSING'}
+                      </div>
+                      {diag.missingFields.length > 0 && (
+                        <div className="text-rose-300 font-semibold pt-1">
+                          Missing Env Vars: {diag.missingFields.join(', ')}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
 
                 {/* Isolated Read-Only Client Demo Preview */}
                 <div className="pt-3 border-t border-slate-100">
@@ -350,7 +390,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, require
                     <span>Enter Isolated Client Demo Showcase (Read-Only Sample)</span>
                   </button>
                   <p className="text-[10px] text-center text-slate-400 mt-1.5">
-                    Demo Showcase runs in local memory only and never modifies production Cloud Firestore data.
+                    Demo Showcase runs in temporary session memory only and never modifies production Cloud Firestore data.
                   </p>
                 </div>
               </>

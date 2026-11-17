@@ -718,7 +718,8 @@ service cloud.firestore {
         && incoming().orgId == existing().orgId
         && (
           hasPermission('inventory', 'EDIT') ||
-          ((hasPermission('pos', 'CREATE') || hasPermission('purchases', 'CREATE') || hasPermission('salesReturns', 'CREATE') || hasPermission('purchaseReturns', 'CREATE')) && incoming().diff(existing()).affectedKeys().hasOnly(['stockQuantity', 'serials']))
+          (hasPermission('purchases', 'CREATE') && incoming().diff(existing()).affectedKeys().hasOnly(['stockQuantity', 'serials', 'purchasePrice'])) ||
+          ((hasPermission('pos', 'CREATE') || hasPermission('salesReturns', 'CREATE') || hasPermission('purchaseReturns', 'CREATE')) && incoming().diff(existing()).affectedKeys().hasOnly(['stockQuantity', 'serials']))
         );
       allow delete: if isValidId(productId) && hasPermission('inventory', 'DELETE') && isOwner();
     }

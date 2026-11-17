@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   CheckSquare, Plus, Search, Filter, AlertCircle, 
   Clock, CheckCircle2, Calendar, User, Tag, 
@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { 
   getTasks, saveTask, updateTaskStatus, deleteTask, 
-  getEmployees, getActiveUser 
+  getEmployees, getActiveUser, subscribeToDatabase 
 } from '../../services/storage';
 import { StaffTask, TaskPriority, TaskStatus } from '../../types/erp';
 import { Modal } from '../common/Modal';
@@ -27,6 +27,14 @@ export const TasksView: React.FC = () => {
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingTask, setEditingTask] = useState<StaffTask | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const unsub = subscribeToDatabase(() => {
+      setTasks(getTasks());
+    });
+    return unsub;
+  }, []);
 
   // Form State
   const [title, setTitle] = useState('');
@@ -126,10 +134,9 @@ export const TasksView: React.FC = () => {
   };
 
   const handleDelete = (taskId: string) => {
-    if (window.confirm('Delete this task from staff to-do list?')) {
-      deleteTask(taskId);
-      reloadTasks();
-    }
+    deleteTask(taskId);
+    setConfirmDeleteId(null);
+    reloadTasks();
   };
 
   const getPriorityBadge = (p: TaskPriority) => {
@@ -430,13 +437,30 @@ export const TasksView: React.FC = () => {
                       >
                         <Edit3 className="h-3.5 w-3.5" />
                       </button>
-                      <button
-                        onClick={() => handleDelete(task.id)}
-                        className="p-1.5 rounded-lg border border-slate-200 hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition"
-                        title="Delete Task"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      {confirmDeleteId === task.id ? (
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleDelete(task.id)}
+                            className="px-2 py-1 rounded-lg bg-rose-600 text-white text-[10px] font-bold hover:bg-rose-700 transition"
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            onClick={() => setConfirmDeleteId(null)}
+                            className="px-2 py-1 rounded-lg border border-slate-200 text-slate-600 text-[10px] font-semibold hover:bg-slate-50 transition"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmDeleteId(task.id)}
+                          className="p-1.5 rounded-lg border border-slate-200 hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition"
+                          title="Delete Task"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </div>
 
                     {/* Progress tracker */}

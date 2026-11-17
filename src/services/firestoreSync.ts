@@ -1,5 +1,6 @@
 import {
   collection,
+  deleteDoc,
   doc,
   onSnapshot,
   query,
@@ -166,6 +167,16 @@ export async function persistCloudDoc(colName: CloudCollectionName, docId: strin
     await setDoc(doc(db, colName, safeId), cleanPayload, { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${colName}/${safeId}`);
+  }
+}
+
+export async function deleteCloudDoc(colName: CloudCollectionName, docId: string): Promise<void> {
+  if (!db || !auth?.currentUser) return;
+  const safeId = sanitizeDocId(docId);
+  try {
+    await deleteDoc(doc(db, colName, safeId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `${colName}/${safeId}`);
   }
 }
 

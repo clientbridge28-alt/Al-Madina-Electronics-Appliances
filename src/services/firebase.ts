@@ -23,12 +23,18 @@ export interface FirebaseConfig {
 export interface FirebaseRuntimeDiagnostics {
   projectId: string;
   authDomain: string;
+  storageBucket: string;
   firestoreDatabaseId: string;
-  configuredVia: 'env' | 'firebase-applet-config' | 'unconfigured';
+  configuredVia: 'env' | 'firebase-applet-config' | 'merged' | 'unconfigured';
+  isConfigured: boolean;
+  missingFields: string[];
   origin: string;
+  apiBaseUrl: string;
   authInitialized: boolean;
   firestoreInitialized: boolean;
   apiKeyPresent: boolean;
+  appIdPresent: boolean;
+  initError: string | null;
 }
 
 function cleanEnvValue(val?: string): string {
@@ -42,47 +48,57 @@ function isRawMalformedEnv(val?: string): boolean {
   return t.startsWith('"') || t.endsWith(',');
 }
 
-function isPlaceholderConfig(projectId?: string, apiKey?: string): boolean {
+function isPlaceholderValue(val?: string): boolean {
+  if (!val) return true;
+  const trimmed = val.trim();
   return (
-    !projectId ||
-    !apiKey ||
-    projectId === 'YOUR_FIREBASE_PROJECT_ID' ||
-    projectId === 'remixed-project-id' ||
-    apiKey === 'YOUR_FIREBASE_API_KEY'
+    !trimmed ||
+    trimmed === 'YOUR_FIREBASE_PROJECT_ID' ||
+    trimmed === 'YOUR_FIREBASE_API_KEY' ||
+    trimmed === 'YOUR_FIREBASE_APP_ID' ||
+    trimmed === 'YOUR_FIREBASE_AUTH_DOMAIN' ||
+    trimmed === 'remixed-project-id'
   );
 }
 
+function isPlaceholderConfig(projectId?: string, apiKey?: string): boolean {
+  return isPlaceholderValue(projectId) || isPlaceholderValue(apiKey);
+}
+
+function sanitizeCleanEnvField(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  if (isRawMalformedEnv(raw)) return '';
+  const cleaned = cleanEnvValue(raw);
+  return isPlaceholderValue(cleaned) ? '' : cleaned;
+}
+
 export function resolveFirebaseConfig(
-  env: Record<string, unknown> = ((import.meta as unknown as { env?: Record<string, unknown> }).env || {})
+  env: Record<string, unknown> = ((import.meta as unknown as { env?: Record<string, unknown> }).env || {}),
+  bundledConfig: Partial<FirebaseConfig> = firebaseConfigJson
 ): FirebaseConfig {
-  const envProject = typeof env.VITE_FIREBASE_PROJECT_ID === 'string' ? env.VITE_FIREBASE_PROJECT_ID : undefined;
-  const envApiKey = typeof env.VITE_FIREBASE_API_KEY === 'string' ? env.VITE_FIREBASE_API_KEY : undefined;
-  const envAuthDomain = typeof env.VITE_FIREBASE_AUTH_DOMAIN === 'string' ? env.VITE_FIREBASE_AUTH_DOMAIN : undefined;
-  const envStorageBucket = typeof env.VITE_FIREBASE_STORAGE_BUCKET === 'string' ? env.VITE_FIREBASE_STORAGE_BUCKET : undefined;
-  const envMessagingSenderId =
-    typeof env.VITE_FIREBASE_MESSAGING_SENDER_ID === 'string' ? env.VITE_FIREBASE_MESSAGING_SENDER_ID : undefined;
-  const envAppId = typeof env.VITE_FIREBASE_APP_ID === 'string' ? env.VITE_FIREBASE_APP_ID : undefined;
-  const envDbId = typeof env.VITE_FIREBASE_DATABASE_ID === 'string' ? env.VITE_FIREBASE_DATABASE_ID : undefined;
+  const cleanEnvProject = sanitizeCleanEnvField(env.VITE_FIREBASE_PROJECT_ID);
+  const cleanEnvApiKey = sanitizeCleanEnvField(env.VITE_FIREBASE_API_KEY);
+  const cleanEnvAuthDomain = sanitizeCleanEnvField(env.VITE_FIREBASE_AUTH_DOMAIN);
+  const cleanEnvStorageBucket = sanitizeCleanEnvField(env.VITE_FIREBASE_STORAGE_BUCKET);
+  const cleanEnvMessagingSenderId = sanitizeCleanEnvField(env.VITE_FIREBASE_MESSAGING_SENDER_ID);
+  const cleanEnvAppId = sanitizeCleanEnvField(env.VITE_FIREBASE_APP_ID);
+  const cleanEnvDbId = sanitizeCleanEnvField(env.VITE_FIREBASE_DATABASE_ID);
 
-  const cleanEnvProject = cleanEnvValue(envProject);
-  const cleanEnvApiKey = cleanEnvValue(envApiKey);
-  const cleanEnvAuthDomain = cleanEnvValue(envAuthDomain);
-  const cleanEnvStorageBucket = cleanEnvValue(envStorageBucket);
-  const cleanEnvMessagingSenderId = cleanEnvValue(envMessagingSenderId);
-  const cleanEnvAppId = cleanEnvValue(envAppId);
-  const cleanEnvDbId = cleanEnvValue(envDbId);
+  const bundledProject = isPlaceholderValue(bundledConfig.projectId) ? '' : String(bundledConfig.projectId || '').trim();
+  const bundledApiKey = isPlaceholderValue(bundledConfig.apiKey) ? '' : String(bundledConfig.apiKey || '').trim();
+  const bundledAuthDomain = isPlaceholderValue(bundledConfig.authDomain) ? '' : String(bundledConfig.authDomain || '').trim();
+  const bundledStorageBucket = isPlaceholderValue(bundledConfig.storageBucket)
+    ? ''
+    : String(bundledConfig.storageBucket || '').trim();
+  const bundledSenderId = isPlaceholderValue(bundledConfig.messagingSenderId)
+    ? ''
+    : String(bundledConfig.messagingSenderId || '').trim();
+  const bundledAppId = isPlaceholderValue(bundledConfig.appId) ? '' : String(bundledConfig.appId || '').trim();
+  const bundledDbId = String(bundledConfig.firestoreDatabaseId || '').trim();
 
-  const envLooksClean =
-    Boolean(cleanEnvProject) &&
-    !isRawMalformedEnv(envProject) &&
-    !isRawMalformedEnv(envApiKey) &&
-    !isPlaceholderConfig(cleanEnvProject, cleanEnvApiKey || firebaseConfigJson.apiKey);
-
-  const sameAsBundledProject = cleanEnvProject === firebaseConfigJson.projectId;
-  const allowEnvOverride =
-    envLooksClean && (sameAsBundledProject || !firebaseConfigJson.projectId || Boolean(cleanEnvApiKey));
-
-  if (allowEnvOverride && !sameAsBundledProject) {
+  // If VITE_FIREBASE_PROJECT_ID cleanly points to a different Firebase project than bundled JSON,
+  // isolate completely so bundled project credentials/databaseId never leak across projects.
+  if (cleanEnvProject && bundledProject && cleanEnvProject !== bundledProject) {
     return {
       apiKey: cleanEnvApiKey,
       authDomain: cleanEnvAuthDomain || `${cleanEnvProject}.firebaseapp.com`,
@@ -95,20 +111,29 @@ export function resolveFirebaseConfig(
     };
   }
 
+  // Same project (or bundled projectId like "al-madina-electronics" with empty Web SDK fields):
+  // Prefer clean VITE_FIREBASE_* fields and fill any missing fields from bundled JSON or canonical defaults.
+  const effectiveProject = cleanEnvProject || bundledProject;
   return {
-    apiKey: (allowEnvOverride ? cleanEnvApiKey : '') || firebaseConfigJson.apiKey || cleanEnvApiKey,
-    authDomain: (allowEnvOverride ? cleanEnvAuthDomain : '') || firebaseConfigJson.authDomain || cleanEnvAuthDomain,
-    projectId: (allowEnvOverride ? cleanEnvProject : '') || firebaseConfigJson.projectId || cleanEnvProject,
+    apiKey: cleanEnvApiKey || bundledApiKey,
+    authDomain: cleanEnvAuthDomain || bundledAuthDomain || (effectiveProject ? `${effectiveProject}.firebaseapp.com` : ''),
+    projectId: effectiveProject,
     storageBucket:
-      (allowEnvOverride ? cleanEnvStorageBucket : '') || firebaseConfigJson.storageBucket || cleanEnvStorageBucket,
-    messagingSenderId:
-      (allowEnvOverride ? cleanEnvMessagingSenderId : '') ||
-      firebaseConfigJson.messagingSenderId ||
-      cleanEnvMessagingSenderId,
-    appId: (allowEnvOverride ? cleanEnvAppId : '') || firebaseConfigJson.appId || cleanEnvAppId,
-    firestoreDatabaseId: (allowEnvOverride ? cleanEnvDbId : '') || firebaseConfigJson.firestoreDatabaseId || undefined,
-    oAuthClientId: firebaseConfigJson.oAuthClientId,
+      cleanEnvStorageBucket || bundledStorageBucket || (effectiveProject ? `${effectiveProject}.firebasestorage.app` : ''),
+    messagingSenderId: cleanEnvMessagingSenderId || bundledSenderId,
+    appId: cleanEnvAppId || bundledAppId,
+    firestoreDatabaseId: cleanEnvDbId || bundledDbId || undefined,
+    oAuthClientId: bundledConfig.oAuthClientId,
   };
+}
+
+export function getFirebaseMissingFields(cfg: FirebaseConfig = getFirebaseConfig()): string[] {
+  const missing: string[] = [];
+  if (isPlaceholderValue(cfg.projectId)) missing.push('VITE_FIREBASE_PROJECT_ID');
+  if (isPlaceholderValue(cfg.apiKey)) missing.push('VITE_FIREBASE_API_KEY');
+  if (isPlaceholderValue(cfg.authDomain)) missing.push('VITE_FIREBASE_AUTH_DOMAIN');
+  if (isPlaceholderValue(cfg.appId)) missing.push('VITE_FIREBASE_APP_ID');
+  return missing;
 }
 
 export function getFirebaseConfig(): FirebaseConfig {
@@ -117,12 +142,13 @@ export function getFirebaseConfig(): FirebaseConfig {
 
 export function isFirebaseConfigured(): boolean {
   const cfg = getFirebaseConfig();
-  return !isPlaceholderConfig(cfg.projectId, cfg.apiKey);
+  return !isPlaceholderConfig(cfg.projectId, cfg.apiKey) && !isPlaceholderValue(cfg.authDomain);
 }
 
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
 let auth: Auth | null = null;
+let firebaseInitError: string | null = null;
 
 if (isFirebaseConfigured()) {
   try {
@@ -138,34 +164,55 @@ if (isFirebaseConfigured()) {
     }
     auth = getAuth(app);
   } catch (err) {
-    console.warn('Firebase initialization skipped or failed:', err);
+    firebaseInitError = err instanceof Error ? err.message : String(err);
+    console.error('Firebase initialization failed:', firebaseInitError);
+  }
+} else {
+  const missing = getFirebaseMissingFields();
+  firebaseInitError = `Missing Firebase Web SDK configuration: ${missing.join(', ')}`;
+  if (typeof window !== 'undefined') {
+    console.error(`[Al-Madina ERP] Production Firebase is unconfigured (${firebaseInitError}).`);
   }
 }
 
 export function getFirebaseRuntimeDiagnostics(): FirebaseRuntimeDiagnostics {
   const cfg = getFirebaseConfig();
   const env = (import.meta as unknown as { env?: Record<string, unknown> }).env || {};
-  const envProject = typeof env.VITE_FIREBASE_PROJECT_ID === 'string' ? cleanEnvValue(env.VITE_FIREBASE_PROJECT_ID) : '';
-  const usingEnv =
-    Boolean(envProject) &&
-    cfg.projectId === envProject &&
-    !isRawMalformedEnv(typeof env.VITE_FIREBASE_PROJECT_ID === 'string' ? env.VITE_FIREBASE_PROJECT_ID : undefined) &&
-    (cfg.projectId !== firebaseConfigJson.projectId ||
-      cleanEnvValue(typeof env.VITE_FIREBASE_API_KEY === 'string' ? env.VITE_FIREBASE_API_KEY : undefined) === cfg.apiKey);
+  const cleanEnvProject = sanitizeCleanEnvField(env.VITE_FIREBASE_PROJECT_ID);
+  const cleanEnvApiKey = sanitizeCleanEnvField(env.VITE_FIREBASE_API_KEY);
+  const cleanEnvAppId = sanitizeCleanEnvField(env.VITE_FIREBASE_APP_ID);
+
+  const hasAnyCleanEnv = Boolean(cleanEnvProject || cleanEnvApiKey || cleanEnvAppId);
+  const fullEnvOverride = Boolean(cleanEnvProject && cleanEnvApiKey && cleanEnvProject !== firebaseConfigJson.projectId);
+  const missingFields = getFirebaseMissingFields(cfg);
+  const configured = isFirebaseConfigured();
+
+  let configuredVia: FirebaseRuntimeDiagnostics['configuredVia'] = 'unconfigured';
+  if (configured) {
+    if (fullEnvOverride) {
+      configuredVia = 'env';
+    } else if (hasAnyCleanEnv) {
+      configuredVia = 'merged';
+    } else {
+      configuredVia = 'firebase-applet-config';
+    }
+  }
 
   return {
     projectId: cfg.projectId || '(none)',
     authDomain: cfg.authDomain || '(none)',
+    storageBucket: cfg.storageBucket || '(none)',
     firestoreDatabaseId: cfg.firestoreDatabaseId || '(default)',
-    configuredVia: !isFirebaseConfigured()
-      ? 'unconfigured'
-      : usingEnv
-      ? 'env'
-      : 'firebase-applet-config',
+    configuredVia,
+    isConfigured: configured,
+    missingFields,
     origin: typeof window !== 'undefined' ? window.location.origin : 'server',
+    apiBaseUrl: getApiBaseUrl() || '(same-origin)',
     authInitialized: Boolean(auth),
     firestoreInitialized: Boolean(db),
-    apiKeyPresent: Boolean(cfg.apiKey),
+    apiKeyPresent: !isPlaceholderValue(cfg.apiKey),
+    appIdPresent: !isPlaceholderValue(cfg.appId),
+    initError: firebaseInitError,
   };
 }
 
@@ -304,7 +351,7 @@ export async function authorizedApiFetch(path: string, init: RequestInit = {}): 
 
 export function getCloudPersistenceStatus(): {
   isConfigured: boolean;
-  provider: 'Firestore' | 'LocalStorage Engine';
+  provider: 'Firestore' | 'Unconfigured / Offline';
   details: string;
 } {
   if (isFirebaseConfigured() && db) {
@@ -314,9 +361,12 @@ export function getCloudPersistenceStatus(): {
       details: `Connected to Cloud Firestore (${getFirebaseConfig().projectId})`,
     };
   }
+  const missing = getFirebaseMissingFields();
   return {
     isConfigured: false,
-    provider: 'LocalStorage Engine',
-    details: 'Offline local database fallback.',
+    provider: 'Unconfigured / Offline',
+    details: missing.length > 0
+      ? `Firebase configuration missing: ${missing.join(', ')}. Production localStorage fallback is disabled.`
+      : 'Cloud Firestore SDK failed to initialize. Production localStorage fallback is disabled.',
   };
 }

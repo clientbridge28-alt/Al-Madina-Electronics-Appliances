@@ -300,7 +300,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
-    if (!auth) {
+    const diag = getFirebaseRuntimeDiagnostics();
+    if (!diag.isConfigured || !auth || !db) {
+      const missingText =
+        diag.missingFields.length > 0
+          ? `Missing variables: ${diag.missingFields.join(', ')}.`
+          : diag.initError || 'Firebase Auth/Firestore SDK failed to initialize.';
+      setConnectionStatus({
+        online: false,
+        message: `Production Firebase unconfigured (${missingText})`,
+      });
+      setAuthError(
+        `Production Firebase is not configured for project "${diag.projectId}" (source: ${diag.configuredVia}). ${missingText} Production authentication cannot continue and localStorage fallback is disabled.`
+      );
       setStatus('unauthenticated');
       return;
     }

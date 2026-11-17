@@ -13,7 +13,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || 3000);
-const OWNER_EMAIL = (process.env.OWNER_ALERT_EMAIL || 'clientbridge28@gmail.com').toLowerCase();
+const CANONICAL_OWNER_EMAIL = 'clientbridge28@gmail.com';
+const OWNER_ALERT_EMAIL = (process.env.OWNER_ALERT_EMAIL || CANONICAL_OWNER_EMAIL).toLowerCase();
 const ORG_ID = 'al-madina-main';
 const GH_PAGES_BASE = '/Al-Madina-Electronics-Appliances';
 
@@ -21,6 +22,17 @@ interface FirebaseAppletConfig {
   projectId: string;
   firestoreDatabaseId?: string;
   authDomain?: string;
+}
+
+function cleanServerEnv(val?: string): string {
+  if (!val) return '';
+  return val.trim().replace(/^"+|"+$/g, '').replace(/,+$/, '').replace(/^"+|"+$/g, '').trim();
+}
+
+function isMalformedServerEnv(val?: string): boolean {
+  if (!val) return false;
+  const t = val.trim();
+  return t.startsWith('"') || t.endsWith(',');
 }
 
 function loadFirebaseAppletConfig(): FirebaseAppletConfig | null {
@@ -36,6 +48,21 @@ function loadFirebaseAppletConfig(): FirebaseAppletConfig | null {
 }
 
 const appletConfig = loadFirebaseAppletConfig();
+const envFirebaseProject = !isMalformedServerEnv(process.env.FIREBASE_PROJECT_ID)
+  ? cleanServerEnv(process.env.FIREBASE_PROJECT_ID)
+  : !isMalformedServerEnv(process.env.VITE_FIREBASE_PROJECT_ID)
+  ? cleanServerEnv(process.env.VITE_FIREBASE_PROJECT_ID)
+  : '';
+const resolvedProjectId = envFirebaseProject || appletConfig?.projectId || '';
+const envDatabaseId = !isMalformedServerEnv(process.env.FIREBASE_DATABASE_ID)
+  ? cleanServerEnv(process.env.FIREBASE_DATABASE_ID)
+  : !isMalformedServerEnv(process.env.VITE_FIREBASE_DATABASE_ID)
+  ? cleanServerEnv(process.env.VITE_FIREBASE_DATABASE_ID)
+  : '';
+const resolvedDatabaseId =
+  envDatabaseId ||
+  (resolvedProjectId && resolvedProjectId === appletConfig?.projectId ? appletConfig?.firestoreDatabaseId || '' : '');
+
 let adminApp: App | null = null;
 let adminInitError: string | null = null;
 
@@ -43,8 +70,8 @@ try {
   const existing = getApps();
   if (existing.length > 0) {
     adminApp = existing[0];
-  } else if (appletConfig?.projectId) {
-    adminApp = initializeApp({ projectId: appletConfig.projectId });
+  } else if (resolvedProjectId) {
+    adminApp = initializeApp({ projectId: resolvedProjectId });
   }
 } catch (err: any) {
   adminInitError = err?.message || 'Firebase Admin initialization failed';
@@ -52,8 +79,8 @@ try {
 
 const adminAuth = adminApp ? getAuth(adminApp) : null;
 const adminDb = adminApp
-  ? appletConfig?.firestoreDatabaseId
-    ? getFirestore(adminApp, appletConfig.firestoreDatabaseId)
+  ? resolvedDatabaseId
+    ? getFirestore(adminApp, resolvedDatabaseId)
     : getFirestore(adminApp)
   : null;
 
@@ -100,7 +127,7 @@ function isSmtpConfigured(): boolean {
   return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
 }
 
-async function sendSecurityEmail(subject: string, html: string, toEmail: string = OWNER_EMAIL): Promise<{ sent: boolean; reason?: string }> {
+async function sendSecurityEmail(subject: string, html: string, toEmail: string = OWNER_ALERT_EMAIL): Promise<{ sent: boolean; reason?: string }> {
   if (!isSmtpConfigured()) {
     return {
       sent: false,
@@ -167,7 +194,8 @@ async function requireFirebaseAuth(req: AuthedRequest, res: Response, next: Next
       }
     }
     req.staffProfile = profile;
-    const isOwnerEmail = (decoded.email || '').toLowerCase() === OWNER_EMAIL;
+    const decodedEmail = (decoded.email || '').toLowerCase();
+    const isOwnerEmail = decodedEmail === CANONICAL_OWNER_EMAIL || decodedEmail === OWNER_ALERT_EMAIL;
     const isOwnerRole = profile?.role === 'Owner' && profile?.active === true && profile?.suspended === false;
     req.isOwnerUser = Boolean(isOwnerEmail || isOwnerRole);
 
@@ -236,10 +264,15 @@ async function startServer() {
   // CORS for GitHub Pages static deployment calling Cloud Run API (if VITE_API_BASE_URL is configured)
   app.use((req, res, next) => {
     const origin = req.headers.origin;
+    const extraOrigins = (process.env.ALLOWED_ORIGINS || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
     const allowedOrigins = [
       'https://clientbridge28-alt.github.io',
       process.env.APP_URL || '',
       'http://localhost:3000',
+      ...extraOrigins,
     ].filter(Boolean);
 
     if (origin && (allowedOrigins.some(o => origin.startsWith(o)) || origin.endsWith('.run.app'))) {
@@ -258,13 +291,16 @@ async function startServer() {
   app.get('/api/health', (_req, res) => {
     res.json({
       status: 'ok',
+      cloudRunReady: true,
+      port: PORT,
       timestamp: new Date().toISOString(),
-      projectId: appletConfig?.projectId || null,
-      firestoreDatabaseId: appletConfig?.firestoreDatabaseId || null,
+      projectId: resolvedProjectId || null,
+      firestoreDatabaseId: resolvedDatabaseId || null,
       firebaseAdminReady: Boolean(adminAuth && adminDb),
       adminInitError,
       smtpConfigured: isSmtpConfigured(),
-      ownerEmail: OWNER_EMAIL,
+      ownerEmail: CANONICAL_OWNER_EMAIL,
+      ownerAlertEmail: OWNER_ALERT_EMAIL,
       wordpressConfigured: Boolean(wpRuntimeConfig.siteUrl && (wpRuntimeConfig.wcKey || wpRuntimeConfig.appPassword)),
     });
   });
@@ -791,6 +827,10 @@ async function startServer() {
       wpRuntimeConfig.lastError = err?.message || 'Network failure';
       res.status(502).json({ success: false, message: wpRuntimeConfig.lastError });
     }
+  });
+
+  app.all('/api/*', (_req, res) => {
+    res.status(404).json({ error: 'API route not found.' });
   });
 
   // ---------------- VITE DEV MIDDLEWARE OR PRODUCTION STATIC ----------------

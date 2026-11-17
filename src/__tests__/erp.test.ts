@@ -30,7 +30,12 @@ import {
   sumVoucherSides,
 } from '../services/accounting';
 import { computeSha256Hex, validateCustomerImport, validateProductImport } from '../services/excelService';
-import { getFirebaseConfig, isFirebaseConfigured, resolveFirebaseConfig } from '../services/firebase';
+import {
+  getFirebaseConfig,
+  getFirebaseMissingFields,
+  isFirebaseConfigured,
+  resolveFirebaseConfig,
+} from '../services/firebase';
 import {
   clearChequeWithAccounting,
   clearToProductionEmpty,
@@ -730,6 +735,34 @@ describe('Al-Madina Electronics ERP — Core Accounting, Inventory & RBAC Suite'
     expect(prodCfg.firestoreDatabaseId).toBeUndefined();
     expect(prodCfg.oAuthClientId).toBeUndefined();
 
+    // Bundled config containing projectId "al-madina-electronics" with empty Web SDK fields
+    // merges cleanly with VITE_FIREBASE_* env vars even if VITE_FIREBASE_PROJECT_ID is omitted
+    const emptyBundledMergedCfg = resolveFirebaseConfig(
+      {
+        VITE_FIREBASE_API_KEY: 'AIzaExternalKey999',
+        VITE_FIREBASE_APP_ID: '1:1056981234846:web:merged',
+        VITE_FIREBASE_MESSAGING_SENDER_ID: '1056981234846',
+      },
+      {
+        projectId: 'al-madina-electronics',
+        apiKey: '',
+        authDomain: '',
+        storageBucket: '',
+        messagingSenderId: '',
+        appId: '',
+      }
+    );
+    expect(emptyBundledMergedCfg.projectId).toBe('al-madina-electronics');
+    expect(emptyBundledMergedCfg.apiKey).toBe('AIzaExternalKey999');
+    expect(emptyBundledMergedCfg.authDomain).toBe('al-madina-electronics.firebaseapp.com');
+    expect(emptyBundledMergedCfg.storageBucket).toBe('al-madina-electronics.firebasestorage.app');
+    expect(emptyBundledMergedCfg.appId).toBe('1:1056981234846:web:merged');
+    expect(getFirebaseMissingFields(emptyBundledMergedCfg)).toEqual([]);
+
+    // Empty bundled config + empty env explicitly reports all missing VITE_FIREBASE_* fields
+    const unconfiguredCfg = resolveFirebaseConfig({}, { projectId: 'al-madina-electronics', apiKey: '', authDomain: '', appId: '' });
+    expect(getFirebaseMissingFields(unconfiguredCfg)).toEqual(['VITE_FIREBASE_API_KEY', 'VITE_FIREBASE_APP_ID']);
+
     // Malformed shell-style quoted/comma env vars fall back cleanly to firebase-applet-config.json
     const malformedFallbackCfg = resolveFirebaseConfig({
       VITE_FIREBASE_PROJECT_ID: '"al-madina-electronics",',
@@ -744,8 +777,9 @@ describe('Al-Madina Electronics ERP — Core Accounting, Inventory & RBAC Suite'
     expect(emptySnap.products).toHaveLength(0);
     expect(emptySnap.sales).toHaveLength(0);
 
-    // Seed real records and ensure snapshot captures exact real records
+    // Seed real records in production mode: verify memory snapshot has records and localStorage has ZERO production data
     const { customer, product } = seedCleanFixtures();
+    expect(memoryStorage.size).toBe(0);
     const populatedSnap = getDatabaseSnapshot();
     expect(populatedSnap.customers).toHaveLength(1);
     expect(populatedSnap.customers[0].id).toBe(customer.id);

@@ -25,26 +25,32 @@ export interface SyncLogEntry {
 }
 
 const WP_LOGS_KEY = 'electro_erp_wordpress_logs_v2';
+let inMemorySyncLogs: SyncLogEntry[] = [];
 
-// Ensure any legacy plaintext credentials stored in localStorage from older builds are purged
+// Ensure any legacy plaintext credentials or logs stored in localStorage from older builds are purged
 try {
-  localStorage.removeItem('electro_erp_wordpress_config_v1');
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem('electro_erp_wordpress_config_v1');
+    localStorage.removeItem(WP_LOGS_KEY);
+  }
 } catch {
   // Ignore storage access errors
 }
 
 export function getSyncLogs(): SyncLogEntry[] {
   try {
-    const raw = localStorage.getItem(WP_LOGS_KEY);
-    if (raw) return JSON.parse(raw);
+    if (typeof sessionStorage !== 'undefined') {
+      const raw = sessionStorage.getItem(WP_LOGS_KEY);
+      if (raw) return JSON.parse(raw);
+    }
   } catch (e) {
     console.error('Failed to read sync logs', e);
   }
-  return [];
+  return inMemorySyncLogs;
 }
 
 export function addSyncLog(entry: Omit<SyncLogEntry, 'id' | 'timestamp'>): void {
-  const current = getSyncLogs();
+  const current = [...getSyncLogs()];
   const newLog: SyncLogEntry = {
     ...entry,
     id: `WPLOG-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -52,8 +58,11 @@ export function addSyncLog(entry: Omit<SyncLogEntry, 'id' | 'timestamp'>): void 
   };
   current.unshift(newLog);
   if (current.length > 200) current.pop();
+  inMemorySyncLogs = current;
   try {
-    localStorage.setItem(WP_LOGS_KEY, JSON.stringify(current));
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(WP_LOGS_KEY, JSON.stringify(current));
+    }
   } catch {
     // Ignore
   }

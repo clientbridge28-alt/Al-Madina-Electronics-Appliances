@@ -33,6 +33,7 @@ import {
 } from './accounting';
 import {
   commitCloudBatch,
+  deleteCloudDoc,
   persistCloudDoc,
   sanitizeDocId,
   seedInitialCloudDefaultsIfNeeded,
@@ -42,7 +43,53 @@ import {
 
 const DEMO_DB_KEY = 'electro_erp_demo_db_v2';
 const DEMO_MODE_KEY = 'electro_erp_demo_mode_v1';
-const BACKUP_RECORDS_KEY = 'electro_erp_backup_records_v1';
+const LEGACY_BACKUP_RECORDS_KEY = 'electro_erp_backup_records_v1';
+
+const memoryDemoStorage = new Map<string, string>();
+
+// Ensure legacy demo or backup data cannot silently persist across browser restarts in localStorage
+try {
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem(DEMO_MODE_KEY);
+    localStorage.removeItem(DEMO_DB_KEY);
+    localStorage.removeItem(LEGACY_BACKUP_RECORDS_KEY);
+  }
+} catch {
+  // Ignore storage access restrictions
+}
+
+function readDemoSessionItem(key: string): string | null {
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      return sessionStorage.getItem(key);
+    }
+  } catch {
+    // Ignore storage access errors
+  }
+  return memoryDemoStorage.has(key) ? memoryDemoStorage.get(key)! : null;
+}
+
+function writeDemoSessionItem(key: string, value: string): void {
+  memoryDemoStorage.set(key, value);
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(key, value);
+    }
+  } catch {
+    // Ignore session quota restrictions
+  }
+}
+
+function removeDemoSessionItem(key: string): void {
+  memoryDemoStorage.delete(key);
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore
+  }
+}
 
 export interface ErpDatabase {
   settings: ShowroomSettings;
@@ -170,11 +217,7 @@ function buildDemoDatabase(): ErpDatabase {
 }
 
 export function isDemoMode(): boolean {
-  try {
-    return localStorage.getItem(DEMO_MODE_KEY) === 'true';
-  } catch {
-    return false;
-  }
+  return readDemoSessionItem(DEMO_MODE_KEY) === 'true';
 }
 
 export function isCloudConnected(): boolean {
@@ -182,29 +225,26 @@ export function isCloudConnected(): boolean {
 }
 
 export function setDemoMode(enabled: boolean): void {
-  localStorage.setItem(DEMO_MODE_KEY, enabled ? 'true' : 'false');
+  writeDemoSessionItem(DEMO_MODE_KEY, enabled ? 'true' : 'false');
   if (enabled) {
     seedDemoData();
   } else {
+    removeDemoSessionItem(DEMO_DB_KEY);
     dbCache = buildEmptyProductionDatabase();
     notifySubscribers();
   }
 }
 
 export function seedDemoData(): void {
-  localStorage.setItem(DEMO_MODE_KEY, 'true');
+  writeDemoSessionItem(DEMO_MODE_KEY, 'true');
   dbCache = buildDemoDatabase();
-  try {
-    localStorage.setItem(DEMO_DB_KEY, JSON.stringify(dbCache));
-  } catch {
-    // ignore storage limits
-  }
+  writeDemoSessionItem(DEMO_DB_KEY, JSON.stringify(dbCache));
   notifySubscribers();
 }
 
 export function clearToProductionEmpty(): void {
-  localStorage.setItem(DEMO_MODE_KEY, 'false');
-  localStorage.removeItem(DEMO_DB_KEY);
+  writeDemoSessionItem(DEMO_MODE_KEY, 'false');
+  removeDemoSessionItem(DEMO_DB_KEY);
   dbCache = buildEmptyProductionDatabase();
   notifySubscribers();
 }
@@ -271,7 +311,7 @@ function getDatabase(): ErpDatabase {
 
   if (isDemoMode()) {
     try {
-      const raw = localStorage.getItem(DEMO_DB_KEY);
+      const raw = readDemoSessionItem(DEMO_DB_KEY);
       if (raw) {
         dbCache = JSON.parse(raw);
         if (dbCache) {
@@ -299,11 +339,7 @@ function getDatabase(): ErpDatabase {
 function saveDatabase(db: ErpDatabase): void {
   dbCache = db;
   if (isDemoMode()) {
-    try {
-      localStorage.setItem(DEMO_DB_KEY, JSON.stringify(db));
-    } catch (err) {
-      console.error('Demo storage write error:', err);
-    }
+    writeDemoSessionItem(DEMO_DB_KEY, JSON.stringify(db));
   }
   notifySubscribers();
 }
@@ -612,7 +648,16 @@ export function getProductById(id: string): Product | undefined {
 
 export function saveProduct(product: Product): void {
   const db = getDatabase();
-  const payload = { ...product, id: sanitizeDocId(product.id), orgId: ORG_ID };
+  const payload: Product & { orgId?: string } = {
+    ...product,
+    id: sanitizeDocId(product.id),
+    orgId: ORG_ID,
+    purchasePrice: Math.max(0, Number(product.purchasePrice) || 0),
+    retailPrice: Math.max(0, Number(product.retailPrice) || 0),
+    stockQuantity: Math.max(0, Math.round(Number(product.stockQuantity) || 0)),
+    minStockLevel: Math.max(0, Math.round(Number(product.minStockLevel) || 0)),
+    warrantyMonths: Math.max(0, Math.round(Number(product.warrantyMonths) || 0)),
+  };
   const idx = db.products.findIndex(p => p.id === payload.id);
   if (idx >= 0) {
     db.products[idx] = payload;
@@ -1588,27 +1633,13 @@ export function getDatabaseSnapshot(): Record<string, any> {
 
 export function getBackupRecords(): BackupRecord[] {
   const db = getDatabase();
-  if (db.backups.length > 0) {
-    return [...db.backups].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }
-  try {
-    const raw = localStorage.getItem(BACKUP_RECORDS_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {
-    // ignore
-  }
-  return [];
+  return [...db.backups].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 export function addBackupRecord(record: BackupRecord): void {
   const db = getDatabase();
   db.backups.unshift(record);
   saveDatabase(db);
-  try {
-    localStorage.setItem(BACKUP_RECORDS_KEY, JSON.stringify(db.backups.slice(0, 100)));
-  } catch {
-    // ignore
-  }
   if (isCloudConnected()) {
     persistCloudDoc('backups', record.id, record).catch(err => console.warn('Backup metadata write error:', err));
   }
@@ -1658,7 +1689,13 @@ export function saveTask(task: StaffTask): void {
   const db = getDatabase();
   const uid = getActorUid();
   if (!db.tasks) db.tasks = [];
-  const payload = { ...task, id: sanitizeDocId(task.id), orgId: ORG_ID, createdByUid: (task as any).createdByUid || uid };
+  const payload: StaffTask & { orgId?: string; createdByUid?: string } = {
+    ...task,
+    id: sanitizeDocId(task.id),
+    orgId: ORG_ID,
+    createdByUid: (task as any).createdByUid || uid,
+    progressPercent: Math.max(0, Math.min(100, Math.round(Number(task.progressPercent) || 0))),
+  };
   const idx = db.tasks.findIndex(t => t.id === payload.id);
   if (idx >= 0) {
     db.tasks[idx] = payload;
@@ -1677,7 +1714,7 @@ export function updateTaskStatus(taskId: string, status: TaskStatus, progressPer
   if (task) {
     task.status = status;
     if (progressPercent !== undefined) {
-      task.progressPercent = progressPercent;
+      task.progressPercent = Math.max(0, Math.min(100, Math.round(Number(progressPercent) || 0)));
     } else if (status === 'Completed') {
       task.progressPercent = 100;
       task.completedAt = new Date().toISOString().replace('T', ' ').substring(0, 19);
@@ -1696,5 +1733,8 @@ export function deleteTask(taskId: string): void {
   if (!db.tasks) db.tasks = [];
   db.tasks = db.tasks.filter(t => t.id !== taskId);
   saveDatabase(db);
+  if (isCloudConnected()) {
+    deleteCloudDoc('tasks', taskId).catch(err => console.error('Cloud task deletion error:', err));
+  }
   logAuditAction('Tasks', 'Task Deleted', `Removed task ${taskId}`, taskId);
 }
