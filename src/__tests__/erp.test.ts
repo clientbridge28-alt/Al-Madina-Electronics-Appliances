@@ -30,7 +30,7 @@ import {
   sumVoucherSides,
 } from '../services/accounting';
 import { computeSha256Hex, validateCustomerImport, validateProductImport } from '../services/excelService';
-import { getFirebaseConfig, isFirebaseConfigured } from '../services/firebase';
+import { getFirebaseConfig, isFirebaseConfigured, resolveFirebaseConfig } from '../services/firebase';
 import {
   clearChequeWithAccounting,
   clearToProductionEmpty,
@@ -710,6 +710,32 @@ describe('Al-Madina Electronics ERP — Core Accounting, Inventory & RBAC Suite'
     expect(fbCfg.firestoreDatabaseId).toBe('ai-studio-perfectcodestudi-ce3ea4e0-4acf-4f2d-b4f8-2bf81e5e637b');
     expect(fbCfg.apiKey).not.toContain('"');
     expect(fbCfg.apiKey).not.toContain(',');
+
+    // Clean production VITE_FIREBASE_* override for al-madina-electronics works WITHOUT VITE_FIREBASE_DATABASE_ID
+    // and never inherits gen-lang-client-0548186480's custom firestoreDatabaseId
+    const prodCfg = resolveFirebaseConfig({
+      VITE_FIREBASE_API_KEY: 'AIzaTestProdKey123',
+      VITE_FIREBASE_AUTH_DOMAIN: 'al-madina-electronics.firebaseapp.com',
+      VITE_FIREBASE_PROJECT_ID: 'al-madina-electronics',
+      VITE_FIREBASE_STORAGE_BUCKET: 'al-madina-electronics.firebasestorage.app',
+      VITE_FIREBASE_MESSAGING_SENDER_ID: '1056981234846',
+      VITE_FIREBASE_APP_ID: '1:1056981234846:web:test',
+    });
+    expect(prodCfg.projectId).toBe('al-madina-electronics');
+    expect(prodCfg.authDomain).toBe('al-madina-electronics.firebaseapp.com');
+    expect(prodCfg.apiKey).toBe('AIzaTestProdKey123');
+    expect(prodCfg.storageBucket).toBe('al-madina-electronics.firebasestorage.app');
+    expect(prodCfg.messagingSenderId).toBe('1056981234846');
+    expect(prodCfg.appId).toBe('1:1056981234846:web:test');
+    expect(prodCfg.firestoreDatabaseId).toBeUndefined();
+    expect(prodCfg.oAuthClientId).toBeUndefined();
+
+    // Malformed shell-style quoted/comma env vars fall back cleanly to firebase-applet-config.json
+    const malformedFallbackCfg = resolveFirebaseConfig({
+      VITE_FIREBASE_PROJECT_ID: '"al-madina-electronics",',
+      VITE_FIREBASE_API_KEY: '"AIzaBroken",',
+    });
+    expect(malformedFallbackCfg.projectId).toBe('gen-lang-client-0548186480');
 
     // Clean production snapshot should have 0 fabricated records
     clearToProductionEmpty();

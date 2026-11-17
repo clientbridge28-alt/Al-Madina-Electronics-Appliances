@@ -1,17 +1,29 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
+  browserLocalPersistence,
+  getRedirectResult,
   GoogleAuthProvider,
   onAuthStateChanged,
   reauthenticateWithPopup,
   sendEmailVerification,
   sendPasswordResetEmail,
+  setPersistence,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
   type User as FirebaseUser,
 } from 'firebase/auth';
 import { doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
-import { auth, authorizedApiFetch, db, handleFirestoreError, OperationType, testConnection } from '../services/firebase';
+import {
+  auth,
+  authorizedApiFetch,
+  db,
+  getFirebaseRuntimeDiagnostics,
+  handleFirestoreError,
+  OperationType,
+  testConnection,
+} from '../services/firebase';
 import {
   buildFullOwnerPermissions,
   getDefaultPermissionsForRole,
@@ -79,6 +91,47 @@ function getOrCreateSessionId(): string {
   } catch {
     return `SESS-${Date.now()}`;
   }
+}
+
+function formatFirebaseAuthError(err: any, method: 'google' | 'email' | 'reset'): string {
+  const code = typeof err?.code === 'string' ? err.code : '';
+  const diag = getFirebaseRuntimeDiagnostics();
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : 'unknown';
+
+  if (code === 'auth/unauthorized-domain') {
+    return (
+      `Firebase: Error (${code}). Origin "${diag.origin}" (host "${hostname}") is not authorized for active Firebase project "${diag.projectId}" (authDomain: "${diag.authDomain}", source: ${diag.configuredVia}). ` +
+      `Verify "${hostname}" is listed under Firebase Console -> Authentication -> Settings -> Authorized domains for project "${diag.projectId}", and confirm your production VITE_FIREBASE_* variables point to "al-madina-electronics".`
+    );
+  }
+  if (code === 'auth/operation-not-allowed') {
+    if (method === 'google') {
+      return `Google Sign-In (${code}) is currently disabled in Firebase Console for project "${diag.projectId}". Enable Google under Authentication -> Sign-in method -> Add new provider -> Google.`;
+    }
+    if (method === 'email') {
+      return `Email/Password Sign-In (${code}) is currently disabled in Firebase Console for project "${diag.projectId}". Enable Email/Password under Authentication -> Sign-in method, or use Google Sign-In.`;
+    }
+    return `Requested authentication operation (${code}) is disabled in Firebase Console for project "${diag.projectId}".`;
+  }
+  if (code === 'auth/popup-closed-by-user') {
+    return 'Google Sign-In popup was closed before completing authentication.';
+  }
+  if (code === 'auth/cancelled-popup-request') {
+    return 'Previous sign-in popup request was cancelled. Please try again.';
+  }
+  if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
+    return `Invalid staff email or password (${code}). Verify credentials or use Forgot Password.`;
+  }
+  if (code === 'auth/user-disabled') {
+    return `This Firebase account has been disabled (${code}). Contact the Owner Administrator.`;
+  }
+  if (code === 'auth/too-many-requests') {
+    return `Too many failed sign-in attempts (${code}). Wait a few minutes before retrying or reset your password.`;
+  }
+  if (code === 'auth/network-request-failed') {
+    return `Network error communicating with Firebase Auth (${code}). Check internet connectivity or third-party cookie/tracking blockers.`;
+  }
+  return err?.message || 'Firebase authentication failed.';
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -252,6 +305,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
+    setPersistence(auth, browserLocalPersistence).catch(err => {
+      console.warn('Could not enforce browserLocalPersistence:', err);
+    });
+
+    getRedirectResult(auth).catch(err => {
+      if (err) {
+        setAuthError(formatFirebaseAuthError(err, 'google'));
+      }
+    });
+
     const unsubAuth = onAuthStateChanged(auth, async fbUser => {
       cleanupSubscriptions();
       setAuthError(null);
@@ -331,27 +394,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const signInWithGoogle = async () => {
-    if (!auth) throw new Error('Firebase Auth is not initialized.');
+    if (!auth) throw new Error('Firebase Auth is not initialized. Check your VITE_FIREBASE_* configuration.');
     setAuthError(null);
     setStorageDemoMode(false);
+    await setPersistence(auth, browserLocalPersistence).catch(() => {});
     const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ prompt: 'select_account' });
-    await signInWithPopup(auth, provider);
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (err: any) {
+      if (err?.code === 'auth/popup-blocked' || err?.code === 'auth/operation-not-supported-in-this-environment') {
+        await signInWithRedirect(auth, provider);
+        return;
+      }
+      const formatted = formatFirebaseAuthError(err, 'google');
+      setAuthError(formatted);
+      throw new Error(formatted);
+    }
   };
 
   const signInWithEmail = async (email: string, password: string) => {
-    if (!auth) throw new Error('Firebase Auth is not initialized.');
+    if (!auth) throw new Error('Firebase Auth is not initialized. Check your VITE_FIREBASE_* configuration.');
     setAuthError(null);
     setStorageDemoMode(false);
+    await setPersistence(auth, browserLocalPersistence).catch(() => {});
     try {
       await signInWithEmailAndPassword(auth, email.trim(), password);
     } catch (err: any) {
-      if (err?.code === 'auth/operation-not-allowed') {
-        throw new Error(
-          'Email/Password sign-in is not yet enabled in Firebase Console (Authentication -> Sign-in method -> Email/Password). Use Google Sign-In or enable Email/Password in Firebase Console.'
-        );
-      }
-      throw err;
+      const formatted = formatFirebaseAuthError(err, 'email');
+      setAuthError(formatted);
+      throw new Error(formatted);
     }
   };
 
@@ -359,9 +431,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!auth) return { ok: false, message: 'Firebase Auth unavailable.' };
     try {
       await sendPasswordResetEmail(auth, email.trim());
-      return { ok: true, message: `Password reset email dispatched to ${email}.` };
+      return { ok: true, message: `Password reset email dispatched to ${email.trim()}.` };
     } catch (err: any) {
-      return { ok: false, message: err?.message || 'Unable to dispatch password reset email.' };
+      return { ok: false, message: formatFirebaseAuthError(err, 'reset') };
     }
   };
 
