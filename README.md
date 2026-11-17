@@ -63,8 +63,8 @@ Enterprise Showroom Business Management System for Electronics & Home Appliances
 ## 4. Installation & Local Development
 
 ### Prerequisites
-- Node.js (v20+ recommended)
-- npm or bun
+- Node.js **22 LTS**
+- **npm** (`npm ci` with `package-lock.json`)
 
 ### Setup Commands
 ```bash
@@ -72,10 +72,10 @@ Enterprise Showroom Business Management System for Electronics & Home Appliances
 git clone https://github.com/clientbridge28-alt/Al-Madina-Electronics-Appliances.git
 cd Al-Madina-Electronics-Appliances
 
-# Install all dependencies
-npm install
+# Clean deterministic install from package-lock.json
+npm ci
 
-# Start the development server
+# Start full-stack dev server (Express API + Vite frontend on port 3000)
 npm run dev
 ```
 The application will launch on `http://localhost:3000`.
@@ -89,44 +89,55 @@ Configure environment variables by copying `.env.example`:
 cp .env.example .env
 ```
 
-| Variable | Description | Default |
+| Variable | Scope | Description |
 | :--- | :--- | :--- |
-| `APP_URL` | Hosted production URL | Cloud Run service URL |
-| `GEMINI_API_KEY` | Optional Gemini AI service key | Injected at runtime |
+| `VITE_BASE` | Frontend Build | GitHub Pages subpath (`/Al-Madina-Electronics-Appliances/`) |
+| `VITE_API_BASE_URL` | Frontend Build | Companion Express / Cloud Run backend URL (when static-hosted on GitHub Pages) |
+| `VITE_FIREBASE_API_KEY` | Frontend Public | Firebase Web API key (optional override over `firebase-applet-config.json`) |
+| `VITE_FIREBASE_AUTH_DOMAIN` | Frontend Public | Firebase Auth domain |
+| `VITE_FIREBASE_PROJECT_ID` | Frontend Public | Firebase Project ID |
+| `VITE_FIREBASE_STORAGE_BUCKET` | Frontend Public | Firebase Storage bucket |
+| `VITE_FIREBASE_MESSAGING_SENDER_ID` | Frontend Public | Firebase Messaging sender ID |
+| `VITE_FIREBASE_APP_ID` | Frontend Public | Firebase Web App ID |
+| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` | Backend Only | SMTP relay for MFA OTPs and owner security emails |
+| `WP_SITE_URL`, `WP_REST_USERNAME`, `WP_APP_PASSWORD`, `WP_WC_KEY`, `WP_WC_SECRET` | Backend Only | Server-side WordPress/WooCommerce credentials (never exposed to browser) |
 
-> **Security Rule:** Never commit `.env` or files containing live credentials. The project `.gitignore` automatically blocks private keys, `.env*` files, and credentials.
+> **Security Rule:** Never commit `.env` or files containing live credentials, and never prefix private SMTP, WordPress, WooCommerce, or Firebase Admin secrets with `VITE_`.
 
 ---
 
 ## 6. Role-Based Access Control (RBAC)
 
 The ERP enforces strict role-based profiles:
-- **Owner / Super Admin:** Full system authority, audit trails, database backup & restore.
-- **Showroom Manager:** Operational floor control, staff tasks, and targets.
-- **Head Cashier:** POS billing, payment receipts, and cash register balance.
-- **Senior Accountant:** Double-entry vouchers, chart of accounts, and ledger reconciliation.
-- **Recovery Officer:** Installment portfolio tracking, due date collections, and customer recovery receipts.
-- **Stock Incharge:** Warehouse receipts, product cataloging, and serial tracking.
-- **Front Receptionist:** Staff attendance and visitor register logging.
+- **Owner / Super Admin (`clientbridge28@gmail.com`):** Full system authority, 21×7 permissions matrix, session revocation, security events, and disaster recovery restore.
+- **Manager / Accountant / Cashier / StockManager / RecoveryOfficer / Receptionist:** Granular Firestore-enforced permissions per module and action.
 
 ---
 
-## 7. Build & Deployment Commands
+## 7. Build, Verification & Deployment Architecture
 
 ```bash
-# Run TypeScript compilation and type verification
-npm run lint
-
-# Compile production bundle
-npm run build
-
-# Preview production build locally
-npm run preview
+npm run lint        # TypeScript check (tsc --noEmit)
+npm run lint:rules  # Firestore security rules audit
+npm test            # Vitest ERP accounting, inventory & RBAC suite
+npm run build       # Production Vite bundle + dist/404.html SPA fallback
 ```
+
+### GitHub Pages (Static Frontend) vs. Companion Backend (`server.ts`)
+- **Works directly on GitHub Pages (`https://clientbridge28-alt.github.io/Al-Madina-Electronics-Appliances/`):**
+  - Firebase Authentication (Google Sign-In, Email/Password, password reset, email verification).
+  - Live Cloud Firestore real-time CRUD across all showroom modules (POS, Inventory, Purchases, Returns, Installments, Customers, Suppliers, Attendance, Tasks, Visitors, Vouchers, Ledgers, Cheques, Reports, Targets, Audit Logs).
+  - Client-side Excel (`.xlsx`), CSV, JSON, and PDF exports & backups.
+  - Isolated Client Demo Showcase (local read-only sandbox).
+- **Requires Companion Backend (`server.ts` via Cloud Run / `Dockerfile` + `VITE_API_BASE_URL`):**
+  - Owner staff account provisioning & session revocation (`/api/admin/users*`).
+  - Email OTP MFA (`/api/mfa/request`, `/api/mfa/verify`) and SMTP security alerts (`/api/notifications/owner`).
+  - Disaster Recovery server restore (`/api/admin/restore`).
+  - Server-proxied WordPress / WooCommerce sync and secondary backup (`/api/wordpress/*`).
 
 ---
 
 ## 8. Data Modes
 
-- **Clean Production Mode (Default):** Strictly uses real user-entered transactions, zero mock figures, and displays audit-ready empty states when a clean database is initiated.
-- **Interactive Demo Mode:** Accessible via the top header for client demonstrations, pre-loaded with realistic Pakistani electronics showroom datasets.
+- **Live Cloud Firestore Mode (Default):** Authenticated showroom sessions synchronized in real time with Cloud Firestore.
+- **Isolated Client Demo Showcase:** Local read-only sample dataset accessible from the login screen for client demonstrations without touching production Firestore records.

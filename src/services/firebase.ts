@@ -25,24 +25,38 @@ function cleanEnvValue(val?: string): string {
   return val.trim().replace(/^"+|"+$/g, '').replace(/,+$/, '').replace(/^"+|"+$/g, '').trim();
 }
 
+function isRawMalformedEnv(val?: string): boolean {
+  if (!val) return false;
+  const t = val.trim();
+  return t.startsWith('"') || t.endsWith(',');
+}
+
 export function getFirebaseConfig(): FirebaseConfig {
-  // Prefer the provisioned firebase-applet-config.json as the authoritative configuration
-  // so stale or quoted VITE_FIREBASE_* environment variables cannot override the database/project.
-  const projectId = firebaseConfigJson.projectId || cleanEnvValue(import.meta.env.VITE_FIREBASE_PROJECT_ID);
-  const apiKey = firebaseConfigJson.apiKey || cleanEnvValue(import.meta.env.VITE_FIREBASE_API_KEY);
-  const authDomain = firebaseConfigJson.authDomain || cleanEnvValue(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN);
-  const storageBucket = firebaseConfigJson.storageBucket || cleanEnvValue(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET);
-  const messagingSenderId = firebaseConfigJson.messagingSenderId || cleanEnvValue(import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID);
-  const appId = firebaseConfigJson.appId || cleanEnvValue(import.meta.env.VITE_FIREBASE_APP_ID);
+  const env = (import.meta as any).env || {};
+  const envProject = env.VITE_FIREBASE_PROJECT_ID as string | undefined;
+  const envApiKey = env.VITE_FIREBASE_API_KEY as string | undefined;
+  const envAuthDomain = env.VITE_FIREBASE_AUTH_DOMAIN as string | undefined;
+  const envStorageBucket = env.VITE_FIREBASE_STORAGE_BUCKET as string | undefined;
+  const envMessagingSenderId = env.VITE_FIREBASE_MESSAGING_SENDER_ID as string | undefined;
+  const envAppId = env.VITE_FIREBASE_APP_ID as string | undefined;
+  const envDbId = env.VITE_FIREBASE_DATABASE_ID as string | undefined;
+
+  const cleanEnvProject = cleanEnvValue(envProject);
+  const allowEnvOverride =
+    Boolean(cleanEnvProject) &&
+    !isRawMalformedEnv(envProject) &&
+    (!firebaseConfigJson.projectId ||
+      cleanEnvProject === firebaseConfigJson.projectId ||
+      Boolean(cleanEnvValue(envDbId)));
 
   return {
-    apiKey,
-    authDomain,
-    projectId,
-    storageBucket,
-    messagingSenderId,
-    appId,
-    firestoreDatabaseId: firebaseConfigJson.firestoreDatabaseId,
+    apiKey: (allowEnvOverride ? cleanEnvValue(envApiKey) : '') || firebaseConfigJson.apiKey || cleanEnvValue(envApiKey),
+    authDomain: (allowEnvOverride ? cleanEnvValue(envAuthDomain) : '') || firebaseConfigJson.authDomain || cleanEnvValue(envAuthDomain),
+    projectId: (allowEnvOverride ? cleanEnvProject : '') || firebaseConfigJson.projectId || cleanEnvProject,
+    storageBucket: (allowEnvOverride ? cleanEnvValue(envStorageBucket) : '') || firebaseConfigJson.storageBucket || cleanEnvValue(envStorageBucket),
+    messagingSenderId: (allowEnvOverride ? cleanEnvValue(envMessagingSenderId) : '') || firebaseConfigJson.messagingSenderId || cleanEnvValue(envMessagingSenderId),
+    appId: (allowEnvOverride ? cleanEnvValue(envAppId) : '') || firebaseConfigJson.appId || cleanEnvValue(envAppId),
+    firestoreDatabaseId: (allowEnvOverride ? cleanEnvValue(envDbId) : '') || firebaseConfigJson.firestoreDatabaseId,
     oAuthClientId: firebaseConfigJson.oAuthClientId,
   };
 }
@@ -171,10 +185,23 @@ export async function testConnection(): Promise<{ online: boolean; message: stri
 }
 
 export function getApiBaseUrl(): string {
-  return (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+  const env = (import.meta as any).env || {};
+  return String(env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
 }
 
 export async function authorizedApiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const baseUrl = getApiBaseUrl();
+  if (!baseUrl && typeof window !== 'undefined' && window.location.hostname.endsWith('github.io')) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: 'Backend API unavailable on static GitHub Pages host. Deploy server.ts to Cloud Run/Node and configure VITE_API_BASE_URL.',
+        message: 'Backend API requires a Node/Cloud Run server (not supported directly on static GitHub Pages).',
+      }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
   const token = auth?.currentUser ? await auth.currentUser.getIdToken() : '';
   const headers = new Headers(init.headers || {});
   if (token) {
@@ -183,10 +210,24 @@ export async function authorizedApiFetch(path: string, init: RequestInit = {}): 
   if (!headers.has('Content-Type') && init.body && typeof init.body === 'string') {
     headers.set('Content-Type', 'application/json');
   }
-  return fetch(`${getApiBaseUrl()}${path}`, {
+  const res = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers,
   });
+
+  const ct = res.headers.get('content-type') || '';
+  if (path.startsWith('/api/') && ct.includes('text/html')) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: 'API endpoint returned HTML instead of JSON. Configure VITE_API_BASE_URL to point to your backend server.',
+        message: 'Backend server route unavailable on this static host.',
+      }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  return res;
 }
 
 export function getCloudPersistenceStatus(): {

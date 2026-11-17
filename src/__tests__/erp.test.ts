@@ -29,7 +29,8 @@ import {
   buildSalesVoucher,
   sumVoucherSides,
 } from '../services/accounting';
-import { computeSha256Hex } from '../services/excelService';
+import { computeSha256Hex, validateCustomerImport, validateProductImport } from '../services/excelService';
+import { getFirebaseConfig, isFirebaseConfigured } from '../services/firebase';
 import {
   clearChequeWithAccounting,
   clearToProductionEmpty,
@@ -42,6 +43,7 @@ import {
   getChartOfAccounts,
   getCustomerById,
   getCustomerLedgerEntries,
+  getDatabaseSnapshot,
   getItemStockLedger,
   getProductById,
   getSupplierById,
@@ -699,5 +701,46 @@ describe('Al-Madina Electronics ERP — Core Accounting, Inventory & RBAC Suite'
     expect(hashA).toBe(hashB);
     expect(hashA).not.toBe(hashC);
     expect(hashA.length).toBeGreaterThanOrEqual(8);
+  });
+
+  it('6. Validates Firebase project/database configuration and preserves real ERP records in Excel validators & snapshots', () => {
+    const fbCfg = getFirebaseConfig();
+    expect(isFirebaseConfigured()).toBe(true);
+    expect(fbCfg.projectId).toBe('gen-lang-client-0548186480');
+    expect(fbCfg.firestoreDatabaseId).toBe('ai-studio-perfectcodestudi-ce3ea4e0-4acf-4f2d-b4f8-2bf81e5e637b');
+    expect(fbCfg.apiKey).not.toContain('"');
+    expect(fbCfg.apiKey).not.toContain(',');
+
+    // Clean production snapshot should have 0 fabricated records
+    clearToProductionEmpty();
+    const emptySnap = getDatabaseSnapshot();
+    expect(emptySnap.customers).toHaveLength(0);
+    expect(emptySnap.products).toHaveLength(0);
+    expect(emptySnap.sales).toHaveLength(0);
+
+    // Seed real records and ensure snapshot captures exact real records
+    const { customer, product } = seedCleanFixtures();
+    const populatedSnap = getDatabaseSnapshot();
+    expect(populatedSnap.customers).toHaveLength(1);
+    expect(populatedSnap.customers[0].id).toBe(customer.id);
+    expect(populatedSnap.products).toHaveLength(1);
+    expect(populatedSnap.products[0].sku).toBe(product.sku);
+
+    // Validate Excel row validation rejects invalid rows and preserves valid rows
+    const custValidation = validateCustomerImport([
+      { 'Full Name': 'Usman Raza', 'Mobile Phone': '0300-4455667', 'CNIC Number': '35202-9999999-1', 'Credit Limit': 150000 },
+      { 'Full Name': '', 'Mobile Phone': '' },
+    ]);
+    expect(custValidation.validRows).toHaveLength(1);
+    expect(custValidation.invalidRows).toHaveLength(1);
+    expect(custValidation.validRows[0].data.name).toBe('Usman Raza');
+
+    const prodValidation = validateProductImport([
+      { 'Product Name': 'Dawlance Refrigerator', Category: 'Refrigerators', Brand: 'Dawlance', 'Cost Price': 95000, 'Retail Price': 115000, 'Stock Quantity': 5 },
+      { 'Product Name': 'Broken Item', 'Cost Price': 0, 'Retail Price': 0 },
+    ]);
+    expect(prodValidation.validRows).toHaveLength(1);
+    expect(prodValidation.invalidRows).toHaveLength(1);
+    expect(prodValidation.validRows[0].data.retailPrice).toBe(115000);
   });
 });
