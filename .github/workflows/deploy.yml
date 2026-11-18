@@ -51,19 +51,64 @@ jobs:
           VITE_FIREBASE_STORAGE_BUCKET: ${{ vars.VITE_FIREBASE_STORAGE_BUCKET || secrets.VITE_FIREBASE_STORAGE_BUCKET }}
           VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID || secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
           VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID || secrets.VITE_FIREBASE_APP_ID }}
+          VITE_FIREBASE_DATABASE_ID: ${{ vars.VITE_FIREBASE_DATABASE_ID || secrets.VITE_FIREBASE_DATABASE_ID }}
         run: |
-          if [ -z "$VITE_FIREBASE_API_KEY" ] || [ -z "$VITE_FIREBASE_APP_ID" ] || [ -z "$VITE_FIREBASE_MESSAGING_SENDER_ID" ]; then
-            echo "ERROR: Missing required VITE_FIREBASE_API_KEY, VITE_FIREBASE_APP_ID, or VITE_FIREBASE_MESSAGING_SENDER_ID in GitHub repository Variables/Secrets."
-            exit 1
-          fi
-          if [ "$VITE_FIREBASE_PROJECT_ID" != "al-madina-electronics" ]; then
-            echo "ERROR: VITE_FIREBASE_PROJECT_ID must equal 'al-madina-electronics' (received '$VITE_FIREBASE_PROJECT_ID')."
-            exit 1
-          fi
-          if [ -n "$VITE_FIREBASE_AUTH_DOMAIN" ] && [ "$VITE_FIREBASE_AUTH_DOMAIN" != "al-madina-electronics.firebaseapp.com" ]; then
-            echo "ERROR: VITE_FIREBASE_AUTH_DOMAIN must equal 'al-madina-electronics.firebaseapp.com' (received '$VITE_FIREBASE_AUTH_DOMAIN')."
-            exit 1
-          fi
+          node -e '
+            const allVars = [
+              "VITE_FIREBASE_API_KEY",
+              "VITE_FIREBASE_AUTH_DOMAIN",
+              "VITE_FIREBASE_PROJECT_ID",
+              "VITE_FIREBASE_STORAGE_BUCKET",
+              "VITE_FIREBASE_MESSAGING_SENDER_ID",
+              "VITE_FIREBASE_APP_ID",
+              "VITE_FIREBASE_DATABASE_ID",
+            ];
+            const requiredVars = [
+              "VITE_FIREBASE_API_KEY",
+              "VITE_FIREBASE_APP_ID",
+              "VITE_FIREBASE_MESSAGING_SENDER_ID",
+              "VITE_FIREBASE_PROJECT_ID",
+            ];
+            const errors = [];
+
+            for (const key of allVars) {
+              const raw = process.env[key];
+              if (raw === undefined || raw === "") {
+                if (requiredVars.includes(key)) {
+                  errors.push(`${key}: MISSING in GitHub Repository Variables/Secrets`);
+                }
+                continue;
+              }
+              if (raw !== raw.trim()) {
+                errors.push(`${key}: MALFORMED (contains leading or trailing whitespace)`);
+              }
+              if (raw.includes("\"") || raw.includes("\x27")) {
+                errors.push(`${key}: MALFORMED (contains quotes; remove surrounding quotes)`);
+              }
+              if (raw.trim().endsWith(",")) {
+                errors.push(`${key}: MALFORMED (contains trailing comma; remove trailing comma)`);
+              }
+              if (/^YOUR_FIREBASE_|remixed-project-id/.test(raw.trim())) {
+                errors.push(`${key}: PLACEHOLDER value is not allowed in production`);
+              }
+            }
+
+            const pid = (process.env.VITE_FIREBASE_PROJECT_ID || "").trim();
+            if (pid && pid !== "al-madina-electronics") {
+              errors.push(`VITE_FIREBASE_PROJECT_ID: expected "al-madina-electronics", got "${pid}"`);
+            }
+
+            const authDomain = (process.env.VITE_FIREBASE_AUTH_DOMAIN || "").trim();
+            if (authDomain && authDomain !== "al-madina-electronics.firebaseapp.com") {
+              errors.push(`VITE_FIREBASE_AUTH_DOMAIN: expected "al-madina-electronics.firebaseapp.com", got "${authDomain}"`);
+            }
+
+            if (errors.length > 0) {
+              console.error("Firebase configuration validation failed:\n- " + errors.join("\n- "));
+              process.exit(1);
+            }
+            console.log("All VITE_FIREBASE_* variables validated cleanly (no quotes, no trailing commas, exact project match).");
+          '
 
       - name: Build for GitHub Pages
         run: npm run build
@@ -83,12 +128,13 @@ jobs:
       - name: Verify Production Bundle & SPA Fallback
         run: |
           test -f dist/index.html && test -f dist/404.html
-          if grep -rn "gen-lang-client-0548186480" dist/; then
+          if grep -rq "gen-lang-client-0548186480" dist/; then
             echo "ERROR: Old sandbox Firebase config (gen-lang-client-0548186480) detected in production bundle!"
             exit 1
           fi
-          grep -rn "al-madina-electronics.firebaseapp.com" dist/assets/
-          grep -rn "al-madina-electronics" dist/assets/ | head -n 5
+          grep -rq "al-madina-electronics.firebaseapp.com" dist/assets/
+          grep -rq "al-madina-electronics" dist/assets/
+          echo "Production bundle verified cleanly for al-madina-electronics."
 
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5
