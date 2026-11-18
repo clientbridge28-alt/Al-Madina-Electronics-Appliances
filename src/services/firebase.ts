@@ -97,13 +97,22 @@ export function resolveFirebaseConfig(
   const bundledDbId = String(bundledConfig.firestoreDatabaseId || '').trim();
 
   // If VITE_FIREBASE_PROJECT_ID cleanly points to a different Firebase project than bundled JSON,
-  // isolate completely so bundled project credentials/databaseId never leak across projects.
-  if (cleanEnvProject && bundledProject && cleanEnvProject !== bundledProject) {
+  // or bundled JSON was stripped ({}), isolate completely so old project credentials never leak.
+  if (cleanEnvProject && cleanEnvProject !== bundledProject) {
+    const validEnvAuthDomain =
+      cleanEnvAuthDomain && !cleanEnvAuthDomain.startsWith('gen-lang-client-')
+        ? cleanEnvAuthDomain
+        : `${cleanEnvProject}.firebaseapp.com`;
+    const validEnvStorageBucket =
+      cleanEnvStorageBucket && !cleanEnvStorageBucket.startsWith('gen-lang-client-')
+        ? cleanEnvStorageBucket
+        : `${cleanEnvProject}.firebasestorage.app`;
+
     return {
       apiKey: cleanEnvApiKey,
-      authDomain: cleanEnvAuthDomain || `${cleanEnvProject}.firebaseapp.com`,
+      authDomain: validEnvAuthDomain,
       projectId: cleanEnvProject,
-      storageBucket: cleanEnvStorageBucket || `${cleanEnvProject}.firebasestorage.app`,
+      storageBucket: validEnvStorageBucket,
       messagingSenderId: cleanEnvMessagingSenderId,
       appId: cleanEnvAppId,
       firestoreDatabaseId: cleanEnvDbId || undefined,
@@ -140,8 +149,16 @@ export function getFirebaseConfig(): FirebaseConfig {
   return resolveFirebaseConfig();
 }
 
+export function isHostProjectMismatch(cfg: FirebaseConfig = getFirebaseConfig()): boolean {
+  if (typeof window !== 'undefined' && window.location.hostname.endsWith('github.io')) {
+    return cfg.projectId !== 'al-madina-electronics';
+  }
+  return false;
+}
+
 export function isFirebaseConfigured(): boolean {
   const cfg = getFirebaseConfig();
+  if (isHostProjectMismatch(cfg)) return false;
   return !isPlaceholderConfig(cfg.projectId, cfg.apiKey) && !isPlaceholderValue(cfg.authDomain);
 }
 
@@ -154,7 +171,15 @@ if (isFirebaseConfigured()) {
   try {
     const cfg = getFirebaseConfig();
     const apps = getApps();
-    app = apps.length > 0 ? apps[0] : initializeApp(cfg);
+    const firebaseWebOptions = {
+      apiKey: cfg.apiKey,
+      authDomain: cfg.authDomain,
+      projectId: cfg.projectId,
+      storageBucket: cfg.storageBucket,
+      messagingSenderId: cfg.messagingSenderId,
+      appId: cfg.appId,
+    };
+    app = apps.length > 0 ? apps[0] : initializeApp(firebaseWebOptions);
     try {
       db = cfg.firestoreDatabaseId
         ? initializeFirestore(app, { experimentalAutoDetectLongPolling: true }, cfg.firestoreDatabaseId)
@@ -163,16 +188,52 @@ if (isFirebaseConfigured()) {
       db = cfg.firestoreDatabaseId ? getFirestore(app, cfg.firestoreDatabaseId) : getFirestore(app);
     }
     auth = getAuth(app);
+    if (typeof window !== 'undefined') {
+      console.info('[Al-Madina ERP] Active Firebase Config:', {
+        projectId: app.options.projectId,
+        authDomain: app.options.authDomain,
+        storageBucket: app.options.storageBucket,
+        messagingSenderId: app.options.messagingSenderId,
+        appId: app.options.appId,
+        firestoreDatabaseId: cfg.firestoreDatabaseId || '(default)',
+      });
+    }
   } catch (err) {
     firebaseInitError = err instanceof Error ? err.message : String(err);
     console.error('Firebase initialization failed:', firebaseInitError);
   }
 } else {
-  const missing = getFirebaseMissingFields();
-  firebaseInitError = `Missing Firebase Web SDK configuration: ${missing.join(', ')}`;
+  const cfg = getFirebaseConfig();
+  if (isHostProjectMismatch(cfg)) {
+    firebaseInitError = `Firebase Project Mismatch on GitHub Pages: expected "al-madina-electronics", got "${cfg.projectId || '(empty)'}". Configure VITE_FIREBASE_* for al-madina-electronics.`;
+  } else {
+    const missing = getFirebaseMissingFields(cfg);
+    firebaseInitError = `Missing Firebase Web SDK configuration: ${missing.join(', ')}`;
+  }
   if (typeof window !== 'undefined') {
     console.error(`[Al-Madina ERP] Production Firebase is unconfigured (${firebaseInitError}).`);
   }
+}
+
+export function getPublicFirebaseSummary(): {
+  projectId: string;
+  authDomain: string;
+  storageBucket: string;
+  messagingSenderId: string;
+  appId: string;
+  firestoreDatabaseId: string;
+  apiKeyConfigured: boolean;
+} {
+  const cfg = getFirebaseConfig();
+  return {
+    projectId: app?.options.projectId || cfg.projectId || '(none)',
+    authDomain: app?.options.authDomain || cfg.authDomain || '(none)',
+    storageBucket: app?.options.storageBucket || cfg.storageBucket || '(none)',
+    messagingSenderId: app?.options.messagingSenderId || cfg.messagingSenderId || '(none)',
+    appId: app?.options.appId || cfg.appId || '(none)',
+    firestoreDatabaseId: cfg.firestoreDatabaseId || '(default)',
+    apiKeyConfigured: !isPlaceholderValue(cfg.apiKey),
+  };
 }
 
 export function getFirebaseRuntimeDiagnostics(): FirebaseRuntimeDiagnostics {

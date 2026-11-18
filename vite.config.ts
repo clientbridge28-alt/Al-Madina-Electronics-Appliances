@@ -2,9 +2,29 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const VIRTUAL_EMPTY_APPLET_CONFIG_ID = '\0virtual:empty-firebase-applet-config';
+
+function stripSandboxFirebaseConfigPlugin(shouldStrip: boolean): Plugin {
+  return {
+    name: 'strip-sandbox-firebase-config',
+    enforce: 'pre',
+    resolveId(source) {
+      if (shouldStrip && source.endsWith('firebase-applet-config.json')) {
+        return VIRTUAL_EMPTY_APPLET_CONFIG_ID;
+      }
+      return null;
+    },
+    load(id) {
+      if (id === VIRTUAL_EMPTY_APPLET_CONFIG_ID) {
+        return 'export default {};';
+      }
+      return null;
+    },
+  };
+}
 
 export default defineConfig(({ command, mode }) => {
   // Use '/Al-Madina-Electronics-Appliances/' for production GitHub Pages build,
@@ -12,9 +32,21 @@ export default defineConfig(({ command, mode }) => {
   const isProduction = mode === 'production' || command === 'build';
   const base = process.env.VITE_BASE || (isProduction ? '/Al-Madina-Electronics-Appliances/' : '/');
 
+  // Strip workspace sandbox firebase-applet-config.json ONLY during external production builds
+  // (GitHub Actions CI/Pages or explicit clean VITE_FIREBASE_PROJECT_ID builds for another project),
+  // never during AI Studio dev server or fallback preview builds.
+  const rawEnvProject = (process.env.VITE_FIREBASE_PROJECT_ID || '').trim();
+  const hasCleanEnvProject =
+    Boolean(rawEnvProject) && !rawEnvProject.startsWith('"') && !rawEnvProject.endsWith(',');
+  const shouldStripSandboxConfig =
+    command === 'build' &&
+    (process.env.GITHUB_ACTIONS === 'true' ||
+      process.env.VITE_STRIP_SANDBOX_CONFIG === 'true' ||
+      (hasCleanEnvProject && rawEnvProject !== 'gen-lang-client-0548186480'));
+
   return {
     base,
-    plugins: [react(), tailwindcss()],
+    plugins: [stripSandboxFirebaseConfigPlugin(shouldStripSandboxConfig), react(), tailwindcss()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

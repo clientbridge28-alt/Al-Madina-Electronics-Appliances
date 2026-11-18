@@ -41,6 +41,7 @@ import {
 import {
   getFirebaseConfig,
   getFirebaseMissingFields,
+  getPublicFirebaseSummary,
   isFirebaseConfigured,
   resolveFirebaseConfig,
 } from '../services/firebase';
@@ -1055,5 +1056,25 @@ describe('Al-Madina Electronics ERP — Core Accounting, Inventory & RBAC Suite'
     expect(mapFirebaseAuthError({ code: 'auth/popup-closed-by-user' }, 'google')).toContain('Google Sign-In Failed');
     expect(mapFirebaseAuthError({ code: 'auth/network-request-failed' }, 'email')).toContain('Network Error');
     expect(mapFirebaseAuthError({ code: 'auth/configuration-missing' }, 'email')).toContain('Firebase Configuration Missing');
+
+    // Stripped bundled config ({}) + stale gen-lang-client authDomain still locks to al-madina-electronics.firebaseapp.com
+    const strippedProdCfg = resolveFirebaseConfig(
+      {
+        VITE_FIREBASE_PROJECT_ID: 'al-madina-electronics',
+        VITE_FIREBASE_AUTH_DOMAIN: 'gen-lang-client-0548186480.firebaseapp.com',
+        VITE_FIREBASE_API_KEY: 'AIzaProdOnlyKey',
+        VITE_FIREBASE_APP_ID: '1:999:web:prod',
+      },
+      {}
+    );
+    expect(strippedProdCfg.projectId).toBe('al-madina-electronics');
+    expect(strippedProdCfg.authDomain).toBe('al-madina-electronics.firebaseapp.com');
+    expect(strippedProdCfg.storageBucket).toBe('al-madina-electronics.firebasestorage.app');
+    expect(strippedProdCfg.firestoreDatabaseId).toBeUndefined();
+
+    // Summary never exposes raw apiKey secret
+    const summary = getPublicFirebaseSummary();
+    expect(summary).not.toHaveProperty('apiKey');
+    expect(typeof summary.apiKeyConfigured).toBe('boolean');
   });
 });

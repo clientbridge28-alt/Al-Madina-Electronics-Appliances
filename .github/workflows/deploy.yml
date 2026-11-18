@@ -43,22 +43,52 @@ jobs:
       - name: Run ERP Unit & Accounting Tests
         run: npm test
 
-      - name: Build for GitHub Pages
-        run: npm run build
+      - name: Validate Production Firebase Configuration
         env:
-          NODE_ENV: production
-          VITE_BASE: /Al-Madina-Electronics-Appliances/
-          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || secrets.VITE_API_BASE_URL }}
           VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY || secrets.VITE_FIREBASE_API_KEY }}
           VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN || secrets.VITE_FIREBASE_AUTH_DOMAIN }}
           VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID || secrets.VITE_FIREBASE_PROJECT_ID }}
           VITE_FIREBASE_STORAGE_BUCKET: ${{ vars.VITE_FIREBASE_STORAGE_BUCKET || secrets.VITE_FIREBASE_STORAGE_BUCKET }}
           VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID || secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
           VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID || secrets.VITE_FIREBASE_APP_ID }}
+        run: |
+          if [ -z "$VITE_FIREBASE_API_KEY" ] || [ -z "$VITE_FIREBASE_APP_ID" ] || [ -z "$VITE_FIREBASE_MESSAGING_SENDER_ID" ]; then
+            echo "ERROR: Missing required VITE_FIREBASE_API_KEY, VITE_FIREBASE_APP_ID, or VITE_FIREBASE_MESSAGING_SENDER_ID in GitHub repository Variables/Secrets."
+            exit 1
+          fi
+          if [ "$VITE_FIREBASE_PROJECT_ID" != "al-madina-electronics" ]; then
+            echo "ERROR: VITE_FIREBASE_PROJECT_ID must equal 'al-madina-electronics' (received '$VITE_FIREBASE_PROJECT_ID')."
+            exit 1
+          fi
+          if [ -n "$VITE_FIREBASE_AUTH_DOMAIN" ] && [ "$VITE_FIREBASE_AUTH_DOMAIN" != "al-madina-electronics.firebaseapp.com" ]; then
+            echo "ERROR: VITE_FIREBASE_AUTH_DOMAIN must equal 'al-madina-electronics.firebaseapp.com' (received '$VITE_FIREBASE_AUTH_DOMAIN')."
+            exit 1
+          fi
+
+      - name: Build for GitHub Pages
+        run: npm run build
+        env:
+          NODE_ENV: production
+          GITHUB_ACTIONS: 'true'
+          VITE_BASE: /Al-Madina-Electronics-Appliances/
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || secrets.VITE_API_BASE_URL }}
+          VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY || secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN || secrets.VITE_FIREBASE_AUTH_DOMAIN || 'al-madina-electronics.firebaseapp.com' }}
+          VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID || secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ vars.VITE_FIREBASE_STORAGE_BUCKET || secrets.VITE_FIREBASE_STORAGE_BUCKET || 'al-madina-electronics.firebasestorage.app' }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID || secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID || secrets.VITE_FIREBASE_APP_ID }}
           VITE_FIREBASE_DATABASE_ID: ${{ vars.VITE_FIREBASE_DATABASE_ID || secrets.VITE_FIREBASE_DATABASE_ID }}
 
       - name: Verify Production Bundle & SPA Fallback
-        run: test -f dist/index.html && test -f dist/404.html
+        run: |
+          test -f dist/index.html && test -f dist/404.html
+          if grep -rn "gen-lang-client-0548186480" dist/; then
+            echo "ERROR: Old sandbox Firebase config (gen-lang-client-0548186480) detected in production bundle!"
+            exit 1
+          fi
+          grep -rn "al-madina-electronics.firebaseapp.com" dist/assets/
+          grep -rn "al-madina-electronics" dist/assets/ | head -n 5
 
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5
