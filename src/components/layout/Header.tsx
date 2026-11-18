@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Search, Bell, UserCheck, ShoppingCart,
   UserPlus, Shield, ChevronDown, LogOut,
-  AlertTriangle, Store, Sparkles, Cloud, HardDrive, ShieldCheck, KeyRound
+  AlertTriangle, Store, Cloud, ShieldCheck, KeyRound
 } from 'lucide-react';
 import {
   getSettings, getProducts,
@@ -27,15 +27,12 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenQuickSale,
   onOpenQuickVisitor,
   onOpenQuickAttendance,
-  onOpenLoginModal
 }) => {
   const {
     staffUser,
     isOwner,
-    isDemoSession,
     connectionStatus,
     can,
-    exitDemoMode,
     logout,
   } = useAuth();
 
@@ -54,12 +51,8 @@ export const Header: React.FC<HeaderProps> = ({
   const insideVisitors = getVisitors().filter(v => v.status === 'Inside').length;
   const totalAlerts = lowStockCount + overdueCount;
 
-  const displayName = isDemoSession
-    ? 'Client Demo Preview'
-    : staffUser?.name || 'Unauthenticated';
-  const displayRole = isDemoSession
-    ? 'Read-Only Showcase'
-    : staffUser?.customRoleName || staffUser?.role || 'Guest';
+  const displayName = staffUser?.name || staffUser?.email || 'Authenticated User';
+  const displayRole = staffUser?.customRoleName || staffUser?.role || 'Staff';
 
   const cloudStatus = getCloudPersistenceStatus();
 
@@ -81,40 +74,21 @@ export const Header: React.FC<HeaderProps> = ({
             >
               {settings.showroomName}
             </h1>
-            {isDemoSession ? (
-              <button
-                onClick={() => exitDemoMode()}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100 transition cursor-pointer"
-                title="Exit Isolated Client Demo Showcase and sign in to Cloud ERP"
-              >
-                <Sparkles className="h-3 w-3 text-amber-600" />
-                <span>Demo Showcase (Exit)</span>
-              </button>
-            ) : (
-              <span
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-300"
-                title="Live Cloud Firestore Production Workspace"
-              >
-                <ShieldCheck className="h-3 w-3 text-emerald-600" />
-                <span>Live Cloud ERP</span>
-              </span>
-            )}
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-300"
+              title="Live Cloud Firestore Production Workspace"
+            >
+              <ShieldCheck className="h-3 w-3 text-emerald-600" />
+              <span>Live Cloud ERP</span>
+            </span>
 
-            {cloudStatus.isConfigured && !isDemoSession ? (
+            {cloudStatus.isConfigured && (
               <span
                 className="hidden xl:inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200"
                 title={connectionStatus.message || cloudStatus.details}
               >
                 <Cloud className="h-3 w-3 text-blue-600" />
                 <span>{connectionStatus.online ? 'Firestore Synced' : 'Firestore Ready'}</span>
-              </span>
-            ) : (
-              <span
-                className="hidden xl:inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100/80 text-slate-600 border border-slate-200"
-                title="Running in isolated local demo memory"
-              >
-                <HardDrive className="h-3 w-3 text-slate-500" />
-                <span>Sandbox Memory</span>
               </span>
             )}
           </div>
@@ -290,9 +264,9 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="absolute right-0 mt-2 w-72 rounded-2xl bg-white shadow-xl ring-1 ring-slate-900/10 p-3 z-50 space-y-2">
               <div className="pb-2 border-b border-slate-100">
                 <p className="text-xs font-bold text-slate-900">{displayName}</p>
-                <p className="text-[11px] text-slate-500">{isDemoSession ? 'Isolated Demo Mode' : staffUser?.email}</p>
+                <p className="text-[11px] text-slate-500">{staffUser?.email}</p>
                 <span className="mt-1 inline-block px-2 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-bold">
-                  {displayRole} {staffUser?.mfaEnabled ? '• MFA Protected' : ''}
+                  {displayRole}
                 </span>
               </div>
 
@@ -306,22 +280,13 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
-              {isDemoSession ? (
-                <button
-                  onClick={() => { setShowProfileDropdown(false); exitDemoMode(); onOpenLoginModal(); }}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-blue-700 text-white text-xs font-bold hover:bg-blue-800"
-                >
-                  <span>Exit Demo & Sign In to Cloud ERP</span>
-                </button>
-              ) : (
-                <button
-                  onClick={async () => { setShowProfileDropdown(false); await logout(); }}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold hover:bg-rose-100"
-                >
-                  <LogOut className="h-3.5 w-3.5" />
-                  <span>Sign Out Securely</span>
-                </button>
-              )}
+              <button
+                onClick={async () => { setShowProfileDropdown(false); await logout(); }}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-xs font-bold hover:bg-rose-100"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                <span>Sign Out</span>
+              </button>
             </div>
           )}
         </div>

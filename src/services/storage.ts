@@ -41,54 +41,23 @@ import {
   type CloudCollectionName,
 } from './firestoreSync';
 
-const DEMO_DB_KEY = 'electro_erp_demo_db_v2';
-const DEMO_MODE_KEY = 'electro_erp_demo_mode_v1';
+const LEGACY_DEMO_DB_KEY = 'electro_erp_demo_db_v2';
+const LEGACY_DEMO_MODE_KEY = 'electro_erp_demo_mode_v1';
 const LEGACY_BACKUP_RECORDS_KEY = 'electro_erp_backup_records_v1';
 
-const memoryDemoStorage = new Map<string, string>();
-
-// Ensure legacy demo or backup data cannot silently persist across browser restarts in localStorage
+// Ensure any legacy demo or backup data cannot persist in localStorage or sessionStorage
 try {
   if (typeof localStorage !== 'undefined') {
-    localStorage.removeItem(DEMO_MODE_KEY);
-    localStorage.removeItem(DEMO_DB_KEY);
+    localStorage.removeItem(LEGACY_DEMO_MODE_KEY);
+    localStorage.removeItem(LEGACY_DEMO_DB_KEY);
     localStorage.removeItem(LEGACY_BACKUP_RECORDS_KEY);
+  }
+  if (typeof sessionStorage !== 'undefined') {
+    sessionStorage.removeItem(LEGACY_DEMO_MODE_KEY);
+    sessionStorage.removeItem(LEGACY_DEMO_DB_KEY);
   }
 } catch {
   // Ignore storage access restrictions
-}
-
-function readDemoSessionItem(key: string): string | null {
-  try {
-    if (typeof sessionStorage !== 'undefined') {
-      return sessionStorage.getItem(key);
-    }
-  } catch {
-    // Ignore storage access errors
-  }
-  return memoryDemoStorage.has(key) ? memoryDemoStorage.get(key)! : null;
-}
-
-function writeDemoSessionItem(key: string, value: string): void {
-  memoryDemoStorage.set(key, value);
-  try {
-    if (typeof sessionStorage !== 'undefined') {
-      sessionStorage.setItem(key, value);
-    }
-  } catch {
-    // Ignore session quota restrictions
-  }
-}
-
-function removeDemoSessionItem(key: string): void {
-  memoryDemoStorage.delete(key);
-  try {
-    if (typeof sessionStorage !== 'undefined') {
-      sessionStorage.removeItem(key);
-    }
-  } catch {
-    // Ignore
-  }
 }
 
 export interface ErpDatabase {
@@ -198,70 +167,15 @@ function buildEmptyProductionDatabase(): ErpDatabase {
   };
 }
 
-function buildDemoDatabase(): ErpDatabase {
-  return {
-    settings: { ...initialSettings },
-    users: initialUsers.map(u => ({
-      ...u,
-      uid: u.id,
-      orgId: ORG_ID,
-      permissions: getDefaultPermissionsForRole(u.role),
-      suspended: false,
-      emailVerified: true,
-    })),
-    customers: [...initialCustomers],
-    suppliers: [...initialSuppliers],
-    employees: [...initialEmployees],
-    attendance: [...initialAttendance],
-    visitors: [...initialVisitors],
-    products: JSON.parse(JSON.stringify(initialProducts)),
-    purchases: JSON.parse(JSON.stringify(initialPurchases)),
-    sales: JSON.parse(JSON.stringify(initialSales)),
-    salesReturns: [],
-    purchaseReturns: [],
-    installments: JSON.parse(JSON.stringify(initialInstallments)),
-    accounts: JSON.parse(JSON.stringify(initialChartOfAccounts)),
-    vouchers: JSON.parse(JSON.stringify(initialVouchers)),
-    cheques: JSON.parse(JSON.stringify(initialCheques)),
-    targets: JSON.parse(JSON.stringify(initialTargets)),
-    auditLogs: JSON.parse(JSON.stringify(initialAuditLogs)),
-    tasks: JSON.parse(JSON.stringify(initialTasks)),
-    backups: [],
-    roles: [],
-    sessions: [],
-    securityEvents: [],
-  };
-}
-
 export function isDemoMode(): boolean {
-  return readDemoSessionItem(DEMO_MODE_KEY) === 'true';
+  return false;
 }
 
 export function isCloudConnected(): boolean {
-  return Boolean(cloudActiveUid && !isDemoMode());
-}
-
-export function setDemoMode(enabled: boolean): void {
-  writeDemoSessionItem(DEMO_MODE_KEY, enabled ? 'true' : 'false');
-  if (enabled) {
-    seedDemoData();
-  } else {
-    removeDemoSessionItem(DEMO_DB_KEY);
-    dbCache = buildEmptyProductionDatabase();
-    notifySubscribers();
-  }
-}
-
-export function seedDemoData(): void {
-  writeDemoSessionItem(DEMO_MODE_KEY, 'true');
-  dbCache = buildDemoDatabase();
-  writeDemoSessionItem(DEMO_DB_KEY, JSON.stringify(dbCache));
-  notifySubscribers();
+  return Boolean(cloudActiveUid);
 }
 
 export function clearToProductionEmpty(): void {
-  writeDemoSessionItem(DEMO_MODE_KEY, 'false');
-  removeDemoSessionItem(DEMO_DB_KEY);
   dbCache = buildEmptyProductionDatabase();
   notifySubscribers();
 }
@@ -270,7 +184,7 @@ export function setCloudSessionUser(user: User | null): void {
   cloudActiveUser = user;
   cloudActiveUid = user ? (user.uid || user.id) : null;
   lastCloudSyncError = null;
-  if (user && !isDemoMode()) {
+  if (user) {
     dbCache = buildEmptyProductionDatabase();
   }
   notifySubscribers();
@@ -281,14 +195,11 @@ export function clearCloudSession(): void {
   cloudActiveUid = null;
   lastCloudSyncError = null;
   cloudInitializedFlags = { settings: false, accounts: false, seededCheckDone: false };
-  if (!isDemoMode()) {
-    dbCache = buildEmptyProductionDatabase();
-  }
+  dbCache = buildEmptyProductionDatabase();
   notifySubscribers();
 }
 
 export function applyCloudCollectionSnapshot(colName: CloudCollectionName, docs: any[]): void {
-  if (isDemoMode()) return; // Never mix cloud production data into demo sandbox
   const db = getDatabase();
   if (colName === 'settings') {
     const main = docs.find(d => d.id === 'main') || docs[0];
@@ -305,7 +216,7 @@ export function applyCloudCollectionSnapshot(colName: CloudCollectionName, docs:
     (db as any)[colName] = docs;
   }
 
-  // Bootstrap initial empty chart of accounts & showroom settings in Firestore for owner on first login
+  // Bootstrap initial empty chart of accounts & showroom settings in Firestore on first login when empty
   if (
     !cloudInitializedFlags.seededCheckDone &&
     cloudActiveUser?.role === 'Owner' &&
@@ -327,39 +238,12 @@ export function applyCloudCollectionSnapshot(colName: CloudCollectionName, docs:
 
 function getDatabase(): ErpDatabase {
   if (dbCache) return dbCache;
-
-  if (isDemoMode()) {
-    try {
-      const raw = readDemoSessionItem(DEMO_DB_KEY);
-      if (raw) {
-        dbCache = JSON.parse(raw);
-        if (dbCache) {
-          dbCache.tasks = dbCache.tasks || [];
-          dbCache.salesReturns = dbCache.salesReturns || [];
-          dbCache.purchaseReturns = dbCache.purchaseReturns || [];
-          dbCache.backups = dbCache.backups || [];
-          dbCache.roles = dbCache.roles || [];
-          dbCache.sessions = dbCache.sessions || [];
-          dbCache.securityEvents = dbCache.securityEvents || [];
-          return dbCache;
-        }
-      }
-    } catch {
-      // fall through to seed demo
-    }
-    dbCache = buildDemoDatabase();
-    return dbCache;
-  }
-
   dbCache = buildEmptyProductionDatabase();
   return dbCache;
 }
 
 function saveDatabase(db: ErpDatabase): void {
   dbCache = db;
-  if (isDemoMode()) {
-    writeDemoSessionItem(DEMO_DB_KEY, JSON.stringify(db));
-  }
   notifySubscribers();
 }
 
@@ -395,18 +279,6 @@ const GUEST_USER: User = {
 };
 
 export function getActiveUser(): User {
-  if (cloudActiveUser && !isDemoMode()) {
-    return cloudActiveUser;
-  }
-  if (isDemoMode()) {
-    return {
-      ...initialUsers[0],
-      uid: 'demo-viewer',
-      name: 'Demo Preview (Read-Only Sample)',
-      role: 'Owner',
-      permissions: getDefaultPermissionsForRole('Owner'),
-    };
-  }
   return cloudActiveUser || GUEST_USER;
 }
 
@@ -432,19 +304,9 @@ export function getSecurityEvents(): SecurityEvent[] {
   return [...getDatabase().securityEvents].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-// Legacy switchRole intentionally disabled in Live Cloud Mode
-export function switchRole(role: UserRole): User {
-  if (!isDemoMode()) {
-    throw new Error('Direct role switching is disabled. Sign in with your verified staff account.');
-  }
-  const db = getDatabase();
-  const found = db.users.find(u => u.role === role);
-  if (found) {
-    cloudActiveUser = found;
-    notifySubscribers();
-    return found;
-  }
-  return getActiveUser();
+// Legacy switchRole disabled — authentication is strictly handled by Firebase Auth
+export function switchRole(_role: UserRole): User {
+  throw new Error('Direct role switching is disabled. Sign in with Firebase Authentication.');
 }
 
 // ---------------- SETTINGS ----------------
@@ -1839,11 +1701,7 @@ export function importDatabaseJSON(jsonStr: string, options: { overwriteNewer?: 
 }
 
 export function resetToDefaultData(): void {
-  if (isDemoMode()) {
-    seedDemoData();
-  } else {
-    clearToProductionEmpty();
-  }
+  clearToProductionEmpty();
   logAuditAction('Backup', 'Database Reset', 'Reset workspace database');
   notifySubscribers();
 }

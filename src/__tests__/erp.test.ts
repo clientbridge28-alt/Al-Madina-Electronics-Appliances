@@ -68,6 +68,7 @@ import {
   getTasks,
   getVouchers,
   importDatabaseJSON,
+  isDemoMode,
   receiveInstallmentPayment,
   saveCheque,
   saveCustomer,
@@ -75,6 +76,7 @@ import {
   saveSupplier,
   saveTask,
 } from '../services/storage';
+import { mapFirebaseAuthError } from '../context/AuthContext';
 import { buildFullOwnerPermissions, getDefaultPermissionsForRole } from '../types/rbac';
 import type { ChequeRecord, Customer, InstallmentAccount, Product, Supplier } from '../types/erp';
 
@@ -1043,5 +1045,15 @@ describe('Al-Madina Electronics ERP — Core Accounting, Inventory & RBAC Suite'
     expect(getProductById(product.id)?.sku).toBe(product.sku);
     expect(getCustomerById(customer.id)?.name).toBe('Bilal Ahmed (Newer Cloud Edit)');
     expect(getCustomerById(customer.id)?.creditLimit).toBe(900000);
+  });
+
+  it('9. Maps Firebase login errors clearly and disables demo mode fallback', () => {
+    expect(isDemoMode()).toBe(false);
+    expect(mapFirebaseAuthError({ code: 'auth/invalid-email' }, 'email')).toContain('Invalid Email');
+    expect(mapFirebaseAuthError({ code: 'auth/wrong-password' }, 'email')).toContain('Wrong Password');
+    expect(mapFirebaseAuthError({ code: 'auth/invalid-credential' }, 'email')).toContain('Wrong Password');
+    expect(mapFirebaseAuthError({ code: 'auth/popup-closed-by-user' }, 'google')).toContain('Google Sign-In Failed');
+    expect(mapFirebaseAuthError({ code: 'auth/network-request-failed' }, 'email')).toContain('Network Error');
+    expect(mapFirebaseAuthError({ code: 'auth/configuration-missing' }, 'email')).toContain('Firebase Configuration Missing');
   });
 });

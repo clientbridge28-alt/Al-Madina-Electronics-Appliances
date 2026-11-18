@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Save, Store, CheckCircle2,
-  Globe, Database, RefreshCw, AlertCircle, Sparkles,
+  Globe, Database, RefreshCw, AlertCircle,
   Check, Key, Link2, Lock
 } from 'lucide-react';
 import {
@@ -18,7 +18,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 
 export const SettingsView: React.FC = () => {
-  const { isOwner, isDemoSession, enterDemoMode, exitDemoMode } = useAuth();
+  const { isOwner } = useAuth();
   const [activeTab, setActiveTab] = useState<'General' | 'WooCommerce' | 'Database'>('General');
   const [settings, setSettingsState] = useState<ShowroomSettings>(getSettings());
 
@@ -476,47 +476,22 @@ export const SettingsView: React.FC = () => {
         <div className="rounded-2xl bg-white p-6 border border-slate-200 shadow-2xs space-y-4 text-xs">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div>
-              <h3 className="text-sm font-bold text-slate-900">Strict Cloud vs Demo Partitioning</h3>
-              <p className="text-xs text-slate-500">Live Firestore production data is strictly isolated from the Read-Only Client Demo Showcase.</p>
+              <h3 className="text-sm font-bold text-slate-900">Cloud Firestore Database</h3>
+              <p className="text-xs text-slate-500">All showroom transactions and records are synced with Cloud Firestore under Firebase Authentication.</p>
             </div>
-            <span className={`px-3 py-1 rounded-full text-xs font-bold border ${
-              isDemoSession ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-emerald-50 text-emerald-800 border-emerald-200'
-            }`}>
-              {isDemoSession ? 'Isolated Demo Showcase' : 'Live Cloud Firestore'}
+            <span className="px-3 py-1 rounded-full text-xs font-bold border bg-emerald-50 text-emerald-800 border-emerald-200">
+              Live Cloud Firestore
             </span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className={`p-5 rounded-2xl border ${!isDemoSession ? 'border-emerald-400 bg-emerald-50/40' : 'border-slate-200 bg-slate-50'}`}>
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="font-bold text-slate-900 text-sm">Live Cloud Firestore ERP</h4>
-                {!isDemoSession && <Check className="h-5 w-5 text-emerald-600" />}
-              </div>
-              <p className="text-slate-600 mb-4">Connected to your authenticated Firebase workspace. Real transactions, zero fake data.</p>
-              <button
-                disabled={!isDemoSession}
-                onClick={() => exitDemoMode()}
-                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold disabled:opacity-50"
-              >
-                Exit Demo & Return to Live Cloud Login
-              </button>
+          <div className="p-5 rounded-2xl border border-emerald-400 bg-emerald-50/40">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-bold text-slate-900 text-sm">Live Cloud Firestore ERP</h4>
+              <Check className="h-5 w-5 text-emerald-600" />
             </div>
-
-            <div className={`p-5 rounded-2xl border ${isDemoSession ? 'border-amber-400 bg-amber-50/40' : 'border-slate-200 bg-slate-50'}`}>
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="font-bold text-slate-900 text-sm">Isolated Client Demo Showcase</h4>
-                {isDemoSession && <Check className="h-5 w-5 text-amber-600" />}
-              </div>
-              <p className="text-slate-600 mb-4">Loads sample showroom data in local sandbox memory for client demonstrations without affecting Firestore.</p>
-              <button
-                disabled={isDemoSession}
-                onClick={() => enterDemoMode()}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold disabled:opacity-50"
-              >
-                <Sparkles className="h-4 w-4" />
-                <span>Switch to Client Demo Showcase</span>
-              </button>
-            </div>
+            <p className="text-slate-600">
+              Connected to your authenticated Firebase workspace. Real showroom records only, with no localStorage or demo mode fallback.
+            </p>
           </div>
         </div>
       )}

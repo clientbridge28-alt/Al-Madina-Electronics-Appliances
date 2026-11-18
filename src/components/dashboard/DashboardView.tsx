@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { 
   TrendingUp, TrendingDown, ShoppingBag, CreditCard, 
   Package, AlertTriangle, UserPlus, DollarSign,
-  UserCheck, Clock, PlusCircle, Database, Sparkles,
+  UserCheck, Clock, PlusCircle, Database,
   ArrowUpRight, ArrowDownRight, Award, BarChart3
 } from 'lucide-react';
 import {
@@ -13,7 +13,7 @@ import {
   getSales, getPurchases, getProducts, getCustomers, 
   getSuppliers, getInstallmentAccounts, getAttendance, 
   getVisitors, checkOutVisitor, getActiveUser, getSettings,
-  isDemoMode, seedDemoData, subscribeToDatabase
+  subscribeToDatabase
 } from '../../services/storage';
 
 interface DashboardViewProps {
@@ -185,12 +185,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
               {currentUser.role}
             </span>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-              isDemoMode() 
-                ? 'bg-amber-50 text-amber-800 border-amber-200' 
-                : 'bg-emerald-50 text-emerald-800 border-emerald-200'
-            }`}>
-              {isDemoMode() ? 'Demo Mode Active' : 'Production Database'}
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-emerald-50 text-emerald-800 border-emerald-200">
+              Production Database
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
@@ -253,14 +249,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               >
                 <Package className="h-4 w-4" />
                 <span>Add Product</span>
-              </button>
-              <button
-                onClick={() => { seedDemoData(); window.location.reload(); }}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs transition"
-                title="Populate test data for evaluation"
-              >
-                <Sparkles className="h-4 w-4" />
-                <span>Load Demo Data</span>
               </button>
             </div>
           </div>

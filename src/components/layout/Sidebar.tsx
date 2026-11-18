@@ -30,9 +30,8 @@ interface NavItem {
 export const Sidebar: React.FC<SidebarProps> = ({
   currentModule,
   onNavigate,
-  onOpenLoginModal
 }) => {
-  const { staffUser, isOwner, isDemoSession, can, logout, exitDemoMode } = useAuth();
+  const { staffUser, isOwner, can, logout } = useAuth();
 
   const lowStockCount = getProducts().filter(p => p.stockQuantity <= p.minStockLevel).length;
   const overdueCount = getInstallmentAccounts().filter(a => a.status === 'Overdue').length;
@@ -80,8 +79,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   ];
 
-  const displayName = isDemoSession ? 'Client Demo Showcase' : staffUser?.name || 'Guest';
-  const displayRole = isDemoSession ? 'Read-Only Sample' : staffUser?.customRoleName || staffUser?.role || 'Unverified';
+  const displayName = staffUser?.name || staffUser?.email || 'Authenticated User';
+  const displayRole = staffUser?.customRoleName || staffUser?.role || 'Staff';
 
   return (
     <aside className="w-64 shrink-0 border-r border-slate-200 bg-white flex flex-col h-[calc(100vh-4rem)] sticky top-16 no-print overflow-hidden select-none">
@@ -180,14 +179,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           <button
             onClick={async () => {
-              if (isDemoSession) {
-                exitDemoMode();
-                onOpenLoginModal();
-              } else {
-                await logout();
-              }
+              await logout();
             }}
-            title={isDemoSession ? 'Exit Demo Showcase' : 'Sign Out Securely'}
+            title="Sign Out"
             className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
           >
             <LogOut className="h-4 w-4" />

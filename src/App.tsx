@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Lock, Sparkles, AlertTriangle, X } from 'lucide-react';
+import { Lock, AlertTriangle, X } from 'lucide-react';
 import { Header } from './components/layout/Header';
 import { Sidebar } from './components/layout/Sidebar';
 import { GlobalSearchModal } from './components/layout/GlobalSearchModal';
@@ -32,7 +32,7 @@ import { useAuth } from './context/AuthContext';
 import type { ModulePermissionKey } from './types/rbac';
 
 export default function App() {
-  const { status, isOwner, isDemoSession, can, exitDemoMode } = useAuth();
+  const { status, isOwner, can } = useAuth();
   const [currentModule, setCurrentModule] = useState<string>('dashboard');
   const [showSearchModal, setShowSearchModal] = useState<boolean>(false);
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
@@ -69,23 +69,24 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  useEffect(() => {
+    if (status === 'authenticated') {
+      setCurrentModule('dashboard');
+      setShowLoginModal(false);
+    }
+  }, [status]);
+
   if (status === 'loading') {
     return (
       <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 space-y-3">
         <div className="h-10 w-10 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
-        <p className="text-sm font-bold tracking-wide">Verifying Secure Showroom Session...</p>
-        <p className="text-xs text-slate-400">Al-Madina Electronics & Appliances ERP</p>
+        <p className="text-sm font-bold tracking-wide">Loading Al-Madina ERP...</p>
+        <p className="text-xs text-slate-400">Al-Madina Electronics &amp; Appliances ERP</p>
       </div>
     );
   }
 
-  if (
-    status === 'unauthenticated' ||
-    status === 'needs_verification' ||
-    status === 'needs_mfa' ||
-    status === 'suspended' ||
-    status === 'no_staff_profile'
-  ) {
+  if (status === 'unauthenticated') {
     return (
       <div className="min-h-screen bg-slate-950">
         <LoginModal isOpen={true} onClose={() => {}} requireGate={true} />
@@ -124,24 +125,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 flex flex-col antialiased">
-      {isDemoSession && (
-        <div className="bg-amber-500 text-slate-950 px-4 py-2 text-xs font-bold flex flex-wrap items-center justify-between gap-2 no-print">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 shrink-0" />
-            <span>
-              ISOLATED CLIENT DEMO SHOWCASE (Read-Only Sample Dataset) — Demo data never touches live Cloud Firestore production records.
-            </span>
-          </div>
-          <button
-            onClick={() => exitDemoMode()}
-            className="px-3 py-1 rounded-lg bg-slate-950 text-white text-[11px] font-bold hover:bg-slate-800 transition"
-          >
-            Exit to Live Cloud Login
-          </button>
-        </div>
-      )}
-
-      {!isDemoSession && getLastCloudSyncError() && (
+      {getLastCloudSyncError() && (
         <div className="bg-rose-700 text-white px-4 py-2 text-xs font-semibold flex items-center justify-between gap-2 no-print">
           <div className="flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 shrink-0" />
