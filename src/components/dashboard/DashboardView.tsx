@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   TrendingUp, TrendingDown, ShoppingBag, CreditCard, 
   Package, AlertTriangle, UserPlus, DollarSign,
@@ -13,7 +13,7 @@ import {
   getSales, getPurchases, getProducts, getCustomers, 
   getSuppliers, getInstallmentAccounts, getAttendance, 
   getVisitors, checkOutVisitor, getActiveUser, getSettings,
-  isDemoMode, seedDemoData
+  isDemoMode, seedDemoData, subscribeToDatabase
 } from '../../services/storage';
 
 interface DashboardViewProps {
@@ -28,6 +28,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenQuickVisitor
 }) => {
   const [dateFilter, setDateFilter] = useState<'Today' | 'Week' | 'Month' | 'Year'>('Today');
+  const [, setDbTick] = useState(0);
+  useEffect(() => subscribeToDatabase(() => setDbTick(t => t + 1)), []);
 
   const sales = getSales();
   const purchases = getPurchases();

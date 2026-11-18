@@ -1,11 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CreditCard, Plus, Search, CheckCircle, Clock, AlertTriangle, X } from 'lucide-react';
-import { getCheques, saveCheque, clearChequeWithAccounting } from '../../services/storage';
+import { getCheques, saveCheque, clearChequeWithAccounting, subscribeToDatabase } from '../../services/storage';
 import { ChequeRecord } from '../../types/erp';
 import { Badge } from '../common/Badge';
 
 export const ChequesView: React.FC = () => {
   const [cheques, setCheques] = useState<ChequeRecord[]>(getCheques());
+
+  useEffect(() => {
+    return subscribeToDatabase(() => {
+      setCheques([...getCheques()]);
+    });
+  }, []);
   const [activeTab, setActiveTab] = useState<'Received' | 'Issued'>('Received');
   const [showAddModal, setShowAddModal] = useState(false);
 

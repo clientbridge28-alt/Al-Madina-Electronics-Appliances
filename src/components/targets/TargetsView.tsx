@@ -1,10 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Target as TargetIcon, Plus, CheckCircle, TrendingUp, X } from 'lucide-react';
-import { getTargets, saveTarget, getEmployees } from '../../services/storage';
+import { getTargets, saveTarget, getEmployees, subscribeToDatabase } from '../../services/storage';
 import { Target } from '../../types/erp';
 
 export const TargetsView: React.FC = () => {
   const [targets, setTargets] = useState<Target[]>(getTargets());
+  const [, setDbTick] = useState(0);
+
+  useEffect(() => {
+    return subscribeToDatabase(() => {
+      setTargets([...getTargets()]);
+      setDbTick(t => t + 1);
+    });
+  }, []);
+
   const employees = getEmployees();
   const [showAddModal, setShowAddModal] = useState(false);
 

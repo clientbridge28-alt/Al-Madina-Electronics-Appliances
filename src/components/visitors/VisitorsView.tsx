@@ -1,14 +1,23 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   UserPlus, Search, Calendar, Clock, 
   CheckCircle, UserCheck, X, LogOut, ArrowRight 
 } from 'lucide-react';
-import { getVisitors, checkInVisitor, checkOutVisitor, getEmployees } from '../../services/storage';
+import { getVisitors, checkInVisitor, checkOutVisitor, getEmployees, subscribeToDatabase } from '../../services/storage';
 import { VisitorRecord } from '../../types/erp';
 import { Badge } from '../common/Badge';
 
 export const VisitorsView: React.FC = () => {
   const [visitors, setVisitors] = useState<VisitorRecord[]>(getVisitors());
+  const [, setDbTick] = useState(0);
+
+  useEffect(() => {
+    return subscribeToDatabase(() => {
+      setVisitors([...getVisitors()]);
+      setDbTick(t => t + 1);
+    });
+  }, []);
+
   const employees = getEmployees();
 
   const [searchQuery, setSearchQuery] = useState('');

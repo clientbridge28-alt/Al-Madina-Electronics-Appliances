@@ -1,11 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   UserCheck, Plus, Search, Calendar, Clock, 
   CheckCircle, AlertCircle, X, Check, ArrowRight 
 } from 'lucide-react';
 import { 
   getAttendance, getEmployees, markStaffCheckIn, 
-  markStaffCheckOut, saveEmployee 
+  markStaffCheckOut, saveEmployee, subscribeToDatabase 
 } from '../../services/storage';
 import { AttendanceRecord, Employee } from '../../types/erp';
 import { Badge } from '../common/Badge';
@@ -13,6 +13,13 @@ import { Badge } from '../common/Badge';
 export const AttendanceView: React.FC = () => {
   const [attendance, setAttendance] = useState<AttendanceRecord[]>(getAttendance());
   const [employees, setEmployees] = useState<Employee[]>(getEmployees());
+
+  useEffect(() => {
+    return subscribeToDatabase(() => {
+      setAttendance([...getAttendance()]);
+      setEmployees([...getEmployees()]);
+    });
+  }, []);
 
   const [activeTab, setActiveTab] = useState<'Attendance' | 'Employees'>('Attendance');
   const [searchQuery, setSearchQuery] = useState('');

@@ -18,6 +18,7 @@ Object.defineProperty(globalThis, 'localStorage', {
   configurable: true,
 });
 
+import * as XLSX from 'xlsx';
 import {
   ACCOUNT_IDS,
   buildChequeClearanceVoucher,
@@ -29,7 +30,14 @@ import {
   buildSalesVoucher,
   sumVoucherSides,
 } from '../services/accounting';
-import { computeSha256Hex, validateCustomerImport, validateProductImport } from '../services/excelService';
+import {
+  buildBackupWorkbook,
+  computeCanonicalSnapshotChecksum,
+  computeSha256Hex,
+  parseBackupWorkbookBuffer,
+  validateCustomerImport,
+  validateProductImport,
+} from '../services/excelService';
 import {
   getFirebaseConfig,
   getFirebaseMissingFields,
@@ -45,6 +53,10 @@ import {
   createPurchaseReturn,
   createSalesInvoice,
   createSalesReturn,
+  deleteCustomer,
+  deleteProduct,
+  deleteSupplier,
+  deleteTask,
   getChartOfAccounts,
   getCustomerById,
   getCustomerLedgerEntries,
@@ -53,12 +65,15 @@ import {
   getProductById,
   getSupplierById,
   getSupplierLedgerEntries,
+  getTasks,
   getVouchers,
+  importDatabaseJSON,
   receiveInstallmentPayment,
   saveCheque,
   saveCustomer,
   saveProduct,
   saveSupplier,
+  saveTask,
 } from '../services/storage';
 import { buildFullOwnerPermissions, getDefaultPermissionsForRole } from '../types/rbac';
 import type { ChequeRecord, Customer, InstallmentAccount, Product, Supplier } from '../types/erp';
@@ -802,5 +817,231 @@ describe('Al-Madina Electronics ERP — Core Accounting, Inventory & RBAC Suite'
     expect(prodValidation.validRows).toHaveLength(1);
     expect(prodValidation.invalidRows).toHaveLength(1);
     expect(prodValidation.validRows[0].data.retailPrice).toBe(115000);
+  });
+
+  it('7. Prevents duplicate invoices, SKUs, and Excel import rows while supporting full CRUD deletes', () => {
+    const { customer, supplier, product } = seedCleanFixtures();
+
+    // Duplicate SKU on new product ID is rejected
+    expect(() =>
+      saveProduct({
+        ...product,
+        id: 'PROD-DUPE-SKU',
+        sku: 'hae-18hft',
+      })
+    ).toThrow(/Duplicate SKU/i);
+
+    // Purchase invoice created once; duplicate invoiceNumber rejected cleanly without double-stocking
+    createPurchaseInvoice({
+      invoiceNumber: 'PINV-UNIQ-1',
+      supplierId: supplier.id,
+      supplierName: supplier.companyName,
+      date: '2026-11-12',
+      items: [
+        {
+          productId: product.id,
+          productName: product.name,
+          brand: product.brand,
+          modelNumber: product.modelNumber,
+          quantity: 5,
+          purchasePrice: 50000,
+          total: 250000,
+        },
+      ],
+      subTotal: 250000,
+      discount: 0,
+      tax: 0,
+      freightCharges: 0,
+      grandTotal: 250000,
+      paidAmount: 250000,
+      remainingBalance: 0,
+      paymentMethod: 'Cash',
+      status: 'Received',
+    });
+
+    expect(() =>
+      createPurchaseInvoice({
+        invoiceNumber: 'PINV-UNIQ-1',
+        supplierId: supplier.id,
+        supplierName: supplier.companyName,
+        date: '2026-11-12',
+        items: [
+          {
+            productId: product.id,
+            productName: product.name,
+            brand: product.brand,
+            modelNumber: product.modelNumber,
+            quantity: 5,
+            purchasePrice: 50000,
+            total: 250000,
+          },
+        ],
+        subTotal: 250000,
+        discount: 0,
+        tax: 0,
+        freightCharges: 0,
+        grandTotal: 250000,
+        paidAmount: 250000,
+        remainingBalance: 0,
+        paymentMethod: 'Cash',
+        status: 'Received',
+      })
+    ).toThrow(/Duplicate Purchase Invoice/i);
+    expect(getProductById(product.id)?.stockQuantity).toBe(5);
+
+    // Sales invoice created once; duplicate invoiceNumber rejected cleanly
+    createSalesInvoice({
+      invoiceNumber: 'INV-UNIQ-1',
+      customerId: customer.id,
+      customerName: customer.name,
+      customerPhone: customer.phone,
+      saleType: 'Cash',
+      date: '2026-11-12',
+      items: [
+        {
+          productId: product.id,
+          productName: product.name,
+          brand: product.brand,
+          modelNumber: product.modelNumber,
+          quantity: 2,
+          unitPrice: 70000,
+          costPrice: 50000,
+          discount: 0,
+          total: 140000,
+        },
+      ],
+      subTotal: 140000,
+      discount: 0,
+      tax: 0,
+      grandTotal: 140000,
+      paidAmount: 140000,
+      changeAmount: 0,
+      remainingBalance: 0,
+      paymentMethod: 'Cash',
+      salesPerson: 'Cashier',
+    });
+
+    expect(() =>
+      createSalesInvoice({
+        invoiceNumber: 'INV-UNIQ-1',
+        customerId: customer.id,
+        customerName: customer.name,
+        customerPhone: customer.phone,
+        saleType: 'Cash',
+        date: '2026-11-12',
+        items: [
+          {
+            productId: product.id,
+            productName: product.name,
+            brand: product.brand,
+            modelNumber: product.modelNumber,
+            quantity: 2,
+            unitPrice: 70000,
+            costPrice: 50000,
+            discount: 0,
+            total: 140000,
+          },
+        ],
+        subTotal: 140000,
+        discount: 0,
+        tax: 0,
+        grandTotal: 140000,
+        paidAmount: 140000,
+        changeAmount: 0,
+        remainingBalance: 0,
+        paymentMethod: 'Cash',
+        salesPerson: 'Cashier',
+      })
+    ).toThrow(/Duplicate Sales Invoice/i);
+    expect(getProductById(product.id)?.stockQuantity).toBe(3);
+
+    // Excel duplicate row checks
+    const dupCustCheck = validateCustomerImport([
+      { 'Full Name': 'Ali One', 'Mobile Phone': '0300-8889990', 'CNIC Number': '35202-1111111-1' },
+      { 'Full Name': 'Ali Duplicate', 'Mobile Phone': '0300-8889990', 'CNIC Number': '35202-2222222-2' },
+    ]);
+    expect(dupCustCheck.validRows).toHaveLength(1);
+    expect(dupCustCheck.invalidRows).toHaveLength(1);
+    expect(dupCustCheck.invalidRows[0].errors[0]).toMatch(/Duplicate Mobile Phone/i);
+
+    const dupProdCheck = validateProductImport([
+      { 'Product Name': 'Item A', SKU: 'SKU-DUP-1', 'Cost Price': 1000, 'Retail Price': 1500 },
+      { 'Product Name': 'Item B', SKU: 'sku-dup-1', 'Cost Price': 2000, 'Retail Price': 2500 },
+    ]);
+    expect(dupProdCheck.validRows).toHaveLength(1);
+    expect(dupProdCheck.invalidRows).toHaveLength(1);
+    expect(dupProdCheck.invalidRows[0].errors[0]).toMatch(/Duplicate SKU/i);
+
+    // Full CRUD deletes remove records cleanly
+    saveTask({
+      id: 'TSK-TEST-1',
+      title: 'Check AC Inventory',
+      description: 'Verify compressor tags',
+      assignedTo: 'Floor Manager',
+      assignedBy: 'Owner',
+      category: 'Stock & Warehouse',
+      priority: 'High',
+      dueDate: '2026-11-20',
+      progressPercent: 10,
+      status: 'Pending',
+      createdAt: '2026-11-12',
+    });
+    expect(getTasks().some(t => t.id === 'TSK-TEST-1')).toBe(true);
+    deleteTask('TSK-TEST-1');
+    expect(getTasks().some(t => t.id === 'TSK-TEST-1')).toBe(false);
+
+    deleteCustomer(customer.id);
+    expect(getCustomerById(customer.id)).toBeUndefined();
+    deleteProduct(product.id);
+    expect(getProductById(product.id)).toBeUndefined();
+    deleteSupplier(supplier.id);
+    expect(getSupplierById(supplier.id)).toBeUndefined();
+  });
+
+  it('8. Matches canonical SHA-256 checksums across .xlsx export/import round-trip and preserves newer records on recovery', async () => {
+    const { customer, product } = seedCleanFixtures();
+    const snapshot = getDatabaseSnapshot();
+    const { wb, normalizedSnapshot, recordCount } = buildBackupWorkbook(snapshot);
+    const exportedChecksum = await computeCanonicalSnapshotChecksum(normalizedSnapshot);
+
+    const metaSheet = XLSX.utils.json_to_sheet([
+      {
+        exportedAt: '2026-11-15T10:00:00.000Z',
+        recordCount,
+        checksum: exportedChecksum,
+        version: '2.6-enterprise',
+        settingsJson: JSON.stringify(normalizedSnapshot.settings || {}),
+      },
+    ]);
+    XLSX.utils.book_append_sheet(wb, metaSheet, '_BackupMeta');
+
+    const xlsxArray = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+    const parsed = await parseBackupWorkbookBuffer(xlsxArray);
+
+    expect(parsed.expectedChecksum).toBe(exportedChecksum);
+    expect(parsed.checksum).toBe(exportedChecksum);
+    expect(parsed.recordCount).toBe(recordCount);
+
+    // Simulate newer edits occurring after backup snapshot was taken
+    saveCustomer({
+      ...customer,
+      name: 'Bilal Ahmed (Newer Cloud Edit)',
+      creditLimit: 900000,
+    });
+    const newerUpdatedAt = new Date(Date.now() + 60_000).toISOString();
+    saveCustomer({
+      ...getCustomerById(customer.id)!,
+      updatedAt: newerUpdatedAt,
+    } as Customer);
+
+    // Delete product locally to verify recovery brings back missing record WITHOUT overwriting newer customer
+    deleteProduct(product.id);
+    expect(getProductById(product.id)).toBeUndefined();
+
+    const restoredOk = importDatabaseJSON(JSON.stringify(parsed.snapshot));
+    expect(restoredOk).toBe(true);
+    expect(getProductById(product.id)?.sku).toBe(product.sku);
+    expect(getCustomerById(customer.id)?.name).toBe('Bilal Ahmed (Newer Cloud Edit)');
+    expect(getCustomerById(customer.id)?.creditLimit).toBe(900000);
   });
 });

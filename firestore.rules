@@ -575,18 +575,28 @@ service cloud.firestore {
     match /admins/{adminId} {
       allow get: if isValidId(adminId) && (isBootstrappedOwner() || request.auth.uid == adminId);
       allow list: if isBootstrappedOwner();
-      allow create, update: if isValidId(adminId) && isValidAdmin(incoming()) && isBootstrappedOwner() && incoming().uid == adminId;
+      allow create, update: if isValidId(adminId)
+        && isValidAdmin(incoming())
+        && isBootstrappedOwner()
+        && incoming().uid == adminId
+        && incoming().email == 'clientbridge28@gmail.com';
       allow delete: if isValidId(adminId) && isBootstrappedOwner() && adminId != request.auth.uid;
     }
 
     match /users/{userId} {
       allow get: if isValidId(userId) && isEmailVerified() && (request.auth.uid == userId || isOwner());
       allow list: if isEmailVerified() && (isBootstrappedOwner() || resource.data.uid == request.auth.uid);
-      allow create: if isValidId(userId) && isEmailVerified() && isValidUser(incoming()) && incoming().uid == userId && (
-        isOwner() || (isBootstrappedOwner() && request.auth.uid == userId && incoming().role == 'Owner')
-      );
+      allow create: if isValidId(userId)
+        && isEmailVerified()
+        && isValidUser(incoming())
+        && incoming().uid == userId
+        && (incoming().role != 'Owner' || (incoming().email == 'clientbridge28@gmail.com' && request.auth.uid == userId && isBootstrappedOwner()))
+        && (isOwner() || (isBootstrappedOwner() && request.auth.uid == userId && incoming().role == 'Owner'));
       allow update: if isValidId(userId) && isEmailVerified() && isValidUser(incoming()) && (
-        (isOwner() && incoming().uid == existing().uid && incoming().orgId == existing().orgId) ||
+        (isOwner()
+          && incoming().uid == existing().uid
+          && incoming().orgId == existing().orgId
+          && (incoming().role != 'Owner' || existing().role == 'Owner' || incoming().email == 'clientbridge28@gmail.com')) ||
         (request.auth.uid == userId
           && incoming().uid == existing().uid
           && incoming().orgId == existing().orgId

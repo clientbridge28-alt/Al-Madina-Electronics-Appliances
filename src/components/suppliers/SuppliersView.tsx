@@ -1,11 +1,17 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Truck, Plus, Search, Phone, FileText, X, Printer, DollarSign } from 'lucide-react';
-import { getSuppliers, saveSupplier, getSupplierLedgerEntries, createVoucher } from '../../services/storage';
+import { getSuppliers, saveSupplier, getSupplierLedgerEntries, createVoucher, subscribeToDatabase } from '../../services/storage';
 import { Supplier } from '../../types/erp';
 import { Badge } from '../common/Badge';
 
 export const SuppliersView: React.FC = () => {
   const [suppliers, setSuppliers] = useState<Supplier[]>(getSuppliers());
+
+  useEffect(() => {
+    return subscribeToDatabase(() => {
+      setSuppliers([...getSuppliers()]);
+    });
+  }, []);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);

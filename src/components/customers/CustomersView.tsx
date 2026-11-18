@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Users, Plus, Search, Phone, FileText, 
   Calendar, CreditCard, X, Printer, ArrowRight,
@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { 
   getCustomers, saveCustomer, getSales, 
-  getInstallmentAccounts, getCustomerLedgerEntries, getSettings 
+  getInstallmentAccounts, getCustomerLedgerEntries, getSettings, subscribeToDatabase 
 } from '../../services/storage';
 import { Customer } from '../../types/erp';
 import { Badge } from '../common/Badge';
@@ -19,6 +19,15 @@ import { ExcelImportModal } from '../common/ExcelImportModal';
 
 export const CustomersView: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>(getCustomers());
+  const [, setDbTick] = useState(0);
+
+  useEffect(() => {
+    return subscribeToDatabase(() => {
+      setCustomers([...getCustomers()]);
+      setDbTick(t => t + 1);
+    });
+  }, []);
+
   const sales = getSales();
   const installments = getInstallmentAccounts();
   const settings = getSettings();

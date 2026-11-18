@@ -8,7 +8,7 @@ import {
   getBackupRecords, addBackupRecord, logAuditAction, subscribeToDatabase
 } from '../../services/storage';
 import {
-  computeSha256Hex,
+  computeCanonicalSnapshotChecksum,
   exportCollectionToCSV,
   exportFullWorkbookBackup,
 } from '../../services/excelService';
@@ -61,9 +61,9 @@ export const AuditBackupView: React.FC = () => {
 
   const handleDownloadJsonSnapshot = async () => {
     try {
-      const dataStr = exportDatabaseJSON();
-      const checksum = await computeSha256Hex(dataStr);
       const snapshot = getDatabaseSnapshot();
+      const dataStr = exportDatabaseJSON();
+      const checksum = await computeCanonicalSnapshotChecksum(snapshot);
       const recordCount = Object.values(snapshot).reduce<number>(
         (s, v) => s + (Array.isArray(v) ? v.length : 0),
         0
@@ -110,7 +110,7 @@ export const AuditBackupView: React.FC = () => {
     setBusy(true);
     try {
       const snapshot = getDatabaseSnapshot();
-      const checksum = await computeSha256Hex(JSON.stringify(snapshot));
+      const checksum = await computeCanonicalSnapshotChecksum(snapshot);
       const recordCount = Object.values(snapshot).reduce<number>(
         (s, v) => s + (Array.isArray(v) ? v.length : 0),
         0

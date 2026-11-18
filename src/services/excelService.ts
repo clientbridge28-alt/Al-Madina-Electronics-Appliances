@@ -183,9 +183,13 @@ export async function parseExcelFile(file: File): Promise<any[]> {
   return XLSX.utils.sheet_to_json(worksheet);
 }
 
-export function validateCustomerImport(rawRows: any[]): ImportValidationResult<Partial<Customer>> {
+export function validateCustomerImport(rawRows: any[], existingCustomers: Customer[] = []): ImportValidationResult<Partial<Customer>> {
   const validRows: ParsedImportRow<Partial<Customer>>[] = [];
   const invalidRows: ParsedImportRow<Partial<Customer>>[] = [];
+  const seenPhones = new Set(existingCustomers.map(c => String(c.phone || '').trim()).filter(Boolean));
+  const seenCnics = new Set(
+    existingCustomers.map(c => String(c.cnic || '').trim()).filter(cnic => cnic && cnic !== '35202-0000000-0')
+  );
 
   rawRows.forEach((row, idx) => {
     const errors: string[] = [];
@@ -195,6 +199,12 @@ export function validateCustomerImport(rawRows: any[]): ImportValidationResult<P
 
     if (!name) errors.push('Customer Full Name is required');
     if (!phone) errors.push('Mobile Phone is required');
+    if (phone && seenPhones.has(phone)) {
+      errors.push(`Duplicate Mobile Phone (${phone})`);
+    }
+    if (cnic && cnic !== '35202-0000000-0' && seenCnics.has(cnic)) {
+      errors.push(`Duplicate CNIC (${cnic})`);
+    }
 
     const customerData: Partial<Customer> = {
       name,
@@ -218,16 +228,22 @@ export function validateCustomerImport(rawRows: any[]): ImportValidationResult<P
       errors
     };
 
-    if (errors.length === 0) validRows.push(rowObj);
-    else invalidRows.push(rowObj);
+    if (errors.length === 0) {
+      if (phone) seenPhones.add(phone);
+      if (cnic && cnic !== '35202-0000000-0') seenCnics.add(cnic);
+      validRows.push(rowObj);
+    } else {
+      invalidRows.push(rowObj);
+    }
   });
 
   return { validRows, invalidRows, totalRows: rawRows.length };
 }
 
-export function validateProductImport(rawRows: any[]): ImportValidationResult<Partial<Product>> {
+export function validateProductImport(rawRows: any[], existingProducts: Product[] = []): ImportValidationResult<Partial<Product>> {
   const validRows: ParsedImportRow<Partial<Product>>[] = [];
   const invalidRows: ParsedImportRow<Partial<Product>>[] = [];
+  const seenSkus = new Set(existingProducts.map(p => String(p.sku || '').trim().toLowerCase()).filter(Boolean));
 
   rawRows.forEach((row, idx) => {
     const errors: string[] = [];
@@ -236,17 +252,21 @@ export function validateProductImport(rawRows: any[]): ImportValidationResult<Pa
     const brand = String(row['Brand'] || 'General').trim();
     const cost = Number(row['Cost Price'] || row['purchasePrice']) || 0;
     const retail = Number(row['Retail Price'] || row['retailPrice']) || 0;
+    const sku = String(row['SKU'] || `SKU-${Date.now().toString().slice(-4)}-${idx}`).trim();
 
     if (!name) errors.push('Product Name is required');
     if (cost <= 0) errors.push('Cost Price must be greater than 0');
     if (retail <= 0) errors.push('Retail Price must be greater than 0');
+    if (sku && seenSkus.has(sku.toLowerCase())) {
+      errors.push(`Duplicate SKU (${sku})`);
+    }
 
     const productData: Partial<Product> = {
       name,
       category,
       brand,
       modelNumber: String(row['Model Number'] || 'STD').trim(),
-      sku: String(row['SKU'] || `SKU-${Date.now().toString().slice(-4)}-${idx}`).trim(),
+      sku,
       barcode: String(row['Barcode'] || `${Math.floor(100000000000 + Math.random() * 900000000000)}`).trim(),
       unit: 'Unit',
       purchasePrice: cost,
@@ -266,8 +286,12 @@ export function validateProductImport(rawRows: any[]): ImportValidationResult<Pa
       errors
     };
 
-    if (errors.length === 0) validRows.push(rowObj);
-    else invalidRows.push(rowObj);
+    if (errors.length === 0) {
+      if (sku) seenSkus.add(sku.toLowerCase());
+      validRows.push(rowObj);
+    } else {
+      invalidRows.push(rowObj);
+    }
   });
 
   return { validRows, invalidRows, totalRows: rawRows.length };
@@ -352,10 +376,67 @@ export function processProductExcelBuffer(buffer: ArrayBuffer) {
 
 // ---------------- FULL ERP WORKBOOK BACKUP & DISASTER RECOVERY ----------------
 
+const BACKUP_SHEET_COLLECTIONS = [
+  'customers',
+  'suppliers',
+  'employees',
+  'products',
+  'purchases',
+  'purchaseReturns',
+  'sales',
+  'salesReturns',
+  'installments',
+  'accounts',
+  'vouchers',
+  'cheques',
+  'targets',
+  'tasks',
+  'attendance',
+  'visitors',
+  'auditLogs',
+] as const;
+
+export function sortKeysDeep(value: any): any {
+  if (Array.isArray(value)) {
+    return value.map(sortKeysDeep);
+  }
+  if (value && typeof value === 'object') {
+    const sorted: Record<string, any> = {};
+    for (const key of Object.keys(value).sort()) {
+      if (value[key] !== undefined) {
+        sorted[key] = sortKeysDeep(value[key]);
+      }
+    }
+    return sorted;
+  }
+  return value;
+}
+
+export function normalizeSnapshotForChecksum(snapshot: Record<string, any>): Record<string, any> {
+  const normalized: Record<string, any> = {
+    settings: snapshot?.settings || {},
+  };
+  for (const key of BACKUP_SHEET_COLLECTIONS) {
+    normalized[key] = Array.isArray(snapshot?.[key]) ? snapshot[key] : [];
+  }
+  return sortKeysDeep(normalized);
+}
+
+export async function computeCanonicalSnapshotChecksum(snapshot: Record<string, any>): Promise<string> {
+  return computeSha256Hex(JSON.stringify(normalizeSnapshotForChecksum(snapshot)));
+}
+
 export async function computeSha256Hex(input: string): Promise<string> {
   if (typeof window !== 'undefined' && window.crypto?.subtle) {
     const encoder = new TextEncoder();
     const hashBuffer = await window.crypto.subtle.digest('SHA-256', encoder.encode(input));
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  // Node / test fallback using node:crypto if WebCrypto is missing, else deterministic FNV/Murmur hash
+  if (typeof globalThis !== 'undefined' && (globalThis as any).crypto?.subtle) {
+    const encoder = new TextEncoder();
+    const hashBuffer = await (globalThis as any).crypto.subtle.digest('SHA-256', encoder.encode(input));
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
   }
@@ -366,40 +447,22 @@ export async function computeSha256Hex(input: string): Promise<string> {
   return hash.toString(16).padStart(8, '0');
 }
 
-export async function exportFullWorkbookBackup(snapshot: Record<string, any>, prefix = 'AlMadina_ERP_Backup'): Promise<{
-  fileName: string;
-  checksum: string;
+export function buildBackupWorkbook(snapshot: Record<string, any>): {
+  wb: XLSX.WorkBook;
+  normalizedSnapshot: Record<string, any>;
   recordCount: number;
-}> {
+} {
   const wb = XLSX.utils.book_new();
-  const sheetCollections = [
-    'customers',
-    'suppliers',
-    'employees',
-    'products',
-    'purchases',
-    'purchaseReturns',
-    'sales',
-    'salesReturns',
-    'installments',
-    'accounts',
-    'vouchers',
-    'cheques',
-    'targets',
-    'tasks',
-    'attendance',
-    'visitors',
-    'auditLogs',
-  ];
-
   let recordCount = 0;
-  for (const key of sheetCollections) {
+
+  for (const key of BACKUP_SHEET_COLLECTIONS) {
     const rows = Array.isArray(snapshot[key]) ? snapshot[key] : [];
     recordCount += rows.length;
     const flattened = rows.map((row: any) => {
       const out: Record<string, any> = {};
       for (const [k, v] of Object.entries(row || {})) {
-        out[k] = typeof v === 'object' && v !== null ? JSON.stringify(v) : v;
+        if (v === undefined) continue;
+        out[k] = typeof v === 'object' && v !== null ? JSON.stringify(sortKeysDeep(v)) : v;
       }
       return out;
     });
@@ -407,14 +470,27 @@ export async function exportFullWorkbookBackup(snapshot: Record<string, any>, pr
     XLSX.utils.book_append_sheet(wb, ws, key.slice(0, 31));
   }
 
-  const checksum = await computeSha256Hex(JSON.stringify(snapshot));
+  return {
+    wb,
+    normalizedSnapshot: normalizeSnapshotForChecksum(snapshot),
+    recordCount,
+  };
+}
+
+export async function exportFullWorkbookBackup(snapshot: Record<string, any>, prefix = 'AlMadina_ERP_Backup'): Promise<{
+  fileName: string;
+  checksum: string;
+  recordCount: number;
+}> {
+  const { wb, normalizedSnapshot, recordCount } = buildBackupWorkbook(snapshot);
+  const checksum = await computeCanonicalSnapshotChecksum(normalizedSnapshot);
   const metaSheet = XLSX.utils.json_to_sheet([
     {
       exportedAt: new Date().toISOString(),
       recordCount,
       checksum,
       version: '2.6-enterprise',
-      settingsJson: JSON.stringify(snapshot.settings || {}),
+      settingsJson: JSON.stringify(normalizedSnapshot.settings || {}),
     },
   ]);
   XLSX.utils.book_append_sheet(wb, metaSheet, '_BackupMeta');
@@ -440,15 +516,14 @@ export function exportCollectionToCSV(rows: any[], fileName: string): void {
   URL.revokeObjectURL(url);
 }
 
-export async function parseBackupWorkbookForRestore(file: File): Promise<{
+export async function parseBackupWorkbookBuffer(buffer: ArrayBuffer): Promise<{
   snapshot: Record<string, any>;
   checksum: string;
   expectedChecksum?: string;
   recordCount: number;
 }> {
-  const buffer = await file.arrayBuffer();
   const wb = XLSX.read(buffer, { type: 'array' });
-  const snapshot: Record<string, any> = {};
+  const rawSnapshot: Record<string, any> = {};
   let expectedChecksum: string | undefined;
   let recordCount = 0;
 
@@ -459,7 +534,7 @@ export async function parseBackupWorkbookForRestore(file: File): Promise<{
       if (meta?.checksum) expectedChecksum = String(meta.checksum);
       if (meta?.settingsJson) {
         try {
-          snapshot.settings = JSON.parse(meta.settingsJson);
+          rawSnapshot.settings = JSON.parse(meta.settingsJson);
         } catch {
           // ignore
         }
@@ -485,11 +560,22 @@ export async function parseBackupWorkbookForRestore(file: File): Promise<{
         return obj;
       });
 
-    snapshot[sheetName] = parsedRows;
+    rawSnapshot[sheetName] = parsedRows;
     recordCount += parsedRows.length;
   }
 
-  const checksum = await computeSha256Hex(JSON.stringify(snapshot));
+  const snapshot = normalizeSnapshotForChecksum(rawSnapshot);
+  const checksum = await computeCanonicalSnapshotChecksum(snapshot);
   return { snapshot, checksum, expectedChecksum, recordCount };
+}
+
+export async function parseBackupWorkbookForRestore(file: File): Promise<{
+  snapshot: Record<string, any>;
+  checksum: string;
+  expectedChecksum?: string;
+  recordCount: number;
+}> {
+  const buffer = await file.arrayBuffer();
+  return parseBackupWorkbookBuffer(buffer);
 }
 

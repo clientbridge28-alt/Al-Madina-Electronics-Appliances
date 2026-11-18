@@ -426,22 +426,32 @@ async function startServer() {
       return;
     }
     const { name, email, password, phone = '', role = 'Cashier', customRoleName = '', permissions = {}, mfaEnabled = false } = req.body || {};
-    if (!name || !email) {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const allowedRoles = ['Owner', 'Manager', 'Accountant', 'Cashier', 'StockManager', 'RecoveryOfficer', 'Receptionist', 'Custom'];
+    if (!name || !normalizedEmail) {
       res.status(400).json({ error: 'Staff name and email are required.' });
+      return;
+    }
+    if (!allowedRoles.includes(String(role))) {
+      res.status(400).json({ error: `Invalid staff role "${role}".` });
+      return;
+    }
+    if (role === 'Owner' && normalizedEmail !== CANONICAL_OWNER_EMAIL) {
+      res.status(403).json({ error: `Owner Super Admin role can only be assigned to canonical owner ${CANONICAL_OWNER_EMAIL}.` });
       return;
     }
 
     try {
       let authUser;
       try {
-        authUser = await adminAuth.getUserByEmail(String(email).trim());
+        authUser = await adminAuth.getUserByEmail(normalizedEmail);
       } catch {
         if (!password || String(password).length < 8) {
           res.status(400).json({ error: 'Password (min 8 chars) is required to create a new Firebase Auth account.' });
           return;
         }
         authUser = await adminAuth.createUser({
-          email: String(email).trim(),
+          email: normalizedEmail,
           password: String(password),
           displayName: String(name).trim(),
           emailVerified: false,
@@ -524,6 +534,31 @@ async function startServer() {
     }
   });
 
+  // Helper: deterministic recursive key sort for backup checksum verification
+  function sortKeysDeep(value: any): any {
+    if (Array.isArray(value)) {
+      return value.map(sortKeysDeep);
+    }
+    if (value && typeof value === 'object') {
+      const sorted: Record<string, any> = {};
+      for (const key of Object.keys(value).sort()) {
+        if (value[key] !== undefined) {
+          sorted[key] = sortKeysDeep(value[key]);
+        }
+      }
+      return sorted;
+    }
+    return value;
+  }
+
+  function extractRecordTimestampMs(doc: any): number {
+    if (!doc || typeof doc !== 'object') return 0;
+    const candidate = doc.updatedAt || doc.createdAt || doc.timestamp || doc.lastLogin || doc.date || '';
+    if (!candidate || typeof candidate !== 'string') return 0;
+    const ms = Date.parse(candidate);
+    return Number.isFinite(ms) ? ms : 0;
+  }
+
   // ---------------- OWNER-ONLY DISASTER RECOVERY RESTORE ----------------
   app.post('/api/admin/restore', requireFirebaseAuth, requireOwner, async (req: AuthedRequest, res: Response) => {
     if (!adminDb) {
@@ -531,14 +566,15 @@ async function startServer() {
       return;
     }
 
-    const { snapshot, expectedChecksum } = req.body || {};
+    const { snapshot, expectedChecksum, overwriteNewer = false } = req.body || {};
     if (!snapshot || typeof snapshot !== 'object') {
       res.status(400).json({ error: 'Backup snapshot payload is required.' });
       return;
     }
 
-    const actualChecksum = crypto.createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
-    if (expectedChecksum && expectedChecksum !== actualChecksum) {
+    const rawChecksum = crypto.createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+    const canonicalChecksum = crypto.createHash('sha256').update(JSON.stringify(sortKeysDeep(snapshot))).digest('hex');
+    if (expectedChecksum && expectedChecksum !== canonicalChecksum && expectedChecksum !== rawChecksum) {
       res.status(400).json({ error: 'Backup integrity checksum verification failed. File may be corrupted or tampered.' });
       return;
     }
@@ -550,7 +586,9 @@ async function startServer() {
     ];
 
     try {
-      // 1. Pre-restore backup record
+      const restoreTimestamp = new Date().toISOString();
+
+      // 1. Pre-restore backup integrity record
       const preBackupId = `BKP-PRERESTORE-${Date.now()}`;
       await adminDb.collection('backups').doc(preBackupId).set({
         id: preBackupId,
@@ -558,47 +596,84 @@ async function startServer() {
         type: 'PreRestore',
         format: 'JSON',
         recordCount: Object.values(snapshot).reduce((s: number, v: any) => s + (Array.isArray(v) ? v.length : 0), 0),
-        checksum: actualChecksum,
+        checksum: canonicalChecksum,
         status: 'Verified',
-        createdAt: new Date().toISOString(),
+        createdAt: restoreTimestamp,
         createdBy: req.firebaseUser?.email || 'Owner',
-        notes: 'Automatic pre-restore integrity record',
+        notes: overwriteNewer ? 'Pre-restore record (force overwrite mode)' : 'Pre-restore record (non-destructive merge preserving newer documents)',
       });
 
-      // 2. Write restored documents in bounded batches of 400
+      // 2. Write restored documents in bounded chunks with timestamp conflict protection
       let restoredCount = 0;
+      let createdCount = 0;
+      let overwrittenOlderCount = 0;
+      let skippedNewerCount = 0;
+
       for (const colName of collectionsToRestore) {
         const rows = snapshot[colName];
         if (!Array.isArray(rows)) continue;
 
-        for (let i = 0; i < rows.length; i += 400) {
+        const validItems = rows.filter(item => item && item.id);
+        for (let i = 0; i < validItems.length; i += 400) {
+          const chunk = validItems.slice(i, i + 400);
+          const docRefs = chunk.map(item => adminDb!.collection(colName).doc(String(item.id)));
+          const existingSnaps = docRefs.length > 0 ? await adminDb.getAll(...docRefs) : [];
+
           const batch = adminDb.batch();
-          const chunk = rows.slice(i, i + 400);
-          for (const item of chunk) {
-            if (!item || !item.id) continue;
+          let chunkHasWrites = false;
+
+          chunk.forEach((item, idx) => {
+            const existingSnap = existingSnaps[idx];
+            const incomingMs = extractRecordTimestampMs(item);
+            if (existingSnap && existingSnap.exists && !overwriteNewer) {
+              const existingMs = extractRecordTimestampMs(existingSnap.data());
+              if (existingMs > 0 && existingMs > incomingMs) {
+                skippedNewerCount += 1;
+                return;
+              }
+              overwrittenOlderCount += 1;
+            } else if (!existingSnap || !existingSnap.exists) {
+              createdCount += 1;
+            } else {
+              overwrittenOlderCount += 1;
+            }
+
             const docPayload = {
               ...item,
               orgId: ORG_ID,
               createdByUid: item.createdByUid || req.firebaseUser!.uid,
+              updatedAt: item.updatedAt || restoreTimestamp,
             };
-            batch.set(adminDb.collection(colName).doc(String(item.id)), docPayload);
+            batch.set(docRefs[idx], docPayload, { merge: true });
             restoredCount += 1;
+            chunkHasWrites = true;
+          });
+
+          if (chunkHasWrites) {
+            await batch.commit();
           }
-          await batch.commit();
         }
       }
 
       if (snapshot.settings && typeof snapshot.settings === 'object') {
-        await adminDb.collection('settings').doc('main').set({
-          ...snapshot.settings,
-          orgId: ORG_ID,
-          updatedAt: new Date().toISOString(),
-        }, { merge: true });
+        const settingsRef = adminDb.collection('settings').doc('main');
+        const existingSettingsSnap = await settingsRef.get();
+        const existingSettingsMs = existingSettingsSnap.exists ? extractRecordTimestampMs(existingSettingsSnap.data()) : 0;
+        const incomingSettingsMs = extractRecordTimestampMs(snapshot.settings);
+        if (overwriteNewer || !existingSettingsSnap.exists || existingSettingsMs <= incomingSettingsMs) {
+          await settingsRef.set({
+            ...snapshot.settings,
+            orgId: ORG_ID,
+            updatedAt: snapshot.settings.updatedAt || restoreTimestamp,
+          }, { merge: true });
+        } else {
+          skippedNewerCount += 1;
+        }
       }
 
       const mailRes = await sendSecurityEmail(
         '[Al-Madina ERP] CRITICAL: Disaster Recovery Restore Executed',
-        `<p>Owner <strong>${req.firebaseUser?.email}</strong> restored <strong>${restoredCount}</strong> ERP records. Checksum: <code>${actualChecksum}</code></p>`
+        `<p>Owner <strong>${req.firebaseUser?.email}</strong> restored <strong>${restoredCount}</strong> ERP records (${createdCount} created, ${overwrittenOlderCount} older updated, ${skippedNewerCount} newer records preserved). Checksum: <code>${canonicalChecksum}</code></p>`
       );
 
       await recordServerSecurityEvent({
@@ -607,12 +682,21 @@ async function startServer() {
         actorUid: req.firebaseUser!.uid,
         actorEmail: req.firebaseUser!.email,
         title: 'Disaster Recovery Restore Completed',
-        details: `Restored ${restoredCount} records across showroom collections. SHA-256: ${actualChecksum.slice(0, 16)}...`,
+        details: `Restored ${restoredCount} records (${createdCount} new, ${overwrittenOlderCount} older updated, ${skippedNewerCount} newer preserved). SHA-256: ${canonicalChecksum.slice(0, 16)}...`,
         notifiedOwner: mailRes.sent,
         emailStatus: mailRes.sent ? 'Sent' : mailRes.reason || 'Skipped',
       });
 
-      res.json({ restored: true, restoredCount, checksum: actualChecksum, emailNotification: mailRes });
+      res.json({
+        restored: true,
+        restoredCount,
+        createdCount,
+        overwrittenOlderCount,
+        skippedNewerCount,
+        overwriteNewer: Boolean(overwriteNewer),
+        checksum: canonicalChecksum,
+        emailNotification: mailRes,
+      });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || 'Disaster recovery restore failed.' });
     }

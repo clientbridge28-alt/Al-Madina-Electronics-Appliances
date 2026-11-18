@@ -1,15 +1,23 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   BookOpen, Plus, Search, CheckCircle2, 
   AlertTriangle, DollarSign, ArrowLeftRight, X, Trash2, Layers 
 } from 'lucide-react';
-import { getChartOfAccounts, getVouchers, createVoucher, saveAccountHead } from '../../services/storage';
+import { getChartOfAccounts, getVouchers, createVoucher, saveAccountHead, subscribeToDatabase } from '../../services/storage';
 import { AccountHead, Voucher, VoucherEntry } from '../../types/erp';
 import { Badge } from '../common/Badge';
 
 export const AccountingView: React.FC = () => {
   const [accounts, setAccounts] = useState<AccountHead[]>(getChartOfAccounts());
   const [vouchers, setVouchers] = useState<Voucher[]>(getVouchers());
+  const [voucherError, setVoucherError] = useState<string | null>(null);
+
+  useEffect(() => {
+    return subscribeToDatabase(() => {
+      setAccounts([...getChartOfAccounts()]);
+      setVouchers([...getVouchers()]);
+    });
+  }, []);
 
   const [activeTab, setActiveTab] = useState<'Vouchers' | 'COA'>('Vouchers');
   const [searchQuery, setSearchQuery] = useState('');
@@ -73,27 +81,33 @@ export const AccountingView: React.FC = () => {
 
   const handlePostVoucher = (e: React.FormEvent) => {
     e.preventDefault();
+    setVoucherError(null);
     if (!isBalanced) {
-      alert(`Voucher is unbalanced! Debit (₨ ${totalDebit}) must equal Credit (₨ ${totalCredit})`);
+      setVoucherError(`Voucher is unbalanced! Debit (₨ ${totalDebit.toLocaleString()}) must equal Credit (₨ ${totalCredit.toLocaleString()})`);
       return;
     }
 
     const prefix = voucherType === 'Payment Voucher' ? 'PV' : voucherType === 'Receive Voucher' ? 'RV' : voucherType === 'Contra Voucher' ? 'CV' : 'JV';
     const vNum = `${prefix}-${Date.now().toString().slice(-4)}`;
 
-    createVoucher({
-      voucherNumber: vNum,
-      voucherType,
-      date: voucherDate,
-      amount: totalDebit,
-      narration,
-      entries
-    });
+    try {
+      createVoucher({
+        voucherNumber: vNum,
+        voucherType,
+        date: voucherDate,
+        amount: totalDebit,
+        narration,
+        entries
+      });
 
-    setVouchers(getVouchers());
-    setAccounts(getChartOfAccounts());
-    setShowVoucherModal(false);
-    setNarration('');
+      setVouchers(getVouchers());
+      setAccounts(getChartOfAccounts());
+      setShowVoucherModal(false);
+      setNarration('');
+      setVoucherError(null);
+    } catch (err: any) {
+      setVoucherError(err?.message || 'Failed to post voucher.');
+    }
   };
 
   const handleSaveAccountHead = (e: React.FormEvent) => {
@@ -373,6 +387,13 @@ export const AccountingView: React.FC = () => {
                   ))}
                 </div>
               </div>
+
+              {voucherError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+                  <span>{voucherError}</span>
+                </div>
+              )}
 
               {/* Balancing Indicator */}
               <div className={`p-4 rounded-xl border flex items-center justify-between font-mono text-xs ${

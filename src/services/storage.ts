@@ -134,7 +134,24 @@ let dbCache: ErpDatabase | null = null;
 let cloudActiveUid: string | null = null;
 let cloudActiveUser: User | null = null;
 let cloudInitializedFlags = { settings: false, accounts: false, seededCheckDone: false };
+let lastCloudSyncError: string | null = null;
 const listeners = new Set<() => void>();
+
+export function getLastCloudSyncError(): string | null {
+  return lastCloudSyncError;
+}
+
+export function clearLastCloudSyncError(): void {
+  if (lastCloudSyncError !== null) {
+    lastCloudSyncError = null;
+    notifySubscribers();
+  }
+}
+
+function setCloudSyncError(message: string): void {
+  lastCloudSyncError = message;
+  notifySubscribers();
+}
 
 function notifySubscribers() {
   listeners.forEach(cb => {
@@ -252,6 +269,7 @@ export function clearToProductionEmpty(): void {
 export function setCloudSessionUser(user: User | null): void {
   cloudActiveUser = user;
   cloudActiveUid = user ? (user.uid || user.id) : null;
+  lastCloudSyncError = null;
   if (user && !isDemoMode()) {
     dbCache = buildEmptyProductionDatabase();
   }
@@ -261,6 +279,7 @@ export function setCloudSessionUser(user: User | null): void {
 export function clearCloudSession(): void {
   cloudActiveUser = null;
   cloudActiveUid = null;
+  lastCloudSyncError = null;
   cloudInitializedFlags = { settings: false, accounts: false, seededCheckDone: false };
   if (!isDemoMode()) {
     dbCache = buildEmptyProductionDatabase();
@@ -350,9 +369,16 @@ function getActorUid(): string {
 
 function persistBatchIfLive(ops: BatchWriteOp[]): void {
   if (!isCloudConnected()) return;
-  commitCloudBatch(ops).catch(err => {
-    console.error('Cloud batch persistence error:', err);
-  });
+  commitCloudBatch(ops)
+    .then(() => {
+      if (lastCloudSyncError !== null) {
+        clearLastCloudSyncError();
+      }
+    })
+    .catch(err => {
+      console.error('Cloud batch persistence error:', err);
+      setCloudSyncError(err?.message || 'Cloud Firestore write rejected or offline. Changes were not confirmed in cloud.');
+    });
 }
 
 // ---------------- AUTHENTICATION & USERS ----------------
@@ -451,6 +477,7 @@ export function logAuditAction(module: string, action: string, details: string, 
   const user = getActiveUser();
   const db = getDatabase();
   const uid = getActorUid();
+  const safeDetails = (details || action || 'Audit event').trim().slice(0, 990) || 'Audit event';
   const newLog: AuditLog & { orgId?: string } = {
     id: sanitizeDocId(`AUD-${Date.now()}-${Math.floor(Math.random() * 1000)}`),
     orgId: ORG_ID,
@@ -460,7 +487,7 @@ export function logAuditAction(module: string, action: string, details: string, 
     userRole: user.role,
     module,
     action,
-    details: details.slice(0, 990),
+    details: safeDetails,
     recordId,
   };
   db.auditLogs.unshift(newLog);
@@ -486,7 +513,13 @@ export function getCustomerById(id: string): Customer | undefined {
 export function saveCustomer(customer: Customer): void {
   const db = getDatabase();
   const uid = getActorUid();
-  const payload = { ...customer, id: sanitizeDocId(customer.id), orgId: ORG_ID, createdByUid: (customer as any).createdByUid || uid };
+  const payload = {
+    ...customer,
+    id: sanitizeDocId(customer.id),
+    orgId: ORG_ID,
+    createdByUid: (customer as any).createdByUid || uid,
+    updatedAt: new Date().toISOString(),
+  };
   const idx = db.customers.findIndex(c => c.id === payload.id);
   if (idx >= 0) {
     db.customers[idx] = payload;
@@ -497,6 +530,21 @@ export function saveCustomer(customer: Customer): void {
   }
   saveDatabase(db);
   persistBatchIfLive([{ collection: 'customers', id: payload.id, data: payload }]);
+}
+
+export function deleteCustomer(customerId: string): void {
+  const db = getDatabase();
+  const safeId = sanitizeDocId(customerId);
+  const target = db.customers.find(c => c.id === safeId);
+  db.customers = db.customers.filter(c => c.id !== safeId);
+  saveDatabase(db);
+  if (isCloudConnected()) {
+    deleteCloudDoc('customers', safeId).catch(err => {
+      console.error('Cloud customer deletion error:', err);
+      setCloudSyncError(err?.message || 'Could not delete customer in Cloud Firestore.');
+    });
+  }
+  logAuditAction('Customers', 'Delete Customer', `Deleted customer record: ${target?.name || safeId}`, safeId);
 }
 
 // ---------------- SUPPLIERS ----------------
@@ -512,7 +560,13 @@ export function getSupplierById(id: string): Supplier | undefined {
 export function saveSupplier(supplier: Supplier): void {
   const db = getDatabase();
   const uid = getActorUid();
-  const payload = { ...supplier, id: sanitizeDocId(supplier.id), orgId: ORG_ID, createdByUid: (supplier as any).createdByUid || uid };
+  const payload = {
+    ...supplier,
+    id: sanitizeDocId(supplier.id),
+    orgId: ORG_ID,
+    createdByUid: (supplier as any).createdByUid || uid,
+    updatedAt: new Date().toISOString(),
+  };
   const idx = db.suppliers.findIndex(s => s.id === payload.id);
   if (idx >= 0) {
     db.suppliers[idx] = payload;
@@ -523,6 +577,21 @@ export function saveSupplier(supplier: Supplier): void {
   }
   saveDatabase(db);
   persistBatchIfLive([{ collection: 'suppliers', id: payload.id, data: payload }]);
+}
+
+export function deleteSupplier(supplierId: string): void {
+  const db = getDatabase();
+  const safeId = sanitizeDocId(supplierId);
+  const target = db.suppliers.find(s => s.id === safeId);
+  db.suppliers = db.suppliers.filter(s => s.id !== safeId);
+  saveDatabase(db);
+  if (isCloudConnected()) {
+    deleteCloudDoc('suppliers', safeId).catch(err => {
+      console.error('Cloud supplier deletion error:', err);
+      setCloudSyncError(err?.message || 'Could not delete supplier in Cloud Firestore.');
+    });
+  }
+  logAuditAction('Suppliers', 'Delete Supplier', `Deleted supplier record: ${target?.companyName || safeId}`, safeId);
 }
 
 // ---------------- EMPLOYEES & ATTENDANCE ----------------
@@ -648,17 +717,28 @@ export function getProductById(id: string): Product | undefined {
 
 export function saveProduct(product: Product): void {
   const db = getDatabase();
-  const payload: Product & { orgId?: string } = {
+  const safeId = sanitizeDocId(product.id);
+  const idx = db.products.findIndex(p => p.id === safeId);
+  const normalizedSku = String(product.sku || '').trim().toLowerCase();
+  if (
+    idx < 0 &&
+    normalizedSku &&
+    db.products.some(p => String(p.sku || '').trim().toLowerCase() === normalizedSku)
+  ) {
+    throw new Error(`Duplicate SKU "${product.sku}" already exists in inventory.`);
+  }
+
+  const payload: Product & { orgId?: string; updatedAt?: string } = {
     ...product,
-    id: sanitizeDocId(product.id),
+    id: safeId,
     orgId: ORG_ID,
     purchasePrice: Math.max(0, Number(product.purchasePrice) || 0),
     retailPrice: Math.max(0, Number(product.retailPrice) || 0),
     stockQuantity: Math.max(0, Math.round(Number(product.stockQuantity) || 0)),
     minStockLevel: Math.max(0, Math.round(Number(product.minStockLevel) || 0)),
     warrantyMonths: Math.max(0, Math.round(Number(product.warrantyMonths) || 0)),
+    updatedAt: new Date().toISOString(),
   };
-  const idx = db.products.findIndex(p => p.id === payload.id);
   if (idx >= 0) {
     db.products[idx] = payload;
     logAuditAction('Inventory', 'Update Product', `Updated product: ${payload.name} (SKU: ${payload.sku})`, payload.id);
@@ -670,13 +750,29 @@ export function saveProduct(product: Product): void {
   persistBatchIfLive([{ collection: 'products', id: payload.id, data: payload }]);
 }
 
+export function deleteProduct(productId: string): void {
+  const db = getDatabase();
+  const safeId = sanitizeDocId(productId);
+  const target = db.products.find(p => p.id === safeId);
+  db.products = db.products.filter(p => p.id !== safeId);
+  saveDatabase(db);
+  if (isCloudConnected()) {
+    deleteCloudDoc('products', safeId).catch(err => {
+      console.error('Cloud product deletion error:', err);
+      setCloudSyncError(err?.message || 'Could not delete product in Cloud Firestore.');
+    });
+  }
+  logAuditAction('Inventory', 'Delete Product', `Deleted product: ${target?.name || safeId}`, safeId);
+}
+
 export function adjustProductStock(productId: string, adjustmentQty: number, reason: string): void {
   const db = getDatabase();
   const p = db.products.find(x => x.id === productId);
   if (!p) return;
 
   const oldQty = p.stockQuantity;
-  p.stockQuantity = Math.max(0, p.stockQuantity + adjustmentQty);
+  p.stockQuantity = Math.max(0, Math.round(p.stockQuantity + adjustmentQty));
+  (p as any).updatedAt = new Date().toISOString();
   saveDatabase(db);
   persistBatchIfLive([{ collection: 'products', id: p.id, data: { ...p, orgId: ORG_ID } }]);
   logAuditAction('Inventory', 'Stock Adjustment', `Adjusted stock for ${p.name} from ${oldQty} to ${p.stockQuantity}. Reason: ${reason}`, p.id);
@@ -768,13 +864,21 @@ export function createPurchaseInvoice(invoice: Omit<PurchaseInvoice, 'id' | 'cre
   const db = getDatabase();
   const user = getActiveUser();
   const uid = getActorUid();
+  const safeId = sanitizeDocId(invoice.invoiceNumber || `PINV-${Date.now().toString().slice(-5)}`);
+  const normalizedNo = String(invoice.invoiceNumber || safeId).trim().toLowerCase();
 
-  const newInvoice: PurchaseInvoice & { orgId?: string; createdByUid?: string } = {
+  if (db.purchases.some(p => p.id === safeId || String(p.invoiceNumber || '').trim().toLowerCase() === normalizedNo)) {
+    throw new Error(`Duplicate Purchase Invoice #${invoice.invoiceNumber || safeId} already exists.`);
+  }
+
+  const nowIso = new Date().toISOString();
+  const newInvoice: PurchaseInvoice & { orgId?: string; createdByUid?: string; updatedAt?: string } = {
     ...invoice,
-    id: sanitizeDocId(invoice.invoiceNumber || `PINV-${Date.now().toString().slice(-5)}`),
+    id: safeId,
     orgId: ORG_ID,
     createdByUid: uid,
     createdBy: user.name,
+    updatedAt: nowIso,
   };
 
   const batchOps: BatchWriteOp[] = [{ collection: 'purchases', id: newInvoice.id, data: newInvoice }];
@@ -901,13 +1005,21 @@ export function createSalesInvoice(saleData: Omit<SalesInvoice, 'id' | 'status'>
   const db = getDatabase();
   const user = getActiveUser();
   const uid = getActorUid();
+  const safeId = sanitizeDocId(saleData.invoiceNumber || `INV-${Date.now().toString().slice(-5)}`);
+  const normalizedNo = String(saleData.invoiceNumber || safeId).trim().toLowerCase();
 
-  const newSale: SalesInvoice & { orgId?: string; createdByUid?: string } = {
+  if (db.sales.some(s => s.id === safeId || String(s.invoiceNumber || '').trim().toLowerCase() === normalizedNo)) {
+    throw new Error(`Duplicate Sales Invoice #${saleData.invoiceNumber || safeId} already exists.`);
+  }
+
+  const nowIso = new Date().toISOString();
+  const newSale: SalesInvoice & { orgId?: string; createdByUid?: string; updatedAt?: string } = {
     ...saleData,
-    id: sanitizeDocId(saleData.invoiceNumber || `INV-${Date.now().toString().slice(-5)}`),
+    id: safeId,
     orgId: ORG_ID,
     createdByUid: uid,
     status: 'Completed',
+    updatedAt: nowIso,
   };
 
   const batchOps: BatchWriteOp[] = [{ collection: 'sales', id: newSale.id, data: newSale }];
@@ -1034,14 +1146,16 @@ export function createInstallmentAccount(account: Omit<InstallmentAccount, 'id' 
   const user = getActiveUser();
   const uid = getActorUid();
 
-  const newAccount: InstallmentAccount & { orgId?: string; createdByUid?: string } = {
+  const newAccount: InstallmentAccount & { orgId?: string; createdByUid?: string; updatedAt?: string } = {
     ...account,
     id: sanitizeDocId(account.accountNumber || `INST-${Date.now().toString().slice(-5)}`),
     orgId: ORG_ID,
     createdByUid: uid,
+    durationMonths: Math.max(1, Math.round(Number(account.durationMonths) || 12)),
     totalReceived: account.downPayment,
     remainingBalance: account.totalFinancedPayable,
     status: 'Active',
+    updatedAt: new Date().toISOString(),
   };
 
   const batchOps: BatchWriteOp[] = [{ collection: 'installments', id: newAccount.id, data: newAccount }];
@@ -1638,10 +1752,19 @@ export function getBackupRecords(): BackupRecord[] {
 
 export function addBackupRecord(record: BackupRecord): void {
   const db = getDatabase();
-  db.backups.unshift(record);
+  const normalized: BackupRecord = {
+    ...record,
+    id: sanitizeDocId(record.id),
+    orgId: ORG_ID,
+    recordCount: Math.max(0, Math.round(Number(record.recordCount) || 0)),
+  };
+  db.backups.unshift(normalized);
   saveDatabase(db);
   if (isCloudConnected()) {
-    persistCloudDoc('backups', record.id, record).catch(err => console.warn('Backup metadata write error:', err));
+    persistCloudDoc('backups', normalized.id, normalized).catch(err => {
+      console.warn('Backup metadata write error:', err);
+      setCloudSyncError(err?.message || 'Backup metadata could not be saved to Cloud Firestore.');
+    });
   }
 }
 
@@ -1649,19 +1772,65 @@ export function exportDatabaseJSON(): string {
   return JSON.stringify(getDatabaseSnapshot(), null, 2);
 }
 
-export function importDatabaseJSON(jsonStr: string): boolean {
+function getRecordTimestampMs(doc: any): number {
+  if (!doc || typeof doc !== 'object') return 0;
+  const candidate = doc.updatedAt || doc.createdAt || doc.timestamp || doc.lastLogin || doc.date || '';
+  if (!candidate || typeof candidate !== 'string') return 0;
+  const ms = Date.parse(candidate);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+export function importDatabaseJSON(jsonStr: string, options: { overwriteNewer?: boolean } = {}): boolean {
+  if (isCloudConnected()) {
+    throw new Error('Live Cloud Firestore cannot be overwritten via local JSON import. Use Owner Super Admin -> Disaster Recovery.');
+  }
   try {
     const parsed = JSON.parse(jsonStr) as Partial<ErpDatabase>;
     if (!parsed.products || !parsed.sales || !parsed.customers) {
       throw new Error('Invalid ERP backup file structure');
     }
     const db = getDatabase();
-    Object.assign(db, {
-      ...db,
-      ...parsed,
-    });
+    const overwriteNewer = Boolean(options.overwriteNewer);
+    const arrayKeys: (keyof ErpDatabase)[] = [
+      'customers', 'suppliers', 'employees', 'attendance', 'visitors',
+      'products', 'purchases', 'purchaseReturns', 'sales', 'salesReturns',
+      'installments', 'accounts', 'vouchers', 'cheques', 'targets', 'tasks', 'auditLogs',
+    ];
+
+    for (const key of arrayKeys) {
+      const incomingList = (parsed as any)[key];
+      if (!Array.isArray(incomingList)) continue;
+      const existingList: any[] = Array.isArray((db as any)[key]) ? [...(db as any)[key]] : [];
+      const byId = new Map<string, any>();
+      for (const item of existingList) {
+        if (item?.id) byId.set(String(item.id), item);
+      }
+      for (const item of incomingList) {
+        if (!item?.id) continue;
+        const id = String(item.id);
+        const existingItem = byId.get(id);
+        if (existingItem && !overwriteNewer) {
+          const existingMs = getRecordTimestampMs(existingItem);
+          const incomingMs = getRecordTimestampMs(item);
+          if (existingMs > 0 && existingMs > incomingMs) {
+            continue;
+          }
+        }
+        byId.set(id, item);
+      }
+      (db as any)[key] = Array.from(byId.values());
+    }
+
+    if (parsed.settings && typeof parsed.settings === 'object') {
+      const existingSettingsMs = getRecordTimestampMs(db.settings);
+      const incomingSettingsMs = getRecordTimestampMs(parsed.settings);
+      if (overwriteNewer || existingSettingsMs <= incomingSettingsMs) {
+        db.settings = { ...db.settings, ...parsed.settings };
+      }
+    }
+
     saveDatabase(db);
-    logAuditAction('Backup', 'Database Restored', 'Database restored from uploaded backup file (local state)');
+    logAuditAction('Backup', 'Database Restored', 'Non-destructive timestamp-aware restore completed from backup JSON');
     return true;
   } catch (err) {
     console.error('Import database failed:', err);

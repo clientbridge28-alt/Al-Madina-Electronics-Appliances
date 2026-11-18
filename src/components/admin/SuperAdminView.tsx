@@ -26,7 +26,7 @@ import {
 import type { User } from '../../types/erp';
 import { authorizedApiFetch } from '../../services/firebase';
 import { persistUserSession, updateStaffMemberDoc } from '../../services/firestoreSync';
-import { computeSha256Hex, parseBackupWorkbookForRestore } from '../../services/excelService';
+import { computeCanonicalSnapshotChecksum, parseBackupWorkbookForRestore } from '../../services/excelService';
 
 type AdminTab = 'users' | 'permissions' | 'sessions' | 'events' | 'recovery';
 
@@ -304,7 +304,7 @@ export const SuperAdminView: React.FC = () => {
       if (file.name.toLowerCase().endsWith('.json')) {
         const text = await file.text();
         const parsed = JSON.parse(text);
-        const checksum = await computeSha256Hex(JSON.stringify(parsed));
+        const checksum = await computeCanonicalSnapshotChecksum(parsed);
         const recordCount = Object.values(parsed).reduce<number>(
           (sum, val) => sum + (Array.isArray(val) ? val.length : 0),
           0
@@ -344,6 +344,7 @@ export const SuperAdminView: React.FC = () => {
         body: JSON.stringify({
           snapshot: drParsed.snapshot,
           expectedChecksum: drParsed.expectedChecksum || drParsed.checksum,
+          overwriteNewer: false,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -351,10 +352,10 @@ export const SuperAdminView: React.FC = () => {
         setBanner({ type: 'error', text: data.error || 'Disaster recovery restore failed.' });
         return;
       }
-      logAuditAction('SuperAdmin', 'Disaster Recovery Restore', `Restored ${data.restoredCount} records from ${drParsed.fileName}`);
+      logAuditAction('SuperAdmin', 'Disaster Recovery Restore', `Restored ${data.restoredCount} records (${data.skippedNewerCount || 0} newer preserved) from ${drParsed.fileName}`);
       setBanner({
         type: 'success',
-        text: `Disaster recovery completed: ${data.restoredCount} records restored atomically. SHA-256 verified.`,
+        text: `Disaster recovery completed: ${data.restoredCount} records restored (${data.createdCount || 0} new, ${data.overwrittenOlderCount || 0} older updated, ${data.skippedNewerCount || 0} newer cloud records preserved).`,
       });
       setDrParsed(null);
       setDrConfirmed(false);
@@ -809,7 +810,7 @@ export const SuperAdminView: React.FC = () => {
                   className="mt-0.5 rounded border-rose-300 text-rose-600"
                 />
                 <span>
-                  I understand this will overwrite matching collection documents in Cloud Firestore with the verified snapshot above after Owner re-authentication.
+                  I understand this will restore missing/older documents in Cloud Firestore from the verified snapshot above after Owner re-authentication, while automatically preserving newer cloud documents.
                 </span>
               </label>
 

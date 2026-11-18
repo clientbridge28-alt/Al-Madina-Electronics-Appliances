@@ -106,8 +106,12 @@ export const InventoryView: React.FC = () => {
       serials: []
     };
 
-    saveProduct(newProd);
-    setShowAddModal(false);
+    try {
+      saveProduct(newProd);
+      setShowAddModal(false);
+    } catch (err: any) {
+      setSyncNotice(err?.message || 'Could not save product.');
+    }
   };
 
   // Handle stock adjustment
@@ -122,10 +126,19 @@ export const InventoryView: React.FC = () => {
   // Add individual serial number to product
   const handleAddSerial = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedProduct || !newSerialNo.trim()) return;
+    const trimmed = newSerialNo.trim();
+    if (!selectedProduct || !trimmed) return;
+
+    const existingSerial = (selectedProduct.serials || []).some(
+      s => s.serialNumber.trim().toLowerCase() === trimmed.toLowerCase()
+    );
+    if (existingSerial) {
+      setSyncNotice(`Duplicate serial number "${trimmed}" already registered for ${selectedProduct.name}.`);
+      return;
+    }
 
     const unit: SerialUnit = {
-      serialNumber: newSerialNo.trim(),
+      serialNumber: trimmed,
       productId: selectedProduct.id,
       productName: selectedProduct.name,
       condition: newSerialCondition,

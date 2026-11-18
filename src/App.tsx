@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Lock, Sparkles } from 'lucide-react';
+import { Lock, Sparkles, AlertTriangle, X } from 'lucide-react';
 import { Header } from './components/layout/Header';
 import { Sidebar } from './components/layout/Sidebar';
 import { GlobalSearchModal } from './components/layout/GlobalSearchModal';
@@ -24,7 +24,10 @@ import { AuditBackupView } from './components/audit/AuditBackupView';
 import { SettingsView } from './components/settings/SettingsView';
 import { SuperAdminView } from './components/admin/SuperAdminView';
 
-import { subscribeToDatabase, checkInVisitor, markStaffCheckIn, getEmployees } from './services/storage';
+import {
+  subscribeToDatabase, checkInVisitor, markStaffCheckIn, getEmployees,
+  getLastCloudSyncError, clearLastCloudSyncError
+} from './services/storage';
 import { useAuth } from './context/AuthContext';
 import type { ModulePermissionKey } from './types/rbac';
 
@@ -134,6 +137,22 @@ export default function App() {
             className="px-3 py-1 rounded-lg bg-slate-950 text-white text-[11px] font-bold hover:bg-slate-800 transition"
           >
             Exit to Live Cloud Login
+          </button>
+        </div>
+      )}
+
+      {!isDemoSession && getLastCloudSyncError() && (
+        <div className="bg-rose-700 text-white px-4 py-2 text-xs font-semibold flex items-center justify-between gap-2 no-print">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span>Cloud Firestore Sync Alert: {getLastCloudSyncError()}</span>
+          </div>
+          <button
+            onClick={() => clearLastCloudSyncError()}
+            className="p-1 rounded hover:bg-rose-800"
+            title="Dismiss alert"
+          >
+            <X className="h-4 w-4" />
           </button>
         </div>
       )}
