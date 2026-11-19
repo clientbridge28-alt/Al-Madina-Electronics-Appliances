@@ -45,102 +45,13 @@ jobs:
 
       - name: Validate Production Firebase Configuration
         env:
-          VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY || secrets.VITE_FIREBASE_API_KEY }}
-          VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN || secrets.VITE_FIREBASE_AUTH_DOMAIN }}
-          VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID || secrets.VITE_FIREBASE_PROJECT_ID }}
-          VITE_FIREBASE_STORAGE_BUCKET: ${{ vars.VITE_FIREBASE_STORAGE_BUCKET || secrets.VITE_FIREBASE_STORAGE_BUCKET }}
-          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID || secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
-          VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID || secrets.VITE_FIREBASE_APP_ID }}
-          HAS_VAR_VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY != '' }}
-          HAS_SEC_VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY != '' }}
-          HAS_VAR_VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN != '' }}
-          HAS_SEC_VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN != '' }}
-          HAS_VAR_VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID != '' }}
-          HAS_SEC_VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID != '' }}
-          HAS_VAR_VITE_FIREBASE_STORAGE_BUCKET: ${{ vars.VITE_FIREBASE_STORAGE_BUCKET != '' }}
-          HAS_SEC_VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET != '' }}
-          HAS_VAR_VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID != '' }}
-          HAS_SEC_VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID != '' }}
-          HAS_VAR_VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID != '' }}
-          HAS_SEC_VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID != '' }}
-        run: |
-          node -e '
-            const allVars = [
-              "VITE_FIREBASE_API_KEY",
-              "VITE_FIREBASE_AUTH_DOMAIN",
-              "VITE_FIREBASE_PROJECT_ID",
-              "VITE_FIREBASE_STORAGE_BUCKET",
-              "VITE_FIREBASE_MESSAGING_SENDER_ID",
-              "VITE_FIREBASE_APP_ID",
-            ];
-            const requiredWithoutDefault = [
-              "VITE_FIREBASE_API_KEY",
-              "VITE_FIREBASE_APP_ID",
-              "VITE_FIREBASE_MESSAGING_SENDER_ID",
-            ];
-            const missingAll = [];
-            const missingRequired = [];
-            const errors = [];
-
-            console.log("=== Firebase Environment Variable Audit ===");
-            for (const key of allVars) {
-              const raw = process.env[key] || "";
-              const fromVar = process.env[`HAS_VAR_${key}`] === "true";
-              const fromSec = process.env[`HAS_SEC_${key}`] === "true";
-              const source = fromVar ? "vars" : fromSec ? "secrets" : "missing";
-              const trimmed = raw.trim();
-
-              if (!trimmed) {
-                missingAll.push(key);
-                if (requiredWithoutDefault.includes(key)) {
-                  missingRequired.push(key);
-                }
-                console.log(`- ${key}: MISSING (source: ${source})`);
-                continue;
-              }
-
-              const issues = [];
-              if (trimmed.includes("\"") || trimmed.includes("\x27")) {
-                issues.push("contains quotes");
-              }
-              if (trimmed.endsWith(",")) {
-                issues.push("contains trailing comma");
-              }
-              if (/^YOUR_FIREBASE_|remixed-project-id/.test(trimmed)) {
-                issues.push("placeholder value");
-              }
-              if (key === "VITE_FIREBASE_PROJECT_ID" && trimmed !== "al-madina-electronics") {
-                issues.push(`expected "al-madina-electronics", got "${trimmed}"`);
-              }
-              if (key === "VITE_FIREBASE_AUTH_DOMAIN" && trimmed !== "al-madina-electronics.firebaseapp.com") {
-                issues.push(`expected "al-madina-electronics.firebaseapp.com", got "${trimmed}"`);
-              }
-
-              if (issues.length > 0) {
-                errors.push(`${key} (source: ${source}): ${issues.join(", ")}`);
-                console.log(`- ${key}: INVALID (${issues.join(", ")}) (source: ${source})`);
-              } else {
-                console.log(`- ${key}: SET (source: ${source})`);
-              }
-            }
-
-            if (missingAll.length > 0) {
-              console.log("Missing variables at runtime:", missingAll.join(", "));
-            } else {
-              console.log("Missing variables at runtime: none");
-            }
-
-            if (missingRequired.length > 0) {
-              errors.unshift(
-                `Missing required variables in GitHub Repository Variables/Secrets: ${missingRequired.join(", ")}`
-              );
-            }
-
-            if (errors.length > 0) {
-              console.error("\nValidation failed:\n- " + errors.join("\n- "));
-              process.exit(1);
-            }
-          '
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+        run: node .github/scripts/validate-firebase-env.mjs
 
       - name: Build for GitHub Pages
         run: npm run build
@@ -148,14 +59,8 @@ jobs:
           NODE_ENV: production
           GITHUB_ACTIONS: 'true'
           VITE_BASE: /Al-Madina-Electronics-Appliances/
-          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || secrets.VITE_API_BASE_URL }}
-          VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY || secrets.VITE_FIREBASE_API_KEY }}
-          VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN || secrets.VITE_FIREBASE_AUTH_DOMAIN || 'al-madina-electronics.firebaseapp.com' }}
-          VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID || secrets.VITE_FIREBASE_PROJECT_ID || 'al-madina-electronics' }}
-          VITE_FIREBASE_STORAGE_BUCKET: ${{ vars.VITE_FIREBASE_STORAGE_BUCKET || secrets.VITE_FIREBASE_STORAGE_BUCKET || 'al-madina-electronics.firebasestorage.app' }}
-          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID || secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
-          VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID || secrets.VITE_FIREBASE_APP_ID }}
-          VITE_FIREBASE_DATABASE_ID: ${{ vars.VITE_FIREBASE_DATABASE_ID || secrets.VITE_FIREBASE_DATABASE_ID }}
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL || vars.VITE_API_BASE_URL }}
+          VITE_FIREBASE_DATABASE_ID: ${{ secrets.VITE_FIREBASE_DATABASE_ID || vars.VITE_FIREBASE_DATABASE_ID }}
 
       - name: Verify Production Bundle & SPA Fallback
         run: |

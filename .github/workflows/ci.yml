@@ -34,72 +34,15 @@ jobs:
       - name: Run ERP Unit & Accounting Tests
         run: npm test
 
-      - name: Validate Configured VITE_FIREBASE_* Format
+      - name: Validate Production Firebase Configuration
         env:
-          VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY || secrets.VITE_FIREBASE_API_KEY }}
-          VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN || secrets.VITE_FIREBASE_AUTH_DOMAIN }}
-          VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID || secrets.VITE_FIREBASE_PROJECT_ID }}
-          VITE_FIREBASE_STORAGE_BUCKET: ${{ vars.VITE_FIREBASE_STORAGE_BUCKET || secrets.VITE_FIREBASE_STORAGE_BUCKET }}
-          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID || secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
-          VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID || secrets.VITE_FIREBASE_APP_ID }}
-          HAS_VAR_VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY != '' }}
-          HAS_SEC_VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY != '' }}
-          HAS_VAR_VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN != '' }}
-          HAS_SEC_VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN != '' }}
-          HAS_VAR_VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID != '' }}
-          HAS_SEC_VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID != '' }}
-          HAS_VAR_VITE_FIREBASE_STORAGE_BUCKET: ${{ vars.VITE_FIREBASE_STORAGE_BUCKET != '' }}
-          HAS_SEC_VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET != '' }}
-          HAS_VAR_VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID != '' }}
-          HAS_SEC_VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID != '' }}
-          HAS_VAR_VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID != '' }}
-          HAS_SEC_VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID != '' }}
-        run: |
-          node -e '
-            const keys = [
-              "VITE_FIREBASE_API_KEY",
-              "VITE_FIREBASE_AUTH_DOMAIN",
-              "VITE_FIREBASE_PROJECT_ID",
-              "VITE_FIREBASE_STORAGE_BUCKET",
-              "VITE_FIREBASE_MESSAGING_SENDER_ID",
-              "VITE_FIREBASE_APP_ID",
-            ];
-            const missing = [];
-            const errors = [];
-            for (const key of keys) {
-              const raw = process.env[key] || "";
-              const fromVar = process.env[`HAS_VAR_${key}`] === "true";
-              const fromSec = process.env[`HAS_SEC_${key}`] === "true";
-              const source = fromVar ? "vars" : fromSec ? "secrets" : "missing";
-              const trimmed = raw.trim();
-              if (!trimmed) {
-                missing.push(key);
-                console.log(`- ${key}: MISSING (source: ${source})`);
-                continue;
-              }
-              const keyErrors = [];
-              if (trimmed.includes("\"") || trimmed.includes("\x27")) {
-                keyErrors.push("contains quotes");
-              }
-              if (trimmed.endsWith(",")) {
-                keyErrors.push("contains trailing comma");
-              }
-              if (keyErrors.length > 0) {
-                errors.push(`${key} (source: ${source}): ${keyErrors.join(", ")}`);
-                console.log(`- ${key}: INVALID (${keyErrors.join(", ")}) (source: ${source})`);
-              } else {
-                console.log(`- ${key}: SET (source: ${source})`);
-              }
-            }
-            if (missing.length > 0) {
-              console.log("Missing variables at runtime:", missing.join(", "));
-            }
-            if (errors.length > 0) {
-              console.error("Malformed VITE_FIREBASE_* variables:\n- " + errors.join("\n- "));
-              process.exit(1);
-            }
-            console.log("VITE_FIREBASE_* format check passed.");
-          '
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+        run: node .github/scripts/validate-firebase-env.mjs
 
       - name: Build Production Bundle
         run: npm run build
@@ -107,11 +50,16 @@ jobs:
           NODE_ENV: production
           GITHUB_ACTIONS: 'true'
           VITE_BASE: /Al-Madina-Electronics-Appliances/
-          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || secrets.VITE_API_BASE_URL }}
-          VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY || secrets.VITE_FIREBASE_API_KEY }}
-          VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN || secrets.VITE_FIREBASE_AUTH_DOMAIN || 'al-madina-electronics.firebaseapp.com' }}
-          VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID || secrets.VITE_FIREBASE_PROJECT_ID || 'al-madina-electronics' }}
-          VITE_FIREBASE_STORAGE_BUCKET: ${{ vars.VITE_FIREBASE_STORAGE_BUCKET || secrets.VITE_FIREBASE_STORAGE_BUCKET || 'al-madina-electronics.firebasestorage.app' }}
-          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID || secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
-          VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID || secrets.VITE_FIREBASE_APP_ID }}
-          VITE_FIREBASE_DATABASE_ID: ${{ vars.VITE_FIREBASE_DATABASE_ID || secrets.VITE_FIREBASE_DATABASE_ID }}
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL || vars.VITE_API_BASE_URL }}
+          VITE_FIREBASE_DATABASE_ID: ${{ secrets.VITE_FIREBASE_DATABASE_ID || vars.VITE_FIREBASE_DATABASE_ID }}
+
+      - name: Verify Production Bundle & SPA Fallback
+        run: |
+          test -f dist/index.html && test -f dist/404.html
+          if grep -rq "gen-lang-client-0548186480" dist/; then
+            echo "ERROR: Old sandbox Firebase config (gen-lang-client-0548186480) detected in production bundle!"
+            exit 1
+          fi
+          grep -rq "al-madina-electronics.firebaseapp.com" dist/assets/
+          grep -rq "al-madina-electronics" dist/assets/
+          echo "Production bundle verified cleanly for al-madina-electronics."
