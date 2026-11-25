@@ -15,11 +15,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-and-deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  build:
+    name: Build & Verify GitHub Pages Artifact
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout Source Code
@@ -31,13 +31,8 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      - name: Install Dependencies (Clean Lockfile)
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci --no-audit --no-fund || npm install --no-audit --no-fund
-          else
-            npm install --no-audit --no-fund
-          fi
+      - name: Install Dependencies
+        run: npm ci --no-audit --no-fund
 
       - name: Verify TypeScript Types
         run: npm run lint
@@ -58,6 +53,9 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID || vars.VITE_FIREBASE_APP_ID }}
         run: node .github/scripts/validate-firebase-env.mjs
 
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
+
       - name: Build for GitHub Pages
         run: npm run build
         env:
@@ -69,23 +67,40 @@ jobs:
 
       - name: Verify Production Bundle & SPA Fallback
         run: |
-          test -f dist/index.html && test -f dist/404.html
+          test -f dist/index.html
+          test -f dist/404.html
+          grep -q '/Al-Madina-Electronics-Appliances/assets/' dist/index.html
           if grep -rq "gen-lang-client-0548186480" dist/; then
             echo "ERROR: Old sandbox Firebase config (gen-lang-client-0548186480) detected in production bundle!"
             exit 1
           fi
           grep -rq "al-madina-electronics.firebaseapp.com" dist/assets/
           grep -rq "al-madina-electronics" dist/assets/
-          echo "Production bundle verified cleanly for al-madina-electronics."
-
-      - name: Setup GitHub Pages
-        uses: actions/configure-pages@v5
+          echo "Production bundle verified cleanly for al-madina-electronics under /Al-Madina-Electronics-Appliances/."
 
       - name: Upload GitHub Pages Artifact
+        id: upload-pages-artifact
         uses: actions/upload-pages-artifact@v3
         with:
+          name: github-pages
           path: './dist'
+          retention-days: 1
 
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages

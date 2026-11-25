@@ -22,13 +22,8 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      - name: Install Dependencies (Clean Lockfile)
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci --no-audit --no-fund || npm install --no-audit --no-fund
-          else
-            npm install --no-audit --no-fund
-          fi
+      - name: Install Dependencies
+        run: npm ci --no-audit --no-fund
 
       - name: Verify TypeScript Types
         run: npm run lint
@@ -61,6 +56,7 @@ jobs:
       - name: Verify Production Bundle & SPA Fallback
         run: |
           test -f dist/index.html && test -f dist/404.html
+          grep -q '/Al-Madina-Electronics-Appliances/assets/' dist/index.html
           if grep -rq "gen-lang-client-0548186480" dist/; then
             echo "ERROR: Old sandbox Firebase config (gen-lang-client-0548186480) detected in production bundle!"
             exit 1
