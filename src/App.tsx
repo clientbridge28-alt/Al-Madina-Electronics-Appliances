@@ -3,6 +3,7 @@ import { Lock, AlertTriangle, X } from 'lucide-react';
 import { Header } from './components/layout/Header';
 import { Sidebar } from './components/layout/Sidebar';
 import { GlobalSearchModal } from './components/layout/GlobalSearchModal';
+import { AiAssistantModal } from './components/common/AiAssistantModal';
 import { LoginModal } from './components/auth/LoginModal';
 
 import { DashboardView } from './components/dashboard/DashboardView';
@@ -35,6 +36,7 @@ export default function App() {
   const { status, isOwner, can } = useAuth();
   const [currentModule, setCurrentModule] = useState<string>('dashboard');
   const [showSearchModal, setShowSearchModal] = useState<boolean>(false);
+  const [showAiModal, setShowAiModal] = useState<boolean>(false);
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
   const [, setDbVersion] = useState<number>(0);
 
@@ -86,7 +88,7 @@ export default function App() {
     );
   }
 
-  if (status === 'unauthenticated') {
+  if (status !== 'authenticated') {
     return (
       <div className="min-h-screen bg-slate-950">
         <LoginModal isOpen={true} onClose={() => {}} requireGate={true} />
@@ -149,6 +151,7 @@ export default function App() {
         onOpenQuickVisitor={() => setShowQuickVisitor(true)}
         onOpenQuickAttendance={() => setShowQuickAttendance(true)}
         onOpenLoginModal={() => setShowLoginModal(true)}
+        onOpenAiAssistant={() => setShowAiModal(true)}
       />
 
       {/* Main Body with Sidebar & Dynamic Workspace */}
@@ -205,6 +208,13 @@ export default function App() {
       <GlobalSearchModal
         isOpen={showSearchModal}
         onClose={() => setShowSearchModal(false)}
+        onNavigate={handleNavigate}
+      />
+
+      {/* RBAC-Scoped AI Business Assistant Modal */}
+      <AiAssistantModal
+        isOpen={showAiModal}
+        onClose={() => setShowAiModal(false)}
         onNavigate={handleNavigate}
       />
 
@@ -289,6 +299,7 @@ export default function App() {
                   onChange={e => setSelectedEmpId(e.target.value)}
                   className="w-full rounded-xl border border-slate-200 bg-white p-2.5"
                 >
+                  <option value="">{employees.length === 0 ? 'No employees found' : 'Select Employee...'}</option>
                   {employees.map(e => (
                     <option key={e.id} value={e.id}>{e.name} ({e.designation})</option>
                   ))}

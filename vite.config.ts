@@ -27,10 +27,10 @@ function stripSandboxFirebaseConfigPlugin(shouldStrip: boolean): Plugin {
 }
 
 export default defineConfig(({ command, mode }) => {
-  // Use '/Al-Madina-Electronics-Appliances/' for production GitHub Pages build,
-  // or allow env override with VITE_BASE, and keep '/' for local development
-  const isProduction = mode === 'production' || command === 'build';
-  const base = process.env.VITE_BASE || (isProduction ? '/Al-Madina-Electronics-Appliances/' : '/');
+  // Use '/Al-Madina-Electronics-Appliances/' (or VITE_BASE) only for builds;
+  // keep '/' for local development serve regardless of container VITE_BASE env vars.
+  const isBuild = command === 'build';
+  const base = isBuild ? (process.env.VITE_BASE || '/Al-Madina-Electronics-Appliances/') : '/';
 
   // Strip workspace sandbox firebase-applet-config.json ONLY during external production builds
   // (GitHub Actions CI/Pages or explicit clean VITE_FIREBASE_PROJECT_ID builds for another project),
@@ -56,6 +56,7 @@ export default defineConfig(({ command, mode }) => {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
+      ws: process.env.DISABLE_HMR === 'true' ? false : undefined,
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },

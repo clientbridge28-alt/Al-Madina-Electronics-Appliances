@@ -1,36 +1,58 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { 
-  BookOpen, Plus, Search, CheckCircle2, 
-  AlertTriangle, DollarSign, ArrowLeftRight, X, Trash2, Layers 
+import {
+  Plus, Search, CheckCircle2,
+  AlertTriangle, X, Trash2, Layers, RotateCcw
 } from 'lucide-react';
-import { getChartOfAccounts, getVouchers, createVoucher, saveAccountHead, subscribeToDatabase } from '../../services/storage';
+import {
+  getChartOfAccounts,
+  getVouchers,
+  createVoucher,
+  reverseVoucher,
+  saveAccountHead,
+  getCustomers,
+  getSuppliers,
+  subscribeToDatabase,
+} from '../../services/storage';
 import { AccountHead, Voucher, VoucherEntry } from '../../types/erp';
 import { Badge } from '../common/Badge';
 
 export const AccountingView: React.FC = () => {
   const [accounts, setAccounts] = useState<AccountHead[]>(getChartOfAccounts());
   const [vouchers, setVouchers] = useState<Voucher[]>(getVouchers());
+  const [customers, setCustomers] = useState(getCustomers());
+  const [suppliers, setSuppliers] = useState(getSuppliers());
   const [voucherError, setVoucherError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
     return subscribeToDatabase(() => {
       setAccounts([...getChartOfAccounts()]);
       setVouchers([...getVouchers()]);
+      setCustomers([...getCustomers()]);
+      setSuppliers([...getSuppliers()]);
     });
   }, []);
 
   const [activeTab, setActiveTab] = useState<'Vouchers' | 'COA'>('Vouchers');
   const [searchQuery, setSearchQuery] = useState('');
+  const [voucherTypeFilter, setVoucherTypeFilter] = useState<string>('All');
   const [showVoucherModal, setShowVoucherModal] = useState(false);
   const [showAddAccountModal, setShowAddAccountModal] = useState(false);
+
+  // Reversal modal
+  const [reversingVoucher, setReversingVoucher] = useState<Voucher | null>(null);
+  const [reversalReason, setReversalReason] = useState('');
 
   // New Voucher Form
   const [voucherType, setVoucherType] = useState<Voucher['voucherType']>('Journal Voucher');
   const [voucherDate, setVoucherDate] = useState(new Date().toISOString().split('T')[0]);
   const [narration, setNarration] = useState('');
+  const [partyType, setPartyType] = useState<'General' | 'Customer' | 'Supplier'>('General');
+  const [partyId, setPartyId] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Bank' | 'Cheque' | 'Journal'>('Journal');
   const [entries, setEntries] = useState<VoucherEntry[]>([
     { accountId: accounts[0]?.id || '', accountName: accounts[0]?.name || '', debit: 50000, credit: 0 },
-    { accountId: accounts[1]?.id || '', accountName: accounts[1]?.name || '', debit: 0, credit: 50000 }
+    { accountId: accounts[1]?.id || '', accountName: accounts[1]?.name || '', debit: 0, credit: 50000 },
   ]);
 
   // New Account Form
@@ -39,6 +61,33 @@ export const AccountingView: React.FC = () => {
   const [accCategory, setAccCategory] = useState<AccountHead['category']>('Expense');
   const [accSubCategory, setAccSubCategory] = useState('Operating Expense');
 
+  const filteredVouchers = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return vouchers.filter(v => {
+      const matchType = voucherTypeFilter === 'All' || v.voucherType === voucherTypeFilter;
+      const matchQuery =
+        !q ||
+        v.voucherNumber.toLowerCase().includes(q) ||
+        v.voucherType.toLowerCase().includes(q) ||
+        (v.narration || '').toLowerCase().includes(q) ||
+        (v.partyName || '').toLowerCase().includes(q) ||
+        (v.status || '').toLowerCase().includes(q);
+      return matchType && matchQuery;
+    });
+  }, [vouchers, searchQuery, voucherTypeFilter]);
+
+  const filteredAccounts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return accounts;
+    return accounts.filter(
+      acc =>
+        acc.code.toLowerCase().includes(q) ||
+        acc.name.toLowerCase().includes(q) ||
+        acc.category.toLowerCase().includes(q) ||
+        acc.subCategory.toLowerCase().includes(q)
+    );
+  }, [accounts, searchQuery]);
+
   // Balancing totals
   const totalDebit = entries.reduce((sum, e) => sum + (Number(e.debit) || 0), 0);
   const totalCredit = entries.reduce((sum, e) => sum + (Number(e.credit) || 0), 0);
@@ -46,9 +95,10 @@ export const AccountingView: React.FC = () => {
 
   const handleAddEntryRow = () => {
     const firstAcc = accounts[0];
+    if (!firstAcc) return;
     setEntries([
       ...entries,
-      { accountId: firstAcc.id, accountName: firstAcc.name, debit: 0, credit: 0 }
+      { accountId: firstAcc.id, accountName: firstAcc.name, debit: 0, credit: 0 },
     ]);
   };
 
@@ -83,30 +133,85 @@ export const AccountingView: React.FC = () => {
     e.preventDefault();
     setVoucherError(null);
     if (!isBalanced) {
-      setVoucherError(`Voucher is unbalanced! Debit (₨ ${totalDebit.toLocaleString()}) must equal Credit (₨ ${totalCredit.toLocaleString()})`);
+      setVoucherError(
+        `Voucher is unbalanced! Debit (₨ ${totalDebit.toLocaleString()}) must equal Credit (₨ ${totalCredit.toLocaleString()})`
+      );
       return;
     }
 
-    const prefix = voucherType === 'Payment Voucher' ? 'PV' : voucherType === 'Receive Voucher' ? 'RV' : voucherType === 'Contra Voucher' ? 'CV' : 'JV';
+    let resolvedPartyName: string | undefined;
+    let resolvedPartyType: Voucher['partyType'] | undefined;
+    let resolvedPartyId: string | undefined;
+
+    if (partyType === 'Customer' && partyId) {
+      const c = customers.find(x => x.id === partyId);
+      if (c) {
+        resolvedPartyType = 'Customer';
+        resolvedPartyId = c.id;
+        resolvedPartyName = c.name;
+      }
+    } else if (partyType === 'Supplier' && partyId) {
+      const s = suppliers.find(x => x.id === partyId);
+      if (s) {
+        resolvedPartyType = 'Supplier';
+        resolvedPartyId = s.id;
+        resolvedPartyName = s.companyName;
+      }
+    }
+
+    const prefix =
+      voucherType === 'Payment Voucher'
+        ? 'PV'
+        : voucherType === 'Receive Voucher'
+        ? 'RV'
+        : voucherType === 'Contra Voucher'
+        ? 'CV'
+        : 'JV';
     const vNum = `${prefix}-${Date.now().toString().slice(-4)}`;
 
     try {
-      createVoucher({
+      const created = createVoucher({
         voucherNumber: vNum,
         voucherType,
         date: voucherDate,
+        partyId: resolvedPartyId,
+        partyName: resolvedPartyName,
+        partyType: resolvedPartyType,
+        paymentMethod: paymentMethod === 'Journal' ? undefined : paymentMethod,
         amount: totalDebit,
         narration,
-        entries
+        entries,
       });
 
       setVouchers(getVouchers());
       setAccounts(getChartOfAccounts());
       setShowVoucherModal(false);
       setNarration('');
+      setPartyType('General');
+      setPartyId('');
       setVoucherError(null);
+      setNotice({ type: 'success', text: `Voucher #${created.voucherNumber} posted cleanly to General Ledger.` });
     } catch (err: any) {
       setVoucherError(err?.message || 'Failed to post voucher.');
+    }
+  };
+
+  const handleConfirmReverseVoucher = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reversingVoucher) return;
+    try {
+      const rev = reverseVoucher(reversingVoucher.id, reversalReason.trim() || 'Correction / reversal');
+      setVouchers(getVouchers());
+      setAccounts(getChartOfAccounts());
+      setReversingVoucher(null);
+      setReversalReason('');
+      setNotice({
+        type: 'success',
+        text: `Voucher #${reversingVoucher.voucherNumber} reversed via #${rev.voucherNumber}.`,
+      });
+    } catch (err: any) {
+      setNotice({ type: 'error', text: err?.message || 'Could not reverse voucher.' });
+      setReversingVoucher(null);
     }
   };
 
@@ -120,7 +225,7 @@ export const AccountingView: React.FC = () => {
       name: accName,
       category: accCategory,
       subCategory: accSubCategory,
-      currentBalance: 0
+      currentBalance: 0,
     };
 
     saveAccountHead(newAcc);
@@ -128,6 +233,7 @@ export const AccountingView: React.FC = () => {
     setShowAddAccountModal(false);
     setAccCode('');
     setAccName('');
+    setNotice({ type: 'success', text: `Account head ${newAcc.code} - ${newAcc.name} added.` });
   };
 
   return (
@@ -139,21 +245,21 @@ export const AccountingView: React.FC = () => {
             Accounts, Vouchers & Double-Entry Engine
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Strict debit/credit validation, payment vouchers, receive vouchers & chart of accounts
+            Strict debit/credit validation, party-linked vouchers, reversals & chart of accounts
           </p>
         </div>
 
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowVoucherModal(true)}
-            className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition active:scale-98 shrink-0"
+            className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition active:scale-98 whitespace-nowrap shrink-0"
           >
             <Plus className="h-4 w-4" />
             <span>Create Balanced Voucher</span>
           </button>
           <button
             onClick={() => setShowAddAccountModal(true)}
-            className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-3 py-2.5 text-xs font-semibold text-slate-700 transition"
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-3 py-2.5 text-xs font-semibold text-slate-700 transition whitespace-nowrap shrink-0"
           >
             <Layers className="h-4 w-4" />
             <span>New Account Head</span>
@@ -161,36 +267,77 @@ export const AccountingView: React.FC = () => {
         </div>
       </div>
 
+      {notice && (
+        <div
+          className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+            notice.type === 'error'
+              ? 'bg-rose-50 border-rose-200 text-rose-900'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {notice.type === 'error' ? (
+              <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+            )}
+            <span>{notice.text}</span>
+          </div>
+          <button onClick={() => setNotice(null)} className="text-slate-400 hover:text-slate-700">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* Navigation Tabs */}
-      <div className="rounded-2xl bg-white p-4 border border-slate-200 shadow-2xs flex items-center justify-between">
+      <div className="rounded-2xl bg-white p-4 border border-slate-200 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-1.5 text-xs font-bold">
           <button
             onClick={() => setActiveTab('Vouchers')}
-            className={`px-4 py-1.5 rounded-xl transition ${
-              activeTab === 'Vouchers' ? 'bg-blue-600 text-white shadow-2xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            className={`px-4 py-1.5 rounded-xl transition whitespace-nowrap shrink-0 ${
+              activeTab === 'Vouchers'
+                ? 'bg-blue-600 text-white shadow-2xs'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
             Voucher Register ({vouchers.length})
           </button>
           <button
             onClick={() => setActiveTab('COA')}
-            className={`px-4 py-1.5 rounded-xl transition ${
-              activeTab === 'COA' ? 'bg-blue-600 text-white shadow-2xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            className={`px-4 py-1.5 rounded-xl transition whitespace-nowrap shrink-0 ${
+              activeTab === 'COA'
+                ? 'bg-blue-600 text-white shadow-2xs'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
             Chart of Accounts ({accounts.length})
           </button>
         </div>
 
-        <div className="relative max-w-xs">
-          <Search className="absolute left-3.5 top-2.5 h-4 w-4 text-slate-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Search vouchers or account names..."
-            className="w-full rounded-xl border border-slate-200 pl-10 pr-3.5 py-1.5 text-xs focus:outline-none focus:border-blue-600"
-          />
+        <div className="flex items-center gap-2">
+          {activeTab === 'Vouchers' && (
+            <select
+              value={voucherTypeFilter}
+              onChange={e => setVoucherTypeFilter(e.target.value)}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-blue-600"
+            >
+              <option value="All">All Types</option>
+              <option value="Journal Voucher">Journal Voucher</option>
+              <option value="Payment Voucher">Payment Voucher</option>
+              <option value="Receive Voucher">Receive Voucher</option>
+              <option value="Contra Voucher">Contra Voucher</option>
+            </select>
+          )}
+          <div className="relative max-w-xs">
+            <Search className="absolute left-3.5 top-2.5 h-4 w-4 text-slate-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder={activeTab === 'Vouchers' ? 'Search vouchers, parties...' : 'Search account code or name...'}
+              className="w-full rounded-xl border border-slate-200 pl-10 pr-3.5 py-1.5 text-xs focus:outline-none focus:border-blue-600"
+            />
+          </div>
         </div>
       </div>
 
@@ -208,24 +355,66 @@ export const AccountingView: React.FC = () => {
                   <th className="py-3 px-4">Narration / Description</th>
                   <th className="py-3 px-4 text-right">Amount</th>
                   <th className="py-3 px-4 text-center">Status</th>
+                  <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {vouchers.map(v => (
-                  <tr key={v.id} className="hover:bg-slate-50/60 transition">
-                    <td className="py-3.5 px-4 font-mono font-bold text-blue-700">{v.voucherNumber}</td>
-                    <td className="py-3.5 px-4 font-semibold text-slate-800">{v.voucherType}</td>
-                    <td className="py-3.5 px-4 text-slate-500">{v.date}</td>
-                    <td className="py-3.5 px-4 text-slate-800">{v.partyName || 'General Journal'}</td>
-                    <td className="py-3.5 px-4 text-slate-600 truncate max-w-xs">{v.narration}</td>
-                    <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-900">
-                      ₨ {v.amount.toLocaleString()}
-                    </td>
-                    <td className="py-3.5 px-4 text-center">
-                      <Badge variant="success" size="sm">{v.status}</Badge>
+                {filteredVouchers.map(v => {
+                  const isCancelled = v.status === 'Cancelled' || Boolean(v.reversedByVoucherId);
+                  const isReversalVoucher = Boolean(v.sourceRef?.startsWith('REV-'));
+                  return (
+                    <tr key={v.id} className="hover:bg-slate-50/60 transition">
+                      <td className="py-3.5 px-4 font-mono font-bold text-blue-700">{v.voucherNumber}</td>
+                      <td className="py-3.5 px-4 font-semibold text-slate-800">{v.voucherType}</td>
+                      <td className="py-3.5 px-4 text-slate-500 font-mono tabular-nums">{v.date}</td>
+                      <td className="py-3.5 px-4 text-slate-800">
+                        <span>{v.partyName || 'General Journal'}</span>
+                        {v.partyType && (
+                          <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
+                            {v.partyType}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-600 max-w-xs truncate" title={v.narration}>
+                        {v.narration}
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono tabular-nums font-bold text-slate-900">
+                        ₨ {v.amount.toLocaleString()}
+                      </td>
+                      <td className="py-3.5 px-4 text-center">
+                        <Badge variant={isCancelled ? 'danger' : 'success'} size="sm">
+                          {v.status}
+                        </Badge>
+                      </td>
+                      <td className="py-3.5 px-4 text-right">
+                        {!isCancelled && !isReversalVoucher ? (
+                          <button
+                            onClick={() => {
+                              setReversingVoucher(v);
+                              setReversalReason('');
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-[11px] font-semibold"
+                            title="Post Reversal Voucher"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            <span>Reverse</span>
+                          </button>
+                        ) : (
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            {v.reversedByVoucherId ? `Rev: ${v.reversedByVoucherId}` : isReversalVoucher ? 'Reversal' : '—'}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {filteredVouchers.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="p-8 text-center text-slate-400">
+                      No matching vouchers found.
                     </td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>
@@ -245,26 +434,38 @@ export const AccountingView: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {accounts.map(acc => (
+                {filteredAccounts.map(acc => (
                   <tr key={acc.id} className="hover:bg-slate-50/60 transition">
                     <td className="py-3.5 px-4 font-mono font-bold text-blue-700">{acc.code}</td>
                     <td className="py-3.5 px-4 font-bold text-slate-900">{acc.name}</td>
                     <td className="py-3.5 px-4">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        acc.category === 'Asset' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
-                        acc.category === 'Liability' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
-                        acc.category === 'Income' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
-                        'bg-slate-100 text-slate-700'
-                      }`}>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          acc.category === 'Asset'
+                            ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                            : acc.category === 'Liability'
+                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                            : acc.category === 'Income'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-slate-100 text-slate-700'
+                        }`}
+                      >
                         {acc.category}
                       </span>
                     </td>
                     <td className="py-3.5 px-4 text-slate-500">{acc.subCategory}</td>
-                    <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-900">
+                    <td className="py-3.5 px-4 text-right font-mono tabular-nums font-bold text-slate-900">
                       ₨ {acc.currentBalance.toLocaleString()}
                     </td>
                   </tr>
                 ))}
+                {filteredAccounts.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="p-8 text-center text-slate-400">
+                      No matching account heads found.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -278,7 +479,7 @@ export const AccountingView: React.FC = () => {
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div>
                 <h3 className="text-base font-bold text-slate-900">Create Double-Entry Financial Voucher</h3>
-                <p className="text-xs text-slate-400">Enforces Total Debits = Total Credits balancing rule</p>
+                <p className="text-xs text-slate-400">Enforces Total Debits = Total Credits & party ledger sync</p>
               </div>
               <button onClick={() => setShowVoucherModal(false)} className="text-slate-400 hover:text-slate-600">
                 <X className="h-5 w-5" />
@@ -286,7 +487,7 @@ export const AccountingView: React.FC = () => {
             </div>
 
             <form onSubmit={handlePostVoucher} className="space-y-4 text-xs">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-slate-700 font-semibold mb-1">Voucher Type *</label>
                   <select
@@ -310,6 +511,64 @@ export const AccountingView: React.FC = () => {
                     className="w-full rounded-xl border border-slate-200 p-2.5"
                   />
                 </div>
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Settlement Method</label>
+                  <select
+                    value={paymentMethod}
+                    onChange={e => setPaymentMethod(e.target.value as any)}
+                    className="w-full rounded-xl border border-slate-200 bg-white p-2.5 font-medium"
+                  >
+                    <option value="Journal">Journal / Adjustment</option>
+                    <option value="Cash">Cash</option>
+                    <option value="Bank">Bank Transfer</option>
+                    <option value="Cheque">Cheque</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Party Link (Optional)</label>
+                  <select
+                    value={partyType}
+                    onChange={e => {
+                      setPartyType(e.target.value as any);
+                      setPartyId('');
+                    }}
+                    className="w-full rounded-xl border border-slate-200 bg-white p-2.5 font-medium"
+                  >
+                    <option value="General">General Account Entry</option>
+                    <option value="Customer">Customer (Syncs Receivable Ledger)</option>
+                    <option value="Supplier">Supplier (Syncs Payable Ledger)</option>
+                  </select>
+                </div>
+
+                {partyType !== 'General' && (
+                  <div>
+                    <label className="block text-slate-700 font-semibold mb-1">
+                      Select {partyType} *
+                    </label>
+                    <select
+                      required
+                      value={partyId}
+                      onChange={e => setPartyId(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 bg-white p-2.5 font-medium"
+                    >
+                      <option value="">Choose {partyType}...</option>
+                      {partyType === 'Customer'
+                        ? customers.map(c => (
+                            <option key={c.id} value={c.id}>
+                              {c.name} (Bal: ₨ {c.currentBalance.toLocaleString()})
+                            </option>
+                          ))
+                        : suppliers.map(s => (
+                            <option key={s.id} value={s.id}>
+                              {s.companyName} (Bal: ₨ {s.currentBalance.toLocaleString()})
+                            </option>
+                          ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -347,7 +606,9 @@ export const AccountingView: React.FC = () => {
                           className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs"
                         >
                           {accounts.map(a => (
-                            <option key={a.id} value={a.id}>{a.code} - {a.name}</option>
+                            <option key={a.id} value={a.id}>
+                              {a.code} - {a.name}
+                            </option>
                           ))}
                         </select>
                       </div>
@@ -396,9 +657,13 @@ export const AccountingView: React.FC = () => {
               )}
 
               {/* Balancing Indicator */}
-              <div className={`p-4 rounded-xl border flex items-center justify-between font-mono text-xs ${
-                isBalanced ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-rose-50 border-rose-200 text-rose-900'
-              }`}>
+              <div
+                className={`p-4 rounded-xl border flex items-center justify-between font-mono text-xs ${
+                  isBalanced
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                    : 'bg-rose-50 border-rose-200 text-rose-900'
+                }`}
+              >
                 <div className="flex items-center gap-2">
                   {isBalanced ? (
                     <CheckCircle2 className="h-5 w-5 text-emerald-600" />
@@ -406,13 +671,19 @@ export const AccountingView: React.FC = () => {
                     <AlertTriangle className="h-5 w-5 text-rose-600" />
                   )}
                   <span className="font-sans font-bold">
-                    {isBalanced ? 'Journal is Balanced! (Debits = Credits)' : 'Journal Unbalanced! Adjust entries to balance.'}
+                    {isBalanced
+                      ? 'Journal is Balanced! (Debits = Credits)'
+                      : 'Journal Unbalanced! Adjust entries to balance.'}
                   </span>
                 </div>
 
                 <div className="text-right space-x-4">
-                  <span>Debits: <strong>₨ {totalDebit.toLocaleString()}</strong></span>
-                  <span>Credits: <strong>₨ {totalCredit.toLocaleString()}</strong></span>
+                  <span>
+                    Debits: <strong>₨ {totalDebit.toLocaleString()}</strong>
+                  </span>
+                  <span>
+                    Credits: <strong>₨ {totalCredit.toLocaleString()}</strong>
+                  </span>
                 </div>
               </div>
 
@@ -430,6 +701,55 @@ export const AccountingView: React.FC = () => {
                   className="flex-1 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-bold py-2.5 shadow-sm"
                 >
                   Post Voucher to General Ledger
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Voucher Reversal Confirmation Modal */}
+      {reversingVoucher && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <h3 className="text-sm font-bold text-slate-900">
+                Reverse Voucher #{reversingVoucher.voucherNumber}
+              </h3>
+              <button onClick={() => setReversingVoucher(null)} className="text-slate-400 hover:text-slate-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-600">
+              This will mark voucher <strong>{reversingVoucher.voucherNumber}</strong> (₨{' '}
+              {reversingVoucher.amount.toLocaleString()}) as Cancelled and post an equal opposite reversal voucher to the
+              General Ledger.
+            </p>
+            <form onSubmit={handleConfirmReverseVoucher} className="space-y-3 text-xs">
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">Reversal Reason *</label>
+                <input
+                  type="text"
+                  required
+                  value={reversalReason}
+                  onChange={e => setReversalReason(e.target.value)}
+                  placeholder="e.g. Posted against incorrect expense head"
+                  className="w-full rounded-xl border border-slate-200 p-2.5 focus:outline-none focus:border-blue-600"
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setReversingVoucher(null)}
+                  className="flex-1 rounded-xl border border-slate-200 py-2 font-medium text-slate-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 rounded-xl bg-rose-600 hover:bg-rose-700 py-2 font-bold text-white"
+                >
+                  Confirm & Post Reversal
                 </button>
               </div>
             </form>
@@ -467,19 +787,31 @@ export const AccountingView: React.FC = () => {
                 />
               </div>
 
-              <div>
-                <label className="block text-slate-700 font-semibold mb-1">Category</label>
-                <select
-                  value={accCategory}
-                  onChange={e => setAccCategory(e.target.value as any)}
-                  className="w-full rounded-xl border border-slate-200 bg-white p-2.5"
-                >
-                  <option value="Expense">Expense</option>
-                  <option value="Income">Income</option>
-                  <option value="Asset">Asset</option>
-                  <option value="Liability">Liability</option>
-                  <option value="Equity">Equity</option>
-                </select>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Category</label>
+                  <select
+                    value={accCategory}
+                    onChange={e => setAccCategory(e.target.value as any)}
+                    className="w-full rounded-xl border border-slate-200 bg-white p-2.5"
+                  >
+                    <option value="Expense">Expense</option>
+                    <option value="Income">Income</option>
+                    <option value="Asset">Asset</option>
+                    <option value="Liability">Liability</option>
+                    <option value="Equity">Equity</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Sub-Category</label>
+                  <input
+                    type="text"
+                    value={accSubCategory}
+                    onChange={e => setAccSubCategory(e.target.value)}
+                    placeholder="Operating Expense"
+                    className="w-full rounded-xl border border-slate-200 p-2.5"
+                  />
+                </div>
               </div>
 
               <div className="flex gap-2 pt-2">

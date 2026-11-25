@@ -1,6 +1,14 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { ShowroomSettings, SalesInvoice, Product, InstallmentAccount, AccountHead } from '../types/erp';
+import {
+  ShowroomSettings,
+  SalesInvoice,
+  Product,
+  InstallmentAccount,
+  BalanceSheetReport,
+  CashBankBookRow,
+  GeneralLedgerRow,
+} from '../types/erp';
 
 /**
  * Adds an official showroom header and styling to a PDF document
@@ -391,3 +399,119 @@ export function exportAccountStatementPDF(
   addDocFooter(doc);
   doc.save(`${entityName.replace(/\s+/g, '_')}_Statement_${new Date().toISOString().split('T')[0]}.pdf`);
 }
+
+export function exportBalanceSheetPDF(bs: BalanceSheetReport, settings?: ShowroomSettings) {
+  const doc = new jsPDF();
+  addDocHeader(
+    doc,
+    'BALANCE SHEET STATEMENT (STATEMENT OF FINANCIAL POSITION)',
+    `Assets = Liabilities + Equity (${bs.isBalanced ? 'Balanced' : 'Review Required'})`,
+    settings
+  );
+
+  const body: (string | number)[][] = [
+    ['ASSETS', '', ''],
+    ...bs.assets.map(a => [a.code, a.name, `PKR ${a.balance.toLocaleString()}`]),
+    ['TOTAL ASSETS', '', `PKR ${bs.assetsTotal.toLocaleString()}`],
+    ['LIABILITIES', '', ''],
+    ...bs.liabilities.map(l => [l.code, l.name, `PKR ${l.balance.toLocaleString()}`]),
+    ['TOTAL LIABILITIES', '', `PKR ${bs.liabilitiesTotal.toLocaleString()}`],
+    ['EQUITY & RETAINED EARNINGS', '', ''],
+    ...bs.equity.map(eq => [eq.code, eq.name, `PKR ${eq.balance.toLocaleString()}`]),
+    ['NET', 'Current Period Net Income / (Loss)', `PKR ${bs.netIncome.toLocaleString()}`],
+    ['TOTAL LIABILITIES + EQUITY', '', `PKR ${bs.liabilitiesAndEquityTotal.toLocaleString()}`],
+  ];
+
+  autoTable(doc, {
+    startY: 44,
+    head: [['Code', 'Account Head / Financial Position', 'Balance (PKR)']],
+    body,
+    theme: 'grid',
+    headStyles: { fillColor: [30, 41, 59], fontSize: 8.5, fontStyle: 'bold' },
+    styles: { fontSize: 8, cellPadding: 2.5 },
+    columnStyles: {
+      2: { halign: 'right', fontStyle: 'bold' },
+    },
+  });
+
+  addDocFooter(doc);
+  doc.save(`BalanceSheet_${new Date().toISOString().split('T')[0]}.pdf`);
+}
+
+export function exportCashBankBookPDF(title: string, rows: CashBankBookRow[], settings?: ShowroomSettings) {
+  const doc = new jsPDF();
+  addDocHeader(doc, title.toUpperCase(), `${rows.length} cash/bank ledger postings`, settings);
+
+  const totalIn = rows.reduce((s, r) => s + r.receiptDebit, 0);
+  const totalOut = rows.reduce((s, r) => s + r.paymentCredit, 0);
+  const closing = rows.length > 0 ? rows[rows.length - 1].runningBalance : 0;
+
+  autoTable(doc, {
+    startY: 44,
+    head: [['Date', 'Voucher #', 'Party / Narration', 'Receipt Dr (PKR)', 'Payment Cr (PKR)', 'Balance (PKR)']],
+    body: rows.map(r => [
+      r.date,
+      r.voucherNo,
+      `${r.partyName} — ${r.narration}`.slice(0, 60),
+      r.receiptDebit > 0 ? `PKR ${r.receiptDebit.toLocaleString()}` : '—',
+      r.paymentCredit > 0 ? `PKR ${r.paymentCredit.toLocaleString()}` : '—',
+      `PKR ${r.runningBalance.toLocaleString()}`,
+    ]),
+    foot: [[
+      'TOTALS',
+      '',
+      '',
+      `PKR ${totalIn.toLocaleString()}`,
+      `PKR ${totalOut.toLocaleString()}`,
+      `PKR ${closing.toLocaleString()}`,
+    ]],
+    theme: 'striped',
+    headStyles: { fillColor: [15, 118, 110], fontSize: 8, fontStyle: 'bold' },
+    footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontSize: 8, fontStyle: 'bold' },
+    styles: { fontSize: 7.5, cellPadding: 2 },
+    columnStyles: {
+      3: { halign: 'right' },
+      4: { halign: 'right' },
+      5: { halign: 'right', fontStyle: 'bold' },
+    },
+  });
+
+  addDocFooter(doc);
+  doc.save(`${title.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`);
+}
+
+export function exportGeneralLedgerPDF(rows: GeneralLedgerRow[], settings?: ShowroomSettings) {
+  const doc = new jsPDF();
+  addDocHeader(doc, 'GENERAL LEDGER (GL) DETAIL', `${rows.length} double-entry postings`, settings);
+
+  const totalDr = rows.reduce((s, r) => s + r.debit, 0);
+  const totalCr = rows.reduce((s, r) => s + r.credit, 0);
+
+  autoTable(doc, {
+    startY: 44,
+    head: [['Date', 'Voucher #', 'Account Head', 'Narration', 'Debit', 'Credit', 'Balance']],
+    body: rows.map(r => [
+      r.date,
+      r.voucherNo,
+      `${r.accountCode} ${r.accountName}`.slice(0, 32),
+      r.narration.slice(0, 36),
+      r.debit > 0 ? r.debit.toLocaleString() : '—',
+      r.credit > 0 ? r.credit.toLocaleString() : '—',
+      r.runningBalance.toLocaleString(),
+    ]),
+    foot: [['TOTALS', '', '', '', `PKR ${totalDr.toLocaleString()}`, `PKR ${totalCr.toLocaleString()}`, '']],
+    theme: 'striped',
+    headStyles: { fillColor: [30, 58, 138], fontSize: 7.5, fontStyle: 'bold' },
+    footStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontSize: 7.5, fontStyle: 'bold' },
+    styles: { fontSize: 7, cellPadding: 1.8 },
+    columnStyles: {
+      4: { halign: 'right' },
+      5: { halign: 'right' },
+      6: { halign: 'right', fontStyle: 'bold' },
+    },
+  });
+
+  addDocFooter(doc);
+  doc.save(`GeneralLedger_${new Date().toISOString().split('T')[0]}.pdf`);
+}
+

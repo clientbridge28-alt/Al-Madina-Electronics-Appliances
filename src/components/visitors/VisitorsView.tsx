@@ -29,8 +29,18 @@ export const VisitorsView: React.FC = () => {
   const [visPhone, setVisPhone] = useState('');
   const [visCnic, setVisCnic] = useState('');
   const [visPurpose, setVisPurpose] = useState<VisitorRecord['purpose']>('Product Inquiry');
-  const [visHost, setVisHost] = useState(employees[1]?.name || 'Showroom Sales Staff');
+  const [visHost, setVisHost] = useState(() => {
+    const emp = employees[1] || employees[0];
+    return emp ? `${emp.name} (${emp.designation})` : 'Showroom Sales Staff';
+  });
   const [visRemarks, setVisRemarks] = useState('');
+
+  useEffect(() => {
+    if ((!visHost || visHost === 'Showroom Sales Staff') && employees.length > 0) {
+      const emp = employees[1] || employees[0];
+      setVisHost(`${emp.name} (${emp.designation})`);
+    }
+  }, [employees.length, visHost]);
 
   const todayStr = new Date().toISOString().split('T')[0];
 
@@ -271,11 +281,15 @@ export const VisitorsView: React.FC = () => {
                   onChange={e => setVisHost(e.target.value)}
                   className="w-full rounded-xl border border-slate-200 bg-white p-2.5"
                 >
-                  {employees.map(e => (
-                    <option key={e.id} value={`${e.name} (${e.designation})`}>
-                      {e.name} ({e.designation})
-                    </option>
-                  ))}
+                  {employees.length === 0 ? (
+                    <option value="Showroom Sales Staff">Showroom Sales Staff</option>
+                  ) : (
+                    employees.map(e => (
+                      <option key={e.id} value={`${e.name} (${e.designation})`}>
+                        {e.name} ({e.designation})
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
 

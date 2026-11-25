@@ -1,22 +1,25 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Search, Barcode, ShoppingCart, Trash2, Plus, Minus, 
   User, CheckCircle2, AlertCircle, RotateCcw, 
-  Printer, CreditCard, Banknote, ShieldAlert, X, Receipt
+  Printer, CreditCard, Banknote, ShieldAlert, X, Receipt, Eye
 } from 'lucide-react';
 import { 
   getProducts, getCustomers, getSales, getSalesReturns,
-  createSalesInvoice, createSalesReturn,
+  createSalesInvoice, createSalesReturn, logAuditAction,
   saveCustomer, getActiveUser, getSettings, subscribeToDatabase 
 } from '../../services/storage';
 import { Product, Customer, SaleItem, SalesInvoice, SalesReturnItem } from '../../types/erp';
 import { InvoicePrintModal } from './InvoicePrintModal';
+import { POSReceiptPrintLayout } from './POSReceiptPrintLayout';
+import { useAuth } from '../../context/AuthContext';
 
 interface POSBillingViewProps {
   initialSearchId?: string;
 }
 
 export const POSBillingView: React.FC<POSBillingViewProps> = () => {
+  const { isOwner } = useAuth();
   const [, setDbTick] = useState(0);
   useEffect(() => subscribeToDatabase(() => setDbTick(t => t + 1)), []);
 
@@ -29,6 +32,7 @@ export const POSBillingView: React.FC<POSBillingViewProps> = () => {
 
   const [activeTab, setActiveTab] = useState<'pos' | 'invoices' | 'returns'>('pos');
   const [notice, setNotice] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
+  const [allowNegativeOverride, setAllowNegativeOverride] = useState(false);
 
   // Sales Return modal state
   const [showReturnModal, setShowReturnModal] = useState(false);
@@ -57,9 +61,32 @@ export const POSBillingView: React.FC<POSBillingViewProps> = () => {
   const [amountPaid, setAmountPaid] = useState<number>(0);
   const [salesNotes, setSalesNotes] = useState('');
 
-  // Invoice Print Modal State
+  // Invoice Print State (Preview modal + dedicated direct print layout)
   const [lastInvoice, setLastInvoice] = useState<SalesInvoice | null>(null);
   const [showPrintModal, setShowPrintModal] = useState(false);
+  const [directPrintInvoice, setDirectPrintInvoice] = useState<SalesInvoice | null>(null);
+  const [directPrintFormat, setDirectPrintFormat] = useState<'A4' | 'Thermal'>(settings.printFormat || 'A4');
+
+  useEffect(() => {
+    setDirectPrintFormat(settings.printFormat || 'A4');
+  }, [settings.printFormat]);
+
+  const handleDirectPrint = (invoice: SalesInvoice, format?: 'A4' | 'Thermal') => {
+    const chosenFormat = format || directPrintFormat || settings.printFormat || 'A4';
+    setDirectPrintInvoice(invoice);
+    setDirectPrintFormat(chosenFormat);
+    logAuditAction(
+      'Sales & POS',
+      'Print Sales Receipt',
+      `Direct printed ${chosenFormat} receipt for Invoice #${invoice.invoiceNumber}`,
+      invoice.id
+    );
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.print();
+      });
+    });
+  };
 
   // Categories list
   const categories = useMemo(() => {
@@ -97,7 +124,8 @@ export const POSBillingView: React.FC<POSBillingViewProps> = () => {
 
   // Add product to cart
   const addToCart = (product: Product) => {
-    if (product.stockQuantity <= 0) {
+    const canOverride = isOwner && allowNegativeOverride;
+    if (product.stockQuantity <= 0 && !canOverride) {
       setNotice({ type: 'error', text: `Cannot add ${product.name}: Out of Stock!` });
       return;
     }
@@ -105,7 +133,7 @@ export const POSBillingView: React.FC<POSBillingViewProps> = () => {
     setCartItems(prev => {
       const existing = prev.find(item => item.productId === product.id);
       if (existing) {
-        if (existing.quantity >= product.stockQuantity) {
+        if (existing.quantity >= product.stockQuantity && !canOverride) {
           setNotice({ type: 'error', text: `Cannot add more than available stock (${product.stockQuantity} units)` });
           return prev;
         }
@@ -137,13 +165,14 @@ export const POSBillingView: React.FC<POSBillingViewProps> = () => {
 
   // Update item quantity
   const updateQuantity = (productId: string, delta: number) => {
+    const canOverride = isOwner && allowNegativeOverride;
     setCartItems(prev => {
       return prev.map(item => {
         if (item.productId === productId) {
           const prod = products.find(p => p.id === productId);
           const newQty = item.quantity + delta;
           if (newQty <= 0) return null;
-          if (prod && newQty > prod.stockQuantity) {
+          if (prod && newQty > prod.stockQuantity && !canOverride) {
             setNotice({ type: 'error', text: `Stock limit reached! Max available: ${prod.stockQuantity}` });
             return item;
           }
@@ -236,34 +265,57 @@ export const POSBillingView: React.FC<POSBillingViewProps> = () => {
     const invNum = `${settings.invoicePrefix}${Date.now().toString().slice(-5)}`;
     const today = new Date().toISOString().split('T')[0];
 
-    const newInvoice = createSalesInvoice({
-      invoiceNumber: invNum,
-      customerId: selectedCust.id,
-      customerName: selectedCust.name,
-      customerPhone: selectedCust.phone,
-      saleType,
-      date: today,
-      items: cartItems,
-      subTotal,
-      discount: discountAmount,
-      tax: 0,
-      grandTotal,
-      paidAmount: Math.min(amountPaid, grandTotal),
-      changeAmount: changeDue,
-      remainingBalance,
-      paymentMethod,
-      salesPerson: currentUser.name,
-      notes: salesNotes
-    });
+    try {
+      const newInvoice = createSalesInvoice(
+        {
+          invoiceNumber: invNum,
+          customerId: selectedCust.id,
+          customerName: selectedCust.name,
+          customerPhone: selectedCust.phone,
+          saleType,
+          date: today,
+          items: cartItems,
+          subTotal,
+          discount: discountAmount,
+          tax: 0,
+          grandTotal,
+          paidAmount: Math.min(amountPaid, grandTotal),
+          changeAmount: changeDue,
+          remainingBalance,
+          paymentMethod,
+          salesPerson: currentUser.name,
+          notes: salesNotes
+        },
+        { allowNegativeStock: isOwner && allowNegativeOverride }
+      );
 
-    setLastInvoice(newInvoice);
-    setShowPrintModal(true);
-    setNotice({ type: 'success', text: `Invoice #${newInvoice.invoiceNumber} posted & stock/accounting updated.` });
+      setLastInvoice(newInvoice);
+      setDirectPrintInvoice(newInvoice);
+      setShowPrintModal(true);
+      setNotice({ type: 'success', text: `Invoice #${newInvoice.invoiceNumber} posted & stock/accounting updated.` });
 
-    setCartItems([]);
-    setDiscountAmount(0);
-    setSalesNotes('');
+      setCartItems([]);
+      setDiscountAmount(0);
+      setSalesNotes('');
+      setAllowNegativeOverride(false);
+    } catch (err: any) {
+      setNotice({ type: 'error', text: err?.message || 'Could not post sales invoice.' });
+    }
   };
+
+  const checkoutRef = useRef(handleCheckout);
+  checkoutRef.current = handleCheckout;
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F9' && activeTab === 'pos' && cartItems.length > 0 && !showNewCustomerModal && !showReturnModal && !showPrintModal) {
+        e.preventDefault();
+        checkoutRef.current();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeTab, cartItems.length, showNewCustomerModal, showReturnModal, showPrintModal]);
 
   const handleOpenReturnModal = (presetSale?: SalesInvoice) => {
     const targetSale = presetSale || salesList.find(s => s.status !== 'Returned');
@@ -317,26 +369,32 @@ export const POSBillingView: React.FC<POSBillingViewProps> = () => {
       return;
     }
     const total = validItems.reduce((sum, i) => sum + i.total, 0);
-    const created = createSalesReturn({
-      returnNumber: `SRTN-${Date.now().toString().slice(-5)}`,
-      originalInvoiceNo: orig.invoiceNumber,
-      customerId: orig.customerId,
-      customerName: orig.customerName,
-      date: new Date().toISOString().split('T')[0],
-      items: validItems,
-      grandTotal: total,
-      refundMethod: returnMethod,
-      remarks: returnRemarks,
-    });
-    setShowReturnModal(false);
-    setActiveTab('returns');
-    setNotice({ type: 'success', text: `Sales Return #${created.returnNumber} processed (PKR ${created.grandTotal.toLocaleString()}). Inventory & vouchers updated.` });
+    try {
+      const created = createSalesReturn({
+        returnNumber: `SRTN-${Date.now().toString().slice(-5)}`,
+        originalInvoiceNo: orig.invoiceNumber,
+        customerId: orig.customerId,
+        customerName: orig.customerName,
+        date: new Date().toISOString().split('T')[0],
+        items: validItems,
+        grandTotal: total,
+        refundMethod: returnMethod,
+        remarks: returnRemarks,
+      });
+      setShowReturnModal(false);
+      setActiveTab('returns');
+      setNotice({ type: 'success', text: `Sales Return #${created.returnNumber} processed (PKR ${created.grandTotal.toLocaleString()}). Inventory & vouchers updated.` });
+    } catch (err: any) {
+      setNotice({ type: 'error', text: err?.message || 'Could not process sales return.' });
+    }
   };
+
+  const activePrintTarget = directPrintInvoice || lastInvoice || salesList[0] || null;
 
   return (
     <div className="space-y-4">
       {/* Top Mode Tabs */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 no-print">
         <div className="flex items-center gap-2">
           <button
             onClick={() => setActiveTab('pos')}
@@ -364,17 +422,52 @@ export const POSBillingView: React.FC<POSBillingViewProps> = () => {
           </button>
         </div>
 
-        <button
-          onClick={() => handleOpenReturnModal()}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 px-3.5 py-2 text-xs font-bold text-rose-800"
-        >
-          <RotateCcw className="h-3.5 w-3.5" />
-          <span>Process Sales Return</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {lastInvoice && (
+            <div className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50/70 px-2.5 py-1.5 text-[11px]">
+              <span className="font-mono font-bold text-blue-800">Last: #{lastInvoice.invoiceNumber}</span>
+              <button
+                type="button"
+                onClick={() => setShowPrintModal(true)}
+                className="inline-flex items-center gap-1 rounded-lg bg-white border border-blue-200 px-2 py-1 font-semibold text-blue-700 hover:bg-blue-100/60"
+                title="Preview Invoice"
+              >
+                <Eye className="h-3 w-3" />
+                <span>Preview</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDirectPrint(lastInvoice, 'Thermal')}
+                className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-2 py-1 font-semibold text-white hover:bg-blue-700"
+                title="Print 80mm Thermal Receipt"
+              >
+                <Printer className="h-3 w-3" />
+                <span>80mm</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDirectPrint(lastInvoice, 'A4')}
+                className="inline-flex items-center gap-1 rounded-lg bg-slate-800 px-2 py-1 font-semibold text-white hover:bg-slate-900"
+                title="Print A4 Sales Invoice"
+              >
+                <Printer className="h-3 w-3" />
+                <span>A4</span>
+              </button>
+            </div>
+          )}
+
+          <button
+            onClick={() => handleOpenReturnModal()}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 px-3.5 py-2 text-xs font-bold text-rose-800"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            <span>Process Sales Return</span>
+          </button>
+        </div>
       </div>
 
       {notice && (
-        <div className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+        <div className={`p-3 rounded-xl border text-xs flex items-center justify-between no-print ${
           notice.type === 'error' ? 'bg-rose-50 border-rose-200 text-rose-900' : 'bg-emerald-50 border-emerald-200 text-emerald-900'
         }`}>
           <div className="flex items-center gap-2">
@@ -386,7 +479,7 @@ export const POSBillingView: React.FC<POSBillingViewProps> = () => {
       )}
 
       {activeTab === 'invoices' && (
-        <div className="rounded-2xl bg-white border border-slate-200 shadow-2xs overflow-hidden">
+        <div className="rounded-2xl bg-white border border-slate-200 shadow-2xs overflow-hidden no-print">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-[10px] border-b border-slate-200">
@@ -415,12 +508,20 @@ export const POSBillingView: React.FC<POSBillingViewProps> = () => {
                         inv.status === 'Returned' ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
                       }`}>{inv.status}</span>
                     </td>
-                    <td className="p-3.5 text-right space-x-2">
+                    <td className="p-3.5 text-right space-x-1.5 whitespace-nowrap">
                       <button
                         onClick={() => { setLastInvoice(inv); setShowPrintModal(true); }}
                         className="px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-slate-100 font-semibold text-[11px]"
                       >
-                        Print Slip
+                        Preview
+                      </button>
+                      <button
+                        onClick={() => handleDirectPrint(inv)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-[11px]"
+                        title={`Print ${settings.printFormat || 'A4'} Receipt`}
+                      >
+                        <Printer className="h-3 w-3" />
+                        <span>Print</span>
                       </button>
                       {inv.status !== 'Returned' && (
                         <button
@@ -443,7 +544,7 @@ export const POSBillingView: React.FC<POSBillingViewProps> = () => {
       )}
 
       {activeTab === 'returns' && (
-        <div className="rounded-2xl bg-white border border-slate-200 shadow-2xs overflow-hidden">
+        <div className="rounded-2xl bg-white border border-slate-200 shadow-2xs overflow-hidden no-print">
           <div className="p-4 border-b border-slate-100 flex items-center justify-between">
             <div>
               <h3 className="text-sm font-bold text-slate-900">Sales Returns & Customer Refund Register</h3>
@@ -491,7 +592,7 @@ export const POSBillingView: React.FC<POSBillingViewProps> = () => {
       )}
 
       {activeTab === 'pos' && (
-    <div className="flex flex-col lg:flex-row gap-5 h-full">
+    <div className="flex flex-col lg:flex-row gap-5 h-full no-print">
       {/* LEFT COLUMN: Product Catalog & Fast Barcode Search */}
       <div className="flex-1 flex flex-col space-y-4">
         {/* Barcode & Search Controls */}
@@ -551,15 +652,16 @@ export const POSBillingView: React.FC<POSBillingViewProps> = () => {
           {filteredProducts.map(p => {
             const isOutOfStock = p.stockQuantity <= 0;
             const isLowStock = p.stockQuantity <= p.minStockLevel && !isOutOfStock;
+            const canAdd = !isOutOfStock || (isOwner && allowNegativeOverride);
 
             return (
               <div
                 key={p.id}
-                onClick={() => !isOutOfStock && addToCart(p)}
-                className={`relative flex flex-col justify-between p-3.5 rounded-2xl border transition text-left cursor-pointer ${
-                  isOutOfStock
+                onClick={() => canAdd && addToCart(p)}
+                className={`relative flex flex-col justify-between p-3.5 rounded-2xl border transition text-left ${
+                  !canAdd
                     ? 'bg-slate-50 border-slate-200 opacity-60 cursor-not-allowed'
-                    : 'bg-white border-slate-200 hover:border-blue-400 hover:shadow-md hover:bg-blue-50/20 active:scale-99'
+                    : 'bg-white border-slate-200 hover:border-blue-400 hover:shadow-md hover:bg-blue-50/20 cursor-pointer active:scale-99'
                 }`}
               >
                 <div>
@@ -594,7 +696,7 @@ export const POSBillingView: React.FC<POSBillingViewProps> = () => {
                     </span>
                   </div>
                   <button
-                    disabled={isOutOfStock}
+                    disabled={!canAdd}
                     className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:bg-slate-300 transition shadow-2xs"
                   >
                     <Plus className="h-4 w-4" />
@@ -807,6 +909,18 @@ export const POSBillingView: React.FC<POSBillingViewProps> = () => {
             </div>
           </div>
 
+          {isOwner && (
+            <label className="flex items-center gap-2 p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-semibold cursor-pointer">
+              <input
+                type="checkbox"
+                checked={allowNegativeOverride}
+                onChange={e => setAllowNegativeOverride(e.target.checked)}
+                className="rounded text-amber-600"
+              />
+              <span>Owner Override: Allow Negative Stock Sale</span>
+            </label>
+          )}
+
           {/* Post Sale Button */}
           <button
             onClick={handleCheckout}
@@ -818,10 +932,12 @@ export const POSBillingView: React.FC<POSBillingViewProps> = () => {
           </button>
         </div>
       </div>
+    </div>
+    )}
 
       {/* Quick Customer Modal */}
       {showNewCustomerModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs no-print">
           <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl space-y-4">
             <h4 className="text-sm font-bold text-slate-900">Register New Customer</h4>
             <form onSubmit={handleCreateCustomer} className="space-y-3 text-xs">
@@ -887,16 +1003,9 @@ export const POSBillingView: React.FC<POSBillingViewProps> = () => {
         </div>
       )}
 
-      {/* Invoice Print Preview Modal */}
-      <InvoicePrintModal
-        isOpen={showPrintModal}
-        onClose={() => setShowPrintModal(false)}
-        invoice={lastInvoice}
-      />
-
       {/* Sales Return Modal */}
       {showReturnModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs no-print">
           <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
@@ -1009,8 +1118,24 @@ export const POSBillingView: React.FC<POSBillingViewProps> = () => {
           </div>
         </div>
       )}
-    </div>
-    )}
+
+      {/* Invoice Print Preview Modal */}
+      <InvoicePrintModal
+        isOpen={showPrintModal}
+        onClose={() => setShowPrintModal(false)}
+        invoice={lastInvoice}
+      />
+
+      {/* Dedicated Hidden-on-Screen Print Layout Container (Active for Direct Print / Ctrl+P) */}
+      {!showPrintModal && activePrintTarget && (
+        <div className="print-only printable-area">
+          <POSReceiptPrintLayout
+            invoice={activePrintTarget}
+            settings={settings}
+            format={directPrintFormat}
+          />
+        </div>
+      )}
     </div>
   );
 };

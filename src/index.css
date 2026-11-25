@@ -31,10 +31,25 @@
 }
 
 /* Print Invoice styles */
+.print-only {
+  display: none;
+}
+
 @media print {
+  @page {
+    margin: 10mm;
+  }
   body {
     background: #ffffff !important;
     color: #000000 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: none !important;
+    overflow: visible !important;
   }
   .no-print {
     display: none !important;
@@ -48,5 +63,25 @@
     box-shadow: none !important;
     border: none !important;
     width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  .thermal-receipt-sheet {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 auto !important;
+    border: none !important;
+    padding: 2mm !important;
+    background: #ffffff !important;
+  }
+  table {
+    page-break-inside: auto;
+  }
+  thead {
+    display: table-header-group;
+  }
+  tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
   }
 }

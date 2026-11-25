@@ -17,8 +17,11 @@ export const ACCOUNT_IDS = {
   ACCOUNTS_RECEIVABLE: 'ACC-104',
   INSTALLMENT_RECEIVABLE: 'ACC-105',
   INVENTORY: 'ACC-106',
+  FIXED_ASSETS: 'ACC-107',
   ACCOUNTS_PAYABLE: 'ACC-201',
   SALES_TAX_PAYABLE: 'ACC-202',
+  OWNER_CAPITAL: 'ACC-301',
+  RETAINED_EARNINGS: 'ACC-302',
   SALES_REVENUE: 'ACC-401',
   MARKUP_INCOME: 'ACC-402',
   COGS: 'ACC-501',
@@ -441,18 +444,30 @@ export function buildInstallmentReceiptVoucher(
   };
 }
 
-export function buildChequeClearanceVoucher(cheque: ChequeRecord, clearanceDate: string, createdBy: string, uid: string): Omit<Voucher, 'id'> & { id: string; sourceRef: string; createdByUid: string } {
+export function buildChequeClearanceVoucher(
+  cheque: ChequeRecord,
+  clearanceDate: string,
+  createdBy: string,
+  uid: string,
+  bankAccount?: { id: string; name: string }
+): Omit<Voucher, 'id'> & { id: string; sourceRef: string; createdByUid: string } {
   const amt = roundMoney(cheque.amount);
-  const bankName = 'Meezan Bank - Current A/C # 0201010049281';
+  const targetBankId = bankAccount?.id || cheque.bankAccountId || ACCOUNT_IDS.MEEZAN_BANK;
+  const targetBankName =
+    bankAccount?.name ||
+    (targetBankId === ACCOUNT_IDS.ALFALAH_BANK
+      ? 'Bank Alfalah - Current A/C # 55109849201'
+      : 'Meezan Bank - Current A/C # 0201010049281');
+
   const entries: VoucherEntry[] =
     cheque.type === 'Received'
       ? [
-          { accountId: ACCOUNT_IDS.MEEZAN_BANK, accountName: bankName, debit: amt, credit: 0, narration: `Cheque #${cheque.chequeNumber} cleared` },
+          { accountId: targetBankId, accountName: targetBankName, debit: amt, credit: 0, narration: `Cheque #${cheque.chequeNumber} cleared` },
           { accountId: ACCOUNT_IDS.ACCOUNTS_RECEIVABLE, accountName: 'Accounts Receivable (Customers)', debit: 0, credit: amt, narration: `Received from ${cheque.partyName}` },
         ]
       : [
           { accountId: ACCOUNT_IDS.ACCOUNTS_PAYABLE, accountName: 'Accounts Payable (Distributors & Suppliers)', debit: amt, credit: 0, narration: `Paid to ${cheque.partyName}` },
-          { accountId: ACCOUNT_IDS.MEEZAN_BANK, accountName: bankName, debit: 0, credit: amt, narration: `Cheque #${cheque.chequeNumber} cleared` },
+          { accountId: targetBankId, accountName: targetBankName, debit: 0, credit: amt, narration: `Cheque #${cheque.chequeNumber} cleared` },
         ];
 
   return {
@@ -461,6 +476,7 @@ export function buildChequeClearanceVoucher(cheque: ChequeRecord, clearanceDate:
     voucherType: cheque.type === 'Received' ? 'Receive Voucher' : 'Payment Voucher',
     date: clearanceDate,
     partyType: cheque.type === 'Received' ? 'Customer' : 'Supplier',
+    partyId: cheque.partyId,
     partyName: cheque.partyName,
     amount: amt,
     paymentMethod: 'Cheque',
@@ -472,3 +488,82 @@ export function buildChequeClearanceVoucher(cheque: ChequeRecord, clearanceDate:
     sourceRef: cheque.id,
   };
 }
+
+export function buildChequeBounceVoucher(
+  cheque: ChequeRecord,
+  bounceDate: string,
+  createdBy: string,
+  uid: string,
+  bankAccount?: { id: string; name: string }
+): Omit<Voucher, 'id'> & { id: string; sourceRef: string; createdByUid: string } {
+  const amt = roundMoney(cheque.amount);
+  const targetBankId = bankAccount?.id || cheque.bankAccountId || ACCOUNT_IDS.MEEZAN_BANK;
+  const targetBankName =
+    bankAccount?.name ||
+    (targetBankId === ACCOUNT_IDS.ALFALAH_BANK
+      ? 'Bank Alfalah - Current A/C # 55109849201'
+      : 'Meezan Bank - Current A/C # 0201010049281');
+
+  const entries: VoucherEntry[] =
+    cheque.type === 'Received'
+      ? [
+          { accountId: ACCOUNT_IDS.ACCOUNTS_RECEIVABLE, accountName: 'Accounts Receivable (Customers)', debit: amt, credit: 0, narration: `Bounced cheque #${cheque.chequeNumber} reinstated receivable` },
+          { accountId: targetBankId, accountName: targetBankName, debit: 0, credit: amt, narration: `Dishonored cheque #${cheque.chequeNumber} reversed` },
+        ]
+      : [
+          { accountId: targetBankId, accountName: targetBankName, debit: amt, credit: 0, narration: `Dishonored issued cheque #${cheque.chequeNumber} restored` },
+          { accountId: ACCOUNT_IDS.ACCOUNTS_PAYABLE, accountName: 'Accounts Payable (Distributors & Suppliers)', debit: 0, credit: amt, narration: `Payable reinstated to ${cheque.partyName}` },
+        ];
+
+  return {
+    id: `VCH-BNC-${cheque.id}-${Date.now().toString().slice(-4)}`,
+    voucherNumber: `BNC-${cheque.chequeNumber}`,
+    voucherType: 'Journal Voucher',
+    date: bounceDate,
+    partyType: cheque.type === 'Received' ? 'Customer' : 'Supplier',
+    partyId: cheque.partyId,
+    partyName: cheque.partyName,
+    amount: amt,
+    paymentMethod: 'Cheque',
+    entries,
+    narration: `Dishonored/Bounced ${cheque.type} Cheque #${cheque.chequeNumber} (${cheque.bankName})`,
+    createdBy,
+    createdByUid: uid,
+    status: 'Posted',
+    sourceRef: `BOUNCE-${cheque.id}`,
+  };
+}
+
+export function buildReversalVoucher(
+  original: Voucher,
+  reason: string,
+  createdBy: string,
+  uid: string
+): Omit<Voucher, 'id'> & { id: string; createdByUid: string } {
+  const reversedEntries: VoucherEntry[] = original.entries.map(e => ({
+    accountId: e.accountId,
+    accountName: e.accountName,
+    debit: roundMoney(e.credit || 0),
+    credit: roundMoney(e.debit || 0),
+    narration: `Reversal of ${original.voucherNumber}: ${e.narration || original.narration}`,
+  }));
+
+  return {
+    id: `REV-${original.id}-${Date.now().toString().slice(-4)}`.slice(0, 128),
+    voucherNumber: `REV-${original.voucherNumber}`.slice(0, 64),
+    voucherType: 'Journal Voucher',
+    date: new Date().toISOString().split('T')[0],
+    partyType: original.partyType,
+    partyId: original.partyId,
+    partyName: original.partyName,
+    amount: roundMoney(original.amount),
+    paymentMethod: original.paymentMethod,
+    entries: reversedEntries,
+    narration: `Reversal of ${original.voucherNumber}: ${reason || 'Accounting correction'}`.slice(0, 495),
+    createdBy,
+    createdByUid: uid,
+    status: 'Posted',
+    sourceRef: `REV-${original.id}`,
+  };
+}
+

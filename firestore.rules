@@ -200,7 +200,7 @@ service cloud.firestore {
 
     function isValidCustomer(data) {
       return data.keys().hasAll(['id', 'orgId', 'createdByUid', 'name', 'phone', 'cnic', 'openingBalance', 'currentBalance', 'creditLimit', 'customerType', 'createdAt'])
-        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'name', 'fatherName', 'phone', 'whatsapp', 'cnic', 'email', 'address', 'city', 'openingBalance', 'currentBalance', 'creditLimit', 'customerType', 'createdAt', 'notes'])
+        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'name', 'fatherName', 'phone', 'whatsapp', 'cnic', 'email', 'address', 'city', 'openingBalance', 'currentBalance', 'creditLimit', 'customerType', 'createdAt', 'notes', 'updatedAt'])
         && isValidId(data.id)
         && isSameOrg(data)
         && isValidId(data.createdByUid)
@@ -217,12 +217,13 @@ service cloud.firestore {
         && (!('email' in data) || isStr(data.email, 200))
         && (!('address' in data) || isStr(data.address, 300))
         && (!('city' in data) || isStr(data.city, 80))
-        && (!('notes' in data) || isStr(data.notes, 500));
+        && (!('notes' in data) || isStr(data.notes, 500))
+        && (!('updatedAt' in data) || isStr(data.updatedAt, 64));
     }
 
     function isValidSupplier(data) {
       return data.keys().hasAll(['id', 'orgId', 'createdByUid', 'companyName', 'contactPerson', 'phone', 'openingBalance', 'currentBalance', 'createdAt'])
-        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'companyName', 'contactPerson', 'phone', 'whatsapp', 'email', 'address', 'city', 'ntn', 'openingBalance', 'currentBalance', 'paymentTerms', 'createdAt'])
+        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'companyName', 'contactPerson', 'phone', 'whatsapp', 'email', 'address', 'city', 'ntn', 'openingBalance', 'currentBalance', 'paymentTerms', 'createdAt', 'updatedAt'])
         && isValidId(data.id)
         && isSameOrg(data)
         && isValidId(data.createdByUid)
@@ -237,7 +238,8 @@ service cloud.firestore {
         && (!('address' in data) || isStr(data.address, 300))
         && (!('city' in data) || isStr(data.city, 80))
         && (!('ntn' in data) || isStr(data.ntn, 40))
-        && (!('paymentTerms' in data) || isStr(data.paymentTerms, 80));
+        && (!('paymentTerms' in data) || isStr(data.paymentTerms, 80))
+        && (!('updatedAt' in data) || isStr(data.updatedAt, 64));
     }
 
     function isValidEmployee(data) {
@@ -292,7 +294,7 @@ service cloud.firestore {
 
     function isValidProduct(data) {
       return data.keys().hasAll(['id', 'orgId', 'name', 'category', 'brand', 'modelNumber', 'sku', 'purchasePrice', 'retailPrice', 'stockQuantity', 'minStockLevel'])
-        && data.keys().hasOnly(['id', 'orgId', 'name', 'category', 'subCategory', 'brand', 'modelNumber', 'sku', 'barcode', 'unit', 'purchasePrice', 'retailPrice', 'minSalePrice', 'stockQuantity', 'minStockLevel', 'warrantyMonths', 'hasSerialTracking', 'image', 'description', 'serials'])
+        && data.keys().hasOnly(['id', 'orgId', 'name', 'category', 'subCategory', 'brand', 'modelNumber', 'sku', 'barcode', 'unit', 'purchasePrice', 'retailPrice', 'minSalePrice', 'wholesalePrice', 'stockQuantity', 'minStockLevel', 'openingStock', 'reorderLevel', 'warehouseId', 'warehouseName', 'damagedQuantity', 'engineNumber', 'chassisNumber', 'warrantyMonths', 'hasSerialTracking', 'image', 'description', 'serials', 'updatedAt'])
         && isValidId(data.id)
         && isSameOrg(data)
         && isNonEmptyStr(data.name, 200)
@@ -302,22 +304,82 @@ service cloud.firestore {
         && isNonEmptyStr(data.sku, 80)
         && data.purchasePrice is number && data.purchasePrice >= 0
         && data.retailPrice is number && data.retailPrice >= 0
-        && data.stockQuantity is int && data.stockQuantity >= 0
+        && data.stockQuantity is int
         && data.minStockLevel is int && data.minStockLevel >= 0
         && (!('subCategory' in data) || isStr(data.subCategory, 80))
         && (!('barcode' in data) || isStr(data.barcode, 80))
         && (!('unit' in data) || isStr(data.unit, 32))
         && (!('minSalePrice' in data) || data.minSalePrice is number)
+        && (!('wholesalePrice' in data) || data.wholesalePrice is number)
+        && (!('openingStock' in data) || data.openingStock is int)
+        && (!('reorderLevel' in data) || data.reorderLevel is int)
+        && (!('warehouseId' in data) || isStr(data.warehouseId, 128))
+        && (!('warehouseName' in data) || isStr(data.warehouseName, 160))
+        && (!('damagedQuantity' in data) || data.damagedQuantity is int)
+        && (!('engineNumber' in data) || isStr(data.engineNumber, 120))
+        && (!('chassisNumber' in data) || isStr(data.chassisNumber, 120))
         && (!('warrantyMonths' in data) || data.warrantyMonths is int)
         && (!('hasSerialTracking' in data) || data.hasSerialTracking is bool)
         && (!('image' in data) || isStr(data.image, 500))
         && (!('description' in data) || isStr(data.description, 1000))
+        && (!('updatedAt' in data) || isStr(data.updatedAt, 64))
         && (!('serials' in data) || isBoundedList(data.serials, 500));
+    }
+
+    function isValidWarehouse(data) {
+      return data.keys().hasAll(['id', 'orgId', 'name', 'code', 'city', 'active'])
+        && data.keys().hasOnly(['id', 'orgId', 'name', 'code', 'city', 'address', 'managerName', 'isDefault', 'active'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isNonEmptyStr(data.name, 160)
+        && isNonEmptyStr(data.code, 32)
+        && isNonEmptyStr(data.city, 80)
+        && data.active is bool
+        && (!('address' in data) || isStr(data.address, 300))
+        && (!('managerName' in data) || isStr(data.managerName, 120))
+        && (!('isDefault' in data) || data.isDefault is bool);
+    }
+
+    function isValidStockTransfer(data) {
+      return data.keys().hasAll(['id', 'orgId', 'createdByUid', 'transferNumber', 'date', 'productId', 'quantity', 'fromWarehouseId', 'toWarehouseId'])
+        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'transferNumber', 'date', 'productId', 'productName', 'quantity', 'fromWarehouseId', 'fromWarehouseName', 'toWarehouseId', 'toWarehouseName', 'serialNumbers', 'notes', 'transferredBy'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isValidId(data.createdByUid)
+        && isNonEmptyStr(data.transferNumber, 64)
+        && isNonEmptyStr(data.date, 32)
+        && isValidId(data.productId)
+        && data.quantity is int && data.quantity > 0
+        && isValidId(data.fromWarehouseId)
+        && isValidId(data.toWarehouseId)
+        && (!('productName' in data) || isStr(data.productName, 200))
+        && (!('fromWarehouseName' in data) || isStr(data.fromWarehouseName, 160))
+        && (!('toWarehouseName' in data) || isStr(data.toWarehouseName, 160))
+        && (!('serialNumbers' in data) || isBoundedList(data.serialNumbers, 200))
+        && (!('notes' in data) || isStr(data.notes, 500))
+        && (!('transferredBy' in data) || isStr(data.transferredBy, 120));
+    }
+
+    function isValidStockAdjustment(data) {
+      return data.keys().hasAll(['id', 'orgId', 'createdByUid', 'date', 'productId', 'adjustmentQty', 'previousQty', 'newQty', 'adjustmentType', 'reason'])
+        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'date', 'productId', 'productName', 'adjustmentQty', 'previousQty', 'newQty', 'adjustmentType', 'reason', 'adjustedBy'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isValidId(data.createdByUid)
+        && isNonEmptyStr(data.date, 32)
+        && isValidId(data.productId)
+        && data.adjustmentQty is int
+        && data.previousQty is int
+        && data.newQty is int
+        && data.adjustmentType in ['Adjustment', 'Damaged', 'Opening', 'CountCorrection']
+        && isNonEmptyStr(data.reason, 500)
+        && (!('productName' in data) || isStr(data.productName, 200))
+        && (!('adjustedBy' in data) || isStr(data.adjustedBy, 120));
     }
 
     function isValidPurchase(data) {
       return data.keys().hasAll(['id', 'orgId', 'createdByUid', 'invoiceNumber', 'supplierId', 'supplierName', 'date', 'items', 'grandTotal', 'paidAmount', 'remainingBalance', 'status'])
-        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'invoiceNumber', 'supplierId', 'supplierName', 'date', 'items', 'subTotal', 'discount', 'tax', 'freightCharges', 'grandTotal', 'paidAmount', 'remainingBalance', 'paymentMethod', 'status', 'notes', 'createdBy', 'idempotencyKey'])
+        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'invoiceNumber', 'supplierId', 'supplierName', 'date', 'items', 'subTotal', 'discount', 'tax', 'freightCharges', 'grandTotal', 'paidAmount', 'remainingBalance', 'paymentMethod', 'status', 'notes', 'createdBy', 'idempotencyKey', 'updatedAt'])
         && isValidId(data.id)
         && isSameOrg(data)
         && isValidId(data.createdByUid)
@@ -337,7 +399,8 @@ service cloud.firestore {
         && (!('paymentMethod' in data) || data.paymentMethod in ['Cash', 'Bank Transfer', 'Cheque', 'Credit'])
         && (!('notes' in data) || isStr(data.notes, 500))
         && (!('createdBy' in data) || isStr(data.createdBy, 120))
-        && (!('idempotencyKey' in data) || isStr(data.idempotencyKey, 128));
+        && (!('idempotencyKey' in data) || isStr(data.idempotencyKey, 128))
+        && (!('updatedAt' in data) || isStr(data.updatedAt, 64));
     }
 
     function isValidPurchaseReturn(data) {
@@ -360,7 +423,7 @@ service cloud.firestore {
 
     function isValidSale(data) {
       return data.keys().hasAll(['id', 'orgId', 'createdByUid', 'invoiceNumber', 'customerId', 'customerName', 'saleType', 'date', 'items', 'grandTotal', 'paidAmount', 'remainingBalance', 'status'])
-        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'invoiceNumber', 'customerId', 'customerName', 'customerPhone', 'saleType', 'date', 'items', 'subTotal', 'discount', 'tax', 'grandTotal', 'paidAmount', 'changeAmount', 'remainingBalance', 'paymentMethod', 'status', 'salesPerson', 'notes', 'installmentAccountId', 'idempotencyKey'])
+        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'invoiceNumber', 'customerId', 'customerName', 'customerPhone', 'saleType', 'date', 'items', 'subTotal', 'discount', 'tax', 'grandTotal', 'paidAmount', 'changeAmount', 'remainingBalance', 'paymentMethod', 'status', 'salesPerson', 'notes', 'installmentAccountId', 'idempotencyKey', 'updatedAt'])
         && isValidId(data.id)
         && isSameOrg(data)
         && isValidId(data.createdByUid)
@@ -383,7 +446,8 @@ service cloud.firestore {
         && (!('salesPerson' in data) || isStr(data.salesPerson, 120))
         && (!('notes' in data) || isStr(data.notes, 500))
         && (!('installmentAccountId' in data) || isStr(data.installmentAccountId, 128))
-        && (!('idempotencyKey' in data) || isStr(data.idempotencyKey, 128));
+        && (!('idempotencyKey' in data) || isStr(data.idempotencyKey, 128))
+        && (!('updatedAt' in data) || isStr(data.updatedAt, 64));
     }
 
     function isValidSalesReturn(data) {
@@ -406,7 +470,7 @@ service cloud.firestore {
 
     function isValidInstallment(data) {
       return data.keys().hasAll(['id', 'orgId', 'createdByUid', 'accountNumber', 'customerId', 'customerName', 'productId', 'cashPrice', 'totalFinancedPayable', 'remainingBalance', 'status', 'schedule'])
-        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'accountNumber', 'customerId', 'customerName', 'customerPhone', 'customerCnic', 'customerAddress', 'productId', 'productName', 'productModel', 'productSerial', 'salesInvoiceNo', 'cashPrice', 'downPayment', 'financedAmount', 'markupPercentage', 'markupAmount', 'totalFinancedPayable', 'totalPayableWithDown', 'durationMonths', 'monthlyInstallment', 'startDate', 'firstDueDate', 'guarantor1Name', 'guarantor1Phone', 'guarantor1Cnic', 'guarantor1Relation', 'guarantor2Name', 'guarantor2Phone', 'guarantor2Cnic', 'recoveryOfficerId', 'recoveryOfficerName', 'totalReceived', 'remainingBalance', 'status', 'schedule', 'notes'])
+        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'accountNumber', 'customerId', 'customerName', 'customerPhone', 'customerCnic', 'customerAddress', 'productId', 'productName', 'productModel', 'productSerial', 'salesInvoiceNo', 'cashPrice', 'downPayment', 'financedAmount', 'markupPercentage', 'markupAmount', 'totalFinancedPayable', 'totalPayableWithDown', 'durationMonths', 'monthlyInstallment', 'startDate', 'firstDueDate', 'guarantor1Name', 'guarantor1Phone', 'guarantor1Cnic', 'guarantor1Relation', 'guarantor2Name', 'guarantor2Phone', 'guarantor2Cnic', 'guarantor2Relation', 'guarantor2Address', 'locationSector', 'mobile2', 'profession', 'referenceName', 'slipNo', 'commitmentDate', 'rescheduleHistory', 'recoveryOfficerId', 'recoveryOfficerName', 'totalReceived', 'remainingBalance', 'status', 'schedule', 'notes', 'updatedAt'])
         && isValidId(data.id)
         && isSameOrg(data)
         && isValidId(data.createdByUid)
@@ -442,10 +506,39 @@ service cloud.firestore {
         && (!('guarantor2Name' in data) || isStr(data.guarantor2Name, 120))
         && (!('guarantor2Phone' in data) || isStr(data.guarantor2Phone, 40))
         && (!('guarantor2Cnic' in data) || isStr(data.guarantor2Cnic, 32))
+        && (!('guarantor2Relation' in data) || isStr(data.guarantor2Relation, 60))
+        && (!('guarantor2Address' in data) || isStr(data.guarantor2Address, 300))
+        && (!('locationSector' in data) || isStr(data.locationSector, 120))
+        && (!('mobile2' in data) || isStr(data.mobile2, 40))
+        && (!('profession' in data) || isStr(data.profession, 120))
+        && (!('referenceName' in data) || isStr(data.referenceName, 120))
+        && (!('slipNo' in data) || isStr(data.slipNo, 64))
+        && (!('commitmentDate' in data) || isStr(data.commitmentDate, 32))
+        && (!('rescheduleHistory' in data) || isBoundedList(data.rescheduleHistory, 50))
         && (!('recoveryOfficerId' in data) || isStr(data.recoveryOfficerId, 128))
         && (!('recoveryOfficerName' in data) || isStr(data.recoveryOfficerName, 120))
         && (!('totalReceived' in data) || data.totalReceived is number)
-        && (!('notes' in data) || isStr(data.notes, 500));
+        && (!('notes' in data) || isStr(data.notes, 500))
+        && (!('updatedAt' in data) || isStr(data.updatedAt, 64));
+    }
+
+    function isValidInstallmentCommitment(data) {
+      return data.keys().hasAll(['id', 'orgId', 'createdByUid', 'installmentAccountId', 'customerId', 'customerName', 'commitmentDate', 'promisedAmount', 'status'])
+        && data.keys().hasOnly(['id', 'orgId', 'createdByUid', 'installmentAccountId', 'accountNumber', 'customerId', 'customerName', 'customerPhone', 'commitmentDate', 'promisedAmount', 'status', 'officerName', 'remarks', 'createdAt'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isValidId(data.createdByUid)
+        && isValidId(data.installmentAccountId)
+        && isValidId(data.customerId)
+        && isNonEmptyStr(data.customerName, 160)
+        && isNonEmptyStr(data.commitmentDate, 32)
+        && data.promisedAmount is number && data.promisedAmount >= 0
+        && data.status in ['Pending', 'Fulfilled', 'Broken']
+        && (!('accountNumber' in data) || isStr(data.accountNumber, 64))
+        && (!('customerPhone' in data) || isStr(data.customerPhone, 40))
+        && (!('officerName' in data) || isStr(data.officerName, 120))
+        && (!('remarks' in data) || isStr(data.remarks, 500))
+        && (!('createdAt' in data) || isStr(data.createdAt, 64));
     }
 
     function isValidAccount(data) {
@@ -484,7 +577,7 @@ service cloud.firestore {
 
     function isValidCheque(data) {
       return data.keys().hasAll(['id', 'orgId', 'chequeNumber', 'type', 'bankName', 'partyName', 'amount', 'chequeDate', 'status'])
-        && data.keys().hasOnly(['id', 'orgId', 'chequeNumber', 'type', 'bankName', 'partyName', 'amount', 'issueDate', 'chequeDate', 'clearanceDate', 'status', 'remarks'])
+        && data.keys().hasOnly(['id', 'orgId', 'chequeNumber', 'type', 'bankName', 'bankAccountId', 'partyId', 'partyType', 'partyName', 'amount', 'issueDate', 'chequeDate', 'clearanceDate', 'status', 'reconciled', 'reconciledDate', 'remarks'])
         && isValidId(data.id)
         && isSameOrg(data)
         && isNonEmptyStr(data.chequeNumber, 64)
@@ -494,8 +587,13 @@ service cloud.firestore {
         && data.amount is number && data.amount > 0
         && isNonEmptyStr(data.chequeDate, 32)
         && data.status in ['Pending', 'Deposited', 'Cleared', 'Bounced', 'Cancelled']
+        && (!('bankAccountId' in data) || isStr(data.bankAccountId, 128))
+        && (!('partyId' in data) || isStr(data.partyId, 128))
+        && (!('partyType' in data) || data.partyType in ['Customer', 'Supplier'])
         && (!('issueDate' in data) || isStr(data.issueDate, 32))
         && (!('clearanceDate' in data) || isStr(data.clearanceDate, 32))
+        && (!('reconciled' in data) || data.reconciled is bool)
+        && (!('reconciledDate' in data) || isStr(data.reconciledDate, 32))
         && (!('remarks' in data) || isStr(data.remarks, 400));
     }
 
@@ -604,7 +702,9 @@ service cloud.firestore {
           && incoming().permissions == existing().permissions
           && incoming().active == existing().active
           && incoming().suspended == existing().suspended
-          && incoming().mfaEnabled == existing().mfaEnabled
+          && (!('mfaEnabled' in existing())
+            ? (!('mfaEnabled' in incoming()) || incoming().mfaEnabled == false)
+            : ('mfaEnabled' in incoming() && incoming().mfaEnabled == existing().mfaEnabled))
           && incoming().sessionVersion == existing().sessionVersion
           && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'avatar', 'emailVerified', 'lastLogin', 'updatedAt']))
       );
@@ -658,8 +758,8 @@ service cloud.firestore {
     }
 
     match /customers/{customerId} {
-      allow get: if isValidId(customerId) && hasPermission('customers', 'VIEW');
-      allow list: if hasPermission('customers', 'VIEW') && isSameOrg(resource.data);
+      allow get: if isValidId(customerId) && (hasPermission('customers', 'VIEW') || hasPermission('pos', 'VIEW') || hasPermission('installments', 'VIEW'));
+      allow list: if (hasPermission('customers', 'VIEW') || hasPermission('pos', 'VIEW') || hasPermission('installments', 'VIEW')) && isSameOrg(resource.data);
       allow create: if isValidId(customerId) && isValidCustomer(incoming()) && incoming().createdByUid == request.auth.uid && hasPermission('customers', 'CREATE');
       allow update: if isValidId(customerId) && isValidCustomer(incoming())
         && incoming().id == existing().id
@@ -667,16 +767,15 @@ service cloud.firestore {
         && incoming().createdByUid == existing().createdByUid
         && (
           hasPermission('customers', 'EDIT') ||
-          (hasPermission('pos', 'CREATE') && incoming().diff(existing()).affectedKeys().hasOnly(['currentBalance'])) ||
-          (hasPermission('salesReturns', 'CREATE') && incoming().diff(existing()).affectedKeys().hasOnly(['currentBalance'])) ||
+          ((hasPermission('pos', 'CREATE') || hasPermission('salesReturns', 'CREATE') || hasPermission('installments', 'EDIT') || hasPermission('accounting', 'CREATE') || hasPermission('accounting', 'APPROVE') || hasPermission('cheques', 'EDIT')) && incoming().diff(existing()).affectedKeys().hasOnly(['currentBalance'])) ||
           (hasPermission('installments', 'CREATE') && incoming().diff(existing()).affectedKeys().hasOnly(['currentBalance', 'customerType']))
         );
       allow delete: if isValidId(customerId) && hasPermission('customers', 'DELETE') && isOwner();
     }
 
     match /suppliers/{supplierId} {
-      allow get: if isValidId(supplierId) && hasPermission('suppliers', 'VIEW');
-      allow list: if hasPermission('suppliers', 'VIEW') && isSameOrg(resource.data);
+      allow get: if isValidId(supplierId) && (hasPermission('suppliers', 'VIEW') || hasPermission('purchases', 'VIEW'));
+      allow list: if (hasPermission('suppliers', 'VIEW') || hasPermission('purchases', 'VIEW')) && isSameOrg(resource.data);
       allow create: if isValidId(supplierId) && isValidSupplier(incoming()) && incoming().createdByUid == request.auth.uid && hasPermission('suppliers', 'CREATE');
       allow update: if isValidId(supplierId) && isValidSupplier(incoming())
         && incoming().id == existing().id
@@ -684,8 +783,7 @@ service cloud.firestore {
         && incoming().createdByUid == existing().createdByUid
         && (
           hasPermission('suppliers', 'EDIT') ||
-          (hasPermission('purchases', 'CREATE') && incoming().diff(existing()).affectedKeys().hasOnly(['currentBalance'])) ||
-          (hasPermission('purchaseReturns', 'CREATE') && incoming().diff(existing()).affectedKeys().hasOnly(['currentBalance']))
+          ((hasPermission('purchases', 'CREATE') || hasPermission('purchaseReturns', 'CREATE') || hasPermission('accounting', 'CREATE') || hasPermission('accounting', 'APPROVE') || hasPermission('cheques', 'EDIT')) && incoming().diff(existing()).affectedKeys().hasOnly(['currentBalance']))
         );
       allow delete: if isValidId(supplierId) && hasPermission('suppliers', 'DELETE') && isOwner();
     }
@@ -728,10 +826,31 @@ service cloud.firestore {
         && incoming().orgId == existing().orgId
         && (
           hasPermission('inventory', 'EDIT') ||
-          (hasPermission('purchases', 'CREATE') && incoming().diff(existing()).affectedKeys().hasOnly(['stockQuantity', 'serials', 'purchasePrice'])) ||
-          ((hasPermission('pos', 'CREATE') || hasPermission('salesReturns', 'CREATE') || hasPermission('purchaseReturns', 'CREATE')) && incoming().diff(existing()).affectedKeys().hasOnly(['stockQuantity', 'serials']))
+          (hasPermission('purchases', 'CREATE') && incoming().diff(existing()).affectedKeys().hasOnly(['stockQuantity', 'serials', 'purchasePrice', 'updatedAt'])) ||
+          ((hasPermission('pos', 'CREATE') || hasPermission('salesReturns', 'CREATE') || hasPermission('purchaseReturns', 'CREATE')) && incoming().diff(existing()).affectedKeys().hasOnly(['stockQuantity', 'serials', 'updatedAt']))
         );
       allow delete: if isValidId(productId) && hasPermission('inventory', 'DELETE') && isOwner();
+    }
+
+    match /warehouses/{warehouseId} {
+      allow get: if isValidId(warehouseId) && (hasPermission('inventory', 'VIEW') || hasPermission('pos', 'VIEW') || hasPermission('purchases', 'VIEW'));
+      allow list: if (hasPermission('inventory', 'VIEW') || hasPermission('pos', 'VIEW') || hasPermission('purchases', 'VIEW')) && isSameOrg(resource.data);
+      allow create, update: if isValidId(warehouseId) && isValidWarehouse(incoming()) && (isOwner() || hasPermission('inventory', 'EDIT'));
+      allow delete: if isValidId(warehouseId) && isOwner();
+    }
+
+    match /stockTransfers/{transferId} {
+      allow get: if isValidId(transferId) && hasPermission('inventory', 'VIEW');
+      allow list: if hasPermission('inventory', 'VIEW') && isSameOrg(resource.data);
+      allow create: if isValidId(transferId) && isValidStockTransfer(incoming()) && incoming().createdByUid == request.auth.uid && hasPermission('inventory', 'EDIT');
+      allow update, delete: if false;
+    }
+
+    match /stockAdjustments/{adjustmentId} {
+      allow get: if isValidId(adjustmentId) && hasPermission('inventory', 'VIEW');
+      allow list: if hasPermission('inventory', 'VIEW') && isSameOrg(resource.data);
+      allow create: if isValidId(adjustmentId) && isValidStockAdjustment(incoming()) && incoming().createdByUid == request.auth.uid && hasPermission('inventory', 'EDIT');
+      allow update, delete: if false;
     }
 
     match /purchases/{purchaseId} {
@@ -775,15 +894,26 @@ service cloud.firestore {
     }
 
     match /installments/{installmentId} {
-      allow get: if isValidId(installmentId) && hasPermission('installments', 'VIEW');
-      allow list: if hasPermission('installments', 'VIEW') && isSameOrg(resource.data);
+      allow get: if isValidId(installmentId) && (hasPermission('installments', 'VIEW') || hasPermission('reports', 'VIEW'));
+      allow list: if (hasPermission('installments', 'VIEW') || hasPermission('reports', 'VIEW')) && isSameOrg(resource.data);
       allow create: if isValidId(installmentId) && isValidInstallment(incoming()) && incoming().createdByUid == request.auth.uid && hasPermission('installments', 'CREATE');
       allow update: if isValidId(installmentId) && isValidInstallment(incoming())
         && incoming().id == existing().id
         && incoming().orgId == existing().orgId
         && incoming().createdByUid == existing().createdByUid
-        && (isOwner() || (hasPermission('installments', 'EDIT') && incoming().diff(existing()).affectedKeys().hasOnly(['totalReceived', 'remainingBalance', 'status', 'schedule', 'notes'])));
+        && (isOwner() || (hasPermission('installments', 'EDIT') && incoming().diff(existing()).affectedKeys().hasOnly(['totalReceived', 'remainingBalance', 'status', 'schedule', 'notes', 'commitmentDate', 'rescheduleHistory', 'durationMonths', 'monthlyInstallment', 'updatedAt', 'guarantor1Name', 'guarantor1Phone', 'guarantor1Cnic', 'guarantor1Relation', 'guarantor2Name', 'guarantor2Phone', 'guarantor2Cnic', 'guarantor2Relation', 'guarantor2Address', 'recoveryOfficerId', 'recoveryOfficerName', 'locationSector', 'mobile2', 'profession', 'referenceName', 'slipNo'])));
       allow delete: if false;
+    }
+
+    match /installmentCommitments/{commitmentId} {
+      allow get: if isValidId(commitmentId) && (hasPermission('installments', 'VIEW') || hasPermission('reports', 'VIEW'));
+      allow list: if (hasPermission('installments', 'VIEW') || hasPermission('reports', 'VIEW')) && isSameOrg(resource.data);
+      allow create: if isValidId(commitmentId) && isValidInstallmentCommitment(incoming()) && incoming().createdByUid == request.auth.uid && hasPermission('installments', 'EDIT');
+      allow update: if isValidId(commitmentId) && isValidInstallmentCommitment(incoming())
+        && incoming().id == existing().id
+        && incoming().orgId == existing().orgId
+        && (isOwner() || hasPermission('installments', 'EDIT'));
+      allow delete: if isValidId(commitmentId) && isOwner();
     }
 
     match /accounts/{accountId} {
@@ -824,8 +954,7 @@ service cloud.firestore {
       allow update: if isValidId(chequeId) && isValidCheque(incoming())
         && incoming().id == existing().id
         && incoming().orgId == existing().orgId
-        && existing().status != 'Cleared'
-        && (isOwner() || (hasPermission('cheques', 'EDIT') && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'clearanceDate', 'remarks'])));
+        && (isOwner() || (hasPermission('cheques', 'EDIT') && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'clearanceDate', 'remarks', 'reconciled', 'reconciledDate', 'bankAccountId'])));
       allow delete: if false;
     }
 

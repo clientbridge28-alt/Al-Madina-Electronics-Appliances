@@ -121,7 +121,7 @@ export function validateAndNormalizeFirebaseEnv(env = process.env, options = {})
     if (!normalized) {
       missingKeys.push(key);
       errors.push(`${key}: missing or empty`);
-      const line = `- ${key}: MISSING (source: GitHub Secrets)`;
+      const line = `- ${key}: MISSING (source: GitHub Secrets or Variables)`;
       auditLines.push(line);
       logger.log(line);
       continue;
@@ -130,7 +130,7 @@ export function validateAndNormalizeFirebaseEnv(env = process.env, options = {})
     const fieldError = validateNormalizedFirebaseField(key, normalized);
     if (fieldError) {
       errors.push(`${key}: ${fieldError}`);
-      const line = `- ${key}: INVALID (${fieldError}; source: GitHub Secrets)`;
+      const line = `- ${key}: INVALID (${fieldError}; source: GitHub Secrets or Variables)`;
       auditLines.push(line);
       logger.log(line);
       continue;
@@ -138,13 +138,13 @@ export function validateAndNormalizeFirebaseEnv(env = process.env, options = {})
 
     normalizedValues[key] = normalized;
     const normNote = modified && reasons.length > 0 ? `normalized: ${reasons.join(', ')}; ` : '';
-    const line = `- ${key}: VALID (${normNote}source: GitHub Secrets)`;
+    const line = `- ${key}: VALID (${normNote}source: GitHub Secrets or Variables)`;
     auditLines.push(line);
     logger.log(line);
   }
 
   if (missingKeys.length > 0) {
-    logger.log(`Missing required secrets at runtime: ${missingKeys.join(', ')}`);
+    logger.log(`Missing required secrets/variables at runtime: ${missingKeys.join(', ')}`);
   }
 
   if (errors.length > 0) {

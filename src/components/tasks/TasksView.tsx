@@ -14,6 +14,7 @@ import { Modal } from '../common/Modal';
 
 export const TasksView: React.FC = () => {
   const [tasks, setTasks] = useState<StaffTask[]>(getTasks());
+  const [, setDbTick] = useState(0);
   const employees = getEmployees();
   const currentUser = getActiveUser();
 
@@ -32,6 +33,7 @@ export const TasksView: React.FC = () => {
   useEffect(() => {
     const unsub = subscribeToDatabase(() => {
       setTasks(getTasks());
+      setDbTick(t => t + 1);
     });
     return unsub;
   }, []);
@@ -44,6 +46,12 @@ export const TasksView: React.FC = () => {
   const [category, setCategory] = useState<StaffTask['category']>('Showroom Floor');
   const [dueDate, setDueDate] = useState(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
+
+  useEffect(() => {
+    if ((!assignedTo || assignedTo === 'Showroom Staff') && employees.length > 0) {
+      setAssignedTo(employees[0].name);
+    }
+  }, [employees.length, assignedTo]);
 
   // Categories list
   const categories: StaffTask['category'][] = [
@@ -546,9 +554,13 @@ export const TasksView: React.FC = () => {
                 onChange={e => setAssignedTo(e.target.value)}
                 className="w-full rounded-xl border border-slate-200 bg-white p-2.5 text-xs font-semibold"
               >
-                {employees.map(emp => (
-                  <option key={emp.id} value={emp.name}>{emp.name} — {emp.designation}</option>
-                ))}
+                {employees.length === 0 ? (
+                  <option value="Showroom Staff">Showroom Staff</option>
+                ) : (
+                  employees.map(emp => (
+                    <option key={emp.id} value={emp.name}>{emp.name} — {emp.designation}</option>
+                  ))
+                )}
               </select>
             </div>
 

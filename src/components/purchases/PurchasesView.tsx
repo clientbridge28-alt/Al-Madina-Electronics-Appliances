@@ -56,6 +56,30 @@ export const PurchasesView: React.FC = () => {
     }
   ]);
 
+  useEffect(() => {
+    if (!supplierId && suppliers.length > 0) {
+      setSupplierId(suppliers[0].id);
+    }
+  }, [suppliers.length, supplierId]);
+
+  useEffect(() => {
+    if (products.length > 0 && items.length === 1 && !items[0].productId) {
+      const p = products[0];
+      setItems([
+        {
+          productId: p.id,
+          productName: p.name,
+          brand: p.brand,
+          modelNumber: p.modelNumber,
+          quantity: items[0].quantity || 5,
+          purchasePrice: p.purchasePrice,
+          total: p.purchasePrice * (items[0].quantity || 5),
+          serialNumbers: [],
+        },
+      ]);
+    }
+  }, [products.length, items]);
+
   // Calculations
   const subTotal = items.reduce((sum, i) => sum + i.total, 0);
   const grandTotal = subTotal + Number(freightCharges || 0);
@@ -126,26 +150,30 @@ export const PurchasesView: React.FC = () => {
 
     const invNum = `${settings.purchasePrefix}${Date.now().toString().slice(-4)}`;
 
-    createPurchaseInvoice({
-      invoiceNumber: invNum,
-      supplierId: supp.id,
-      supplierName: supp.companyName,
-      date: invoiceDate,
-      items,
-      subTotal,
-      discount: 0,
-      tax: 0,
-      freightCharges: Number(freightCharges || 0),
-      grandTotal,
-      paidAmount: Number(paidAmount || 0),
-      remainingBalance,
-      paymentMethod,
-      status: 'Received',
-      notes
-    });
+    try {
+      createPurchaseInvoice({
+        invoiceNumber: invNum,
+        supplierId: supp.id,
+        supplierName: supp.companyName,
+        date: invoiceDate,
+        items,
+        subTotal,
+        discount: 0,
+        tax: 0,
+        freightCharges: Number(freightCharges || 0),
+        grandTotal,
+        paidAmount: Number(paidAmount || 0),
+        remainingBalance,
+        paymentMethod,
+        status: 'Received',
+        notes
+      });
 
-    setShowCreateModal(false);
-    setNotice({ type: 'success', text: `Purchase Invoice #${invNum} posted to inventory & accounts.` });
+      setShowCreateModal(false);
+      setNotice({ type: 'success', text: `Purchase Invoice #${invNum} posted to inventory & accounts.` });
+    } catch (err: any) {
+      setNotice({ type: 'error', text: err?.message || 'Could not post purchase invoice.' });
+    }
   };
 
   const handleOpenReturnModal = (preset?: PurchaseInvoice) => {
@@ -199,20 +227,24 @@ export const PurchasesView: React.FC = () => {
       return;
     }
     const total = validItems.reduce((sum, i) => sum + i.total, 0);
-    const created = createPurchaseReturn({
-      returnNumber: `PRTN-${Date.now().toString().slice(-5)}`,
-      originalPurchaseNo: orig.invoiceNumber,
-      supplierId: orig.supplierId,
-      supplierName: orig.supplierName,
-      date: new Date().toISOString().split('T')[0],
-      items: validItems,
-      grandTotal: total,
-      refundMethod: returnMethod,
-      remarks: returnRemarks,
-    });
-    setShowReturnModal(false);
-    setActiveTab('returns');
-    setNotice({ type: 'success', text: `Purchase Return #${created.returnNumber} recorded (PKR ${created.grandTotal.toLocaleString()}). Stock & payable updated.` });
+    try {
+      const created = createPurchaseReturn({
+        returnNumber: `PRTN-${Date.now().toString().slice(-5)}`,
+        originalPurchaseNo: orig.invoiceNumber,
+        supplierId: orig.supplierId,
+        supplierName: orig.supplierName,
+        date: new Date().toISOString().split('T')[0],
+        items: validItems,
+        grandTotal: total,
+        refundMethod: returnMethod,
+        remarks: returnRemarks,
+      });
+      setShowReturnModal(false);
+      setActiveTab('returns');
+      setNotice({ type: 'success', text: `Purchase Return #${created.returnNumber} recorded (PKR ${created.grandTotal.toLocaleString()}). Stock & payable updated.` });
+    } catch (err: any) {
+      setNotice({ type: 'error', text: err?.message || 'Could not record purchase return.' });
+    }
   };
 
   const filteredPurchases = purchases.filter(p => 
@@ -243,7 +275,27 @@ export const PurchasesView: React.FC = () => {
           </button>
 
           <button
-            onClick={() => setShowCreateModal(true)}
+            onClick={() => {
+              if (!supplierId && suppliers.length > 0) {
+                setSupplierId(suppliers[0].id);
+              }
+              if (products.length > 0 && items.length === 1 && !items[0].productId) {
+                const p = products[0];
+                setItems([
+                  {
+                    productId: p.id,
+                    productName: p.name,
+                    brand: p.brand,
+                    modelNumber: p.modelNumber,
+                    quantity: 5,
+                    purchasePrice: p.purchasePrice,
+                    total: p.purchasePrice * 5,
+                    serialNumbers: [],
+                  },
+                ]);
+              }
+              setShowCreateModal(true);
+            }}
             className="flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition active:scale-98"
           >
             <Plus className="h-4 w-4" />
@@ -417,6 +469,7 @@ export const PurchasesView: React.FC = () => {
                     onChange={e => setSupplierId(e.target.value)}
                     className="w-full rounded-xl border border-slate-200 bg-white p-2.5 focus:outline-none focus:border-blue-600"
                   >
+                    <option value="">{suppliers.length === 0 ? 'No suppliers found' : 'Select Supplier...'}</option>
                     {suppliers.map(s => (
                       <option key={s.id} value={s.id}>{s.companyName}</option>
                     ))}
@@ -469,6 +522,7 @@ export const PurchasesView: React.FC = () => {
                             onChange={e => handleUpdateItem(idx, 'productId', e.target.value)}
                             className="w-full rounded-lg border border-slate-200 bg-white p-2 text-xs"
                           >
+                            <option value="">{products.length === 0 ? 'No products found' : 'Select Product...'}</option>
                             {products.map(p => (
                               <option key={p.id} value={p.id}>{p.brand} - {p.name}</option>
                             ))}

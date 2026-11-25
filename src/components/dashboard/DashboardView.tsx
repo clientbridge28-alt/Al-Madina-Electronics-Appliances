@@ -173,10 +173,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Top Welcome Bar */}
-      <div 
-        style={{ fontFamily: 'Georgia', fontStyle: 'italic' }}
-        className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl bg-white p-5 border border-slate-200 shadow-2xs"
-      >
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl bg-white p-5 border border-slate-200 shadow-2xs">
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-black text-slate-900 tracking-tight">
@@ -423,8 +420,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           {/* Recharts Bar Chart */}
-          <div className="w-full h-64 pt-2">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className="w-full min-w-0 h-64 pt-2">
+            <ResponsiveContainer width="100%" height={240} minWidth={0} initialDimension={{ width: 520, height: 240 }}>
               <BarChart
                 data={monthlyChartData.data}
                 margin={{ top: 10, right: 10, left: -10, bottom: 0 }}

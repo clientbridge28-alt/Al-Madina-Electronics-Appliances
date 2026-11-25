@@ -30,6 +30,12 @@ export const AttendanceView: React.FC = () => {
   const [selectedEmpId, setSelectedEmpId] = useState(employees[0]?.id || '');
   const [checkInNotes, setCheckInNotes] = useState('');
 
+  useEffect(() => {
+    if (!selectedEmpId && employees.length > 0) {
+      setSelectedEmpId(employees[0].id);
+    }
+  }, [employees.length, selectedEmpId]);
+
   // New Employee form
   const [empName, setEmpName] = useState('');
   const [empPhone, setEmpPhone] = useState('');
@@ -299,6 +305,7 @@ export const AttendanceView: React.FC = () => {
                   onChange={e => setSelectedEmpId(e.target.value)}
                   className="w-full rounded-xl border border-slate-200 bg-white p-2.5 focus:outline-none focus:border-blue-600"
                 >
+                  <option value="">{employees.length === 0 ? 'No employees found' : 'Select Employee...'}</option>
                   {employees.map(emp => (
                     <option key={emp.id} value={emp.id}>{emp.name} ({emp.designation})</option>
                   ))}

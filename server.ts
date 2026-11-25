@@ -1,10 +1,13 @@
 import 'dotenv/config';
 import crypto from 'node:crypto';
+import dns from 'node:dns/promises';
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import nodemailer from 'nodemailer';
+import { GoogleGenAI } from '@google/genai';
 import { initializeApp, getApps, type App } from 'firebase-admin/app';
 import { getAuth, type DecodedIdToken } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
@@ -12,7 +15,33 @@ import { getFirestore } from 'firebase-admin/firestore';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT || 3000);
+function resolveServerPort(): number {
+  const args = process.argv.slice(2);
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if ((arg === '--port' || arg === '-p') && args[i + 1]) {
+      const parsed = Number(args[i + 1]);
+      if (Number.isInteger(parsed) && parsed > 0) return parsed;
+    } else if (arg.startsWith('--port=')) {
+      const parsed = Number(arg.slice('--port='.length));
+      if (Number.isInteger(parsed) && parsed > 0) return parsed;
+    }
+  }
+  const envPort = process.env.PORT ? Number(process.env.PORT) : NaN;
+  const nginxPort = process.env.NGINX_PORT ? Number(process.env.NGINX_PORT) : NaN;
+  const defaultAppPort = process.env.DEFAULT_APP_PORT ? Number(process.env.DEFAULT_APP_PORT) : 3000;
+  if (
+    process.env.NODE_ENV !== 'production' &&
+    Number.isInteger(nginxPort) &&
+    envPort === nginxPort
+  ) {
+    return Number.isInteger(defaultAppPort) && defaultAppPort > 0 ? defaultAppPort : 3000;
+  }
+  if (Number.isInteger(envPort) && envPort > 0) return envPort;
+  return Number.isInteger(defaultAppPort) && defaultAppPort > 0 ? defaultAppPort : 3000;
+}
+
+const PORT = resolveServerPort();
 const CANONICAL_OWNER_EMAIL = 'clientbridge28@gmail.com';
 const OWNER_ALERT_EMAIL = (process.env.OWNER_ALERT_EMAIL || CANONICAL_OWNER_EMAIL).toLowerCase();
 const ORG_ID = 'al-madina-main';
@@ -101,8 +130,74 @@ interface ServerWpConfig {
   lastError?: string;
 }
 
+function isPrivateOrDisallowedIp(ip: string): boolean {
+  const lower = ip.toLowerCase();
+  if (lower.startsWith('::ffff:')) {
+    return isPrivateOrDisallowedIp(lower.slice(7));
+  }
+  if (net.isIPv4(lower)) {
+    const parts = lower.split('.').map(Number);
+    if (parts.length !== 4 || parts.some(n => Number.isNaN(n))) return true;
+    const [a, b] = parts;
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    return false;
+  }
+  if (net.isIPv6(lower)) {
+    if (lower === '::' || lower === '::1') return true;
+    if (lower.startsWith('fc') || lower.startsWith('fd')) return true; // ULA fc00::/7
+    if (lower.startsWith('fe8') || lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb')) return true; // link-local fe80::/10
+    return false;
+  }
+  return true;
+}
+
+async function validateExternalHttpUrl(rawUrl: string): Promise<{ valid: boolean; normalizedUrl?: string; reason?: string }> {
+  const trimmed = String(rawUrl || '').trim().replace(/\/+$/, '');
+  if (!trimmed) {
+    return { valid: false, reason: 'External URL is empty.' };
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return { valid: false, reason: 'Invalid URL format.' };
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    return { valid: false, reason: 'Only http:// and https:// URLs are permitted.' };
+  }
+  if (parsed.username || parsed.password) {
+    return { valid: false, reason: 'Embedded URL credentials are not allowed.' };
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  if (
+    !hostname ||
+    hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
+    hostname.endsWith('.local') ||
+    hostname.endsWith('.internal')
+  ) {
+    return { valid: false, reason: `Disallowed internal hostname "${hostname}".` };
+  }
+  if (net.isIP(hostname) && isPrivateOrDisallowedIp(hostname)) {
+    return { valid: false, reason: `Private or loopback IP address "${hostname}" is blocked.` };
+  }
+  try {
+    const resolved = await dns.lookup(hostname, { all: true });
+    if (resolved.some(rec => isPrivateOrDisallowedIp(rec.address))) {
+      return { valid: false, reason: `Hostname "${hostname}" resolves to a private network address.` };
+    }
+  } catch {
+    // Allow DNS lookup to fail gracefully later on fetch() if offline sandbox, unless hostname is already literal private IP
+  }
+  return { valid: true, normalizedUrl: parsed.origin + (parsed.pathname === '/' ? '' : parsed.pathname) };
+}
+
 const wpRuntimeConfig: ServerWpConfig = {
-  siteUrl: process.env.WP_SITE_URL || '',
+  siteUrl: (process.env.WP_SITE_URL || '').trim().replace(/\/+$/, ''),
   restUsername: process.env.WP_REST_USERNAME || '',
   appPassword: process.env.WP_APP_PASSWORD || '',
   wcKey: process.env.WP_WC_KEY || '',
@@ -112,7 +207,7 @@ const wpRuntimeConfig: ServerWpConfig = {
   syncOrdersAuto: false,
 };
 
-// MFA OTP store (in-memory with strict expiry + attempt limit + rate limit)
+// MFA OTP store (persists to Firestore when adminDb is available, falls back to memory in local sandbox)
 interface OtpChallenge {
   codeHash: string;
   expiresAt: number;
@@ -121,6 +216,81 @@ interface OtpChallenge {
 }
 const otpStore = new Map<string, OtpChallenge>();
 const otpRateLimiter = new Map<string, number[]>();
+const aiRateLimiter = new Map<string, number[]>();
+
+async function saveOtpChallenge(uid: string, challenge: OtpChallenge): Promise<void> {
+  otpStore.set(uid, challenge);
+  if (adminDb) {
+    try {
+      await adminDb.collection('mfaChallenges').doc(uid).set(challenge);
+    } catch {
+      // In-memory fallback already populated
+    }
+  }
+}
+
+async function loadOtpChallenge(uid: string): Promise<OtpChallenge | null> {
+  if (adminDb) {
+    try {
+      const snap = await adminDb.collection('mfaChallenges').doc(uid).get();
+      if (snap.exists) {
+        return snap.data() as OtpChallenge;
+      }
+    } catch {
+      // Fall through to in-memory store
+    }
+  }
+  return otpStore.get(uid) || null;
+}
+
+async function clearOtpChallenge(uid: string): Promise<void> {
+  otpStore.delete(uid);
+  if (adminDb) {
+    try {
+      await adminDb.collection('mfaChallenges').doc(uid).delete();
+    } catch {
+      // Ignore
+    }
+  }
+}
+
+async function checkAndRecordOtpRateLimit(uid: string): Promise<boolean> {
+  const now = Date.now();
+  const windowMs = 10 * 60 * 1000;
+  if (adminDb) {
+    try {
+      const ref = adminDb.collection('otpRateLimits').doc(uid);
+      const snap = await ref.get();
+      const prev: number[] = snap.exists && Array.isArray(snap.data()?.timestamps) ? snap.data()!.timestamps : [];
+      const recent = prev.filter(t => now - t < windowMs);
+      if (recent.length >= 5) return false;
+      recent.push(now);
+      await ref.set({ timestamps: recent, updatedAt: new Date(now).toISOString() });
+      return true;
+    } catch {
+      // Fall back to in-memory
+    }
+  }
+  const recent = (otpRateLimiter.get(uid) || []).filter(t => now - t < windowMs);
+  if (recent.length >= 5) return false;
+  recent.push(now);
+  otpRateLimiter.set(uid, recent);
+  return true;
+}
+
+function getGeminiApiKey(): string {
+  const key = String(process.env.GEMINI_API_KEY || '').trim();
+  if (!key || key === 'MY_GEMINI_API_KEY' || key.startsWith('YOUR_')) return '';
+  return key;
+}
+
+function isSmsConfigured(): boolean {
+  const hasWebhook = Boolean(process.env.SMS_GATEWAY_URL && process.env.SMS_GATEWAY_URL.trim());
+  const hasTwilio = Boolean(
+    process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM_NUMBER
+  );
+  return hasWebhook || hasTwilio;
+}
 
 // Helper: Check SMTP readiness
 function isSmtpConfigured(): boolean {
@@ -183,9 +353,11 @@ async function requireFirebaseAuth(req: AuthedRequest, res: Response, next: Next
     req.firebaseUser = decoded;
 
     let profile: Record<string, any> | null = null;
+    let profileFetchSucceeded = false;
     if (adminDb) {
       try {
         const snap = await adminDb.collection('users').doc(decoded.uid).get();
+        profileFetchSucceeded = true;
         if (snap.exists) {
           profile = snap.data() || null;
         }
@@ -198,6 +370,11 @@ async function requireFirebaseAuth(req: AuthedRequest, res: Response, next: Next
     const isOwnerEmail = decodedEmail === CANONICAL_OWNER_EMAIL || decodedEmail === OWNER_ALERT_EMAIL;
     const isOwnerRole = profile?.role === 'Owner' && profile?.active === true && profile?.suspended === false;
     req.isOwnerUser = Boolean(isOwnerEmail || isOwnerRole);
+
+    if (profileFetchSucceeded && !profile && !isOwnerEmail) {
+      res.status(403).json({ error: 'Account is not provisioned in showroom staff directory.' });
+      return;
+    }
 
     if (profile && (profile.suspended === true || profile.active === false) && !isOwnerEmail) {
       res.status(403).json({ error: 'Account is suspended or inactive.' });
@@ -299,6 +476,8 @@ async function startServer() {
       firebaseAdminReady: Boolean(adminAuth && adminDb),
       adminInitError,
       smtpConfigured: isSmtpConfigured(),
+      smsConfigured: isSmsConfigured(),
+      geminiConfigured: Boolean(getGeminiApiKey()),
       ownerEmail: CANONICAL_OWNER_EMAIL,
       ownerAlertEmail: OWNER_ALERT_EMAIL,
       wordpressConfigured: Boolean(wpRuntimeConfig.siteUrl && (wpRuntimeConfig.wcKey || wpRuntimeConfig.appPassword)),
@@ -344,6 +523,226 @@ async function startServer() {
     });
   });
 
+  // ---------------- CUSTOMER & RECOVERY SMS NOTIFICATIONS ----------------
+  app.post('/api/notifications/sms', requireFirebaseAuth, async (req: AuthedRequest, res: Response) => {
+    if (!hasBackendPermission(req, 'customers', 'EDIT') && !hasBackendPermission(req, 'installments', 'EDIT')) {
+      res.status(403).json({ error: 'Customer or Installment notification permission required.' });
+      return;
+    }
+
+    const { recipients, message, campaignType = 'General' } = req.body || {};
+    if (!Array.isArray(recipients) || recipients.length === 0 || recipients.length > 100) {
+      res.status(400).json({ error: 'Provide between 1 and 100 SMS recipients.' });
+      return;
+    }
+    const cleanMessage = String(message || '').trim();
+    if (!cleanMessage || cleanMessage.length > 600) {
+      res.status(400).json({ error: 'Message text is required (max 600 characters).' });
+      return;
+    }
+
+    if (!isSmsConfigured()) {
+      res.status(503).json({
+        sent: false,
+        configured: false,
+        error: 'SMS gateway is not configured on the backend server (set SMS_GATEWAY_URL or TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_FROM_NUMBER).',
+      });
+      return;
+    }
+
+    const normalizedRecipients = recipients
+      .map((r: any) => ({
+        name: String(r?.name || 'Customer').slice(0, 120),
+        phone: String(r?.phone || '').replace(/[^\d+]/g, '').slice(0, 24),
+      }))
+      .filter((r: { phone: string }) => r.phone.length >= 7);
+
+    if (normalizedRecipients.length === 0) {
+      res.status(400).json({ error: 'No valid recipient phone numbers provided.' });
+      return;
+    }
+
+    const gatewayUrl = String(process.env.SMS_GATEWAY_URL || '').trim();
+    const results: { phone: string; ok: boolean; error?: string }[] = [];
+
+    if (gatewayUrl) {
+      const check = await validateExternalHttpUrl(gatewayUrl);
+      if (!check.valid || !check.normalizedUrl) {
+        res.status(500).json({ sent: false, error: `Configured SMS_GATEWAY_URL is unsafe: ${check.reason}` });
+        return;
+      }
+      for (const rec of normalizedRecipients) {
+        try {
+          const gwRes = await fetch(check.normalizedUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(process.env.SMS_GATEWAY_TOKEN ? { Authorization: `Bearer ${process.env.SMS_GATEWAY_TOKEN}` } : {}),
+            },
+            body: JSON.stringify({
+              to: rec.phone,
+              recipientName: rec.name,
+              senderId: process.env.SMS_SENDER_ID || 'AlMadinaERP',
+              message: cleanMessage,
+              campaignType,
+            }),
+          });
+          results.push({ phone: rec.phone, ok: gwRes.ok, error: gwRes.ok ? undefined : `HTTP ${gwRes.status}` });
+        } catch (err: any) {
+          results.push({ phone: rec.phone, ok: false, error: err?.message || 'Gateway request failed' });
+        }
+      }
+    } else {
+      const sid = process.env.TWILIO_ACCOUNT_SID!;
+      const token = process.env.TWILIO_AUTH_TOKEN!;
+      const from = process.env.TWILIO_FROM_NUMBER!;
+      const authHeader = 'Basic ' + Buffer.from(`${sid}:${token}`).toString('base64');
+      for (const rec of normalizedRecipients) {
+        try {
+          const form = new URLSearchParams({ To: rec.phone, From: from, Body: cleanMessage });
+          const twRes = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(sid)}/Messages.json`, {
+            method: 'POST',
+            headers: {
+              Authorization: authHeader,
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: form.toString(),
+          });
+          results.push({ phone: rec.phone, ok: twRes.ok, error: twRes.ok ? undefined : `Twilio HTTP ${twRes.status}` });
+        } catch (err: any) {
+          results.push({ phone: rec.phone, ok: false, error: err?.message || 'Twilio dispatch failed' });
+        }
+      }
+    }
+
+    const sentCount = results.filter(r => r.ok).length;
+    const failedCount = results.length - sentCount;
+    await recordServerSecurityEvent({
+      type: 'SMS_DISPATCH',
+      severity: 'INFO',
+      actorUid: req.firebaseUser!.uid,
+      actorEmail: req.firebaseUser!.email,
+      title: `SMS Dispatch (${campaignType})`,
+      details: `Dispatched SMS to ${sentCount}/${results.length} recipients.`,
+      notifiedOwner: false,
+      emailStatus: 'N/A',
+    });
+
+    res.json({ sent: sentCount > 0, configured: true, sentCount, failedCount, results });
+  });
+
+  // ---------------- SERVER-SIDE GEMINI AI ASSISTANT ----------------
+  app.post('/api/ai/assistant', requireFirebaseAuth, async (req: AuthedRequest, res: Response) => {
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) {
+      res.status(503).json({
+        configured: false,
+        error: 'GEMINI_API_KEY is not configured on the backend server.',
+      });
+      return;
+    }
+
+    const uid = req.firebaseUser!.uid;
+    const now = Date.now();
+    const recentCalls = (aiRateLimiter.get(uid) || []).filter(t => now - t < 10 * 60 * 1000);
+    if (recentCalls.length >= 25) {
+      res.status(429).json({ error: 'AI Assistant rate limit reached. Please wait a few minutes.' });
+      return;
+    }
+    recentCalls.push(now);
+    aiRateLimiter.set(uid, recentCalls);
+
+    const promptText = String(req.body?.prompt || '').trim();
+    if (!promptText || promptText.length > 2000) {
+      res.status(400).json({ error: 'A prompt between 1 and 2000 characters is required.' });
+      return;
+    }
+
+    const rawContext = (req.body?.context && typeof req.body.context === 'object') ? req.body.context : {};
+    const scopedContext: Record<string, any> = {
+      userRole: req.staffProfile?.role || (req.isOwnerUser ? 'Owner' : 'Staff'),
+      permittedModules: req.isOwnerUser
+        ? ['ALL']
+        : Object.entries(req.staffProfile?.permissions || {})
+            .filter(([, acts]) => Array.isArray(acts) && acts.includes('VIEW'))
+            .map(([mod]) => mod),
+    };
+
+    if (hasBackendPermission(req, 'dashboard', 'VIEW') && rawContext.kpis) {
+      scopedContext.kpis = rawContext.kpis;
+    }
+    if ((hasBackendPermission(req, 'inventory', 'VIEW') || hasBackendPermission(req, 'pos', 'VIEW')) && rawContext.inventory) {
+      scopedContext.inventory = rawContext.inventory;
+    }
+    if (hasBackendPermission(req, 'installments', 'VIEW') && rawContext.installments) {
+      scopedContext.installments = rawContext.installments;
+    }
+    if ((hasBackendPermission(req, 'accounting', 'VIEW') || hasBackendPermission(req, 'reports', 'VIEW')) && rawContext.financials) {
+      scopedContext.financials = rawContext.financials;
+    }
+    if (hasBackendPermission(req, 'cheques', 'VIEW') && rawContext.cheques) {
+      scopedContext.cheques = rawContext.cheques;
+    }
+    if (hasBackendPermission(req, 'customers', 'VIEW') && rawContext.customers) {
+      scopedContext.customers = rawContext.customers;
+    }
+    if (hasBackendPermission(req, 'suppliers', 'VIEW') && rawContext.suppliers) {
+      scopedContext.suppliers = rawContext.suppliers;
+    }
+
+    const modelName = String(process.env.GEMINI_MODEL || 'gemini-4-hydrogen').trim();
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+      });
+
+      const systemPrompt = [
+        'You are the Al-Madina Electronics & Appliances ERP Business Assistant.',
+        'Strictly ground every figure, balance, stock quantity, and overdue amount ONLY in the RBAC-filtered JSON context below.',
+        'Do NOT invent, extrapolate, or guess financial numbers or customer balances not present in the context.',
+        'If the user asks about a module not included in permittedModules or absent from context, clearly state that their role lacks access or data was not provided.',
+        'Use PKR (₨) for monetary values.',
+        'If helpful, you may propose ONE explicit navigation or draft action using this exact JSON fenced block at the end (the UI will require explicit user confirmation before executing):',
+        '```action\n{"type":"navigate","targetTab":"reports","label":"Open Reports & Statements"}\n```',
+        `Allowed navigation targetTab values: dashboard, pos, inventory, purchases, installments, customers, suppliers, accounting, ledgers, cheques, reports, targets, visitors, attendance, tasks, audit, settings, admin.`,
+      ].join('\n');
+
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: `${systemPrompt}\n\nRBAC-SCOPED ERP CONTEXT:\n${JSON.stringify(scopedContext, null, 2)}\n\nUSER QUESTION:\n${promptText}`,
+      });
+
+      const rawReply = response.text || 'No response generated.';
+      let proposedAction: { type: string; targetTab?: string; label: string; draftText?: string } | null = null;
+      let cleanReply = rawReply;
+      const actionMatch = rawReply.match(/```action\s*([\s\S]*?)```/);
+      if (actionMatch) {
+        try {
+          const parsedAction = JSON.parse(actionMatch[1].trim());
+          if (parsedAction && typeof parsedAction === 'object' && parsedAction.label) {
+            proposedAction = parsedAction;
+          }
+          cleanReply = rawReply.replace(actionMatch[0], '').trim();
+        } catch {
+          // Keep text as-is if action JSON is malformed
+        }
+      }
+
+      res.json({
+        configured: true,
+        model: modelName,
+        reply: cleanReply,
+        proposedAction,
+      });
+    } catch (err: any) {
+      res.status(502).json({
+        configured: true,
+        error: err?.message || 'Gemini AI request failed.',
+      });
+    }
+  });
+
   // ---------------- MFA / OTP SERVER CHALLENGES ----------------
   app.post('/api/mfa/request', requireFirebaseAuth, async (req: AuthedRequest, res: Response) => {
     if (!isSmtpConfigured()) {
@@ -356,20 +755,17 @@ async function startServer() {
 
     const uid = req.firebaseUser!.uid;
     const email = req.firebaseUser!.email!;
-    const now = Date.now();
-    const recent = (otpRateLimiter.get(uid) || []).filter(t => now - t < 10 * 60 * 1000);
-    if (recent.length >= 5) {
+    const allowed = await checkAndRecordOtpRateLimit(uid);
+    if (!allowed) {
       res.status(429).json({ error: 'Too many OTP requests. Please wait 10 minutes.' });
       return;
     }
-    recent.push(now);
-    otpRateLimiter.set(uid, recent);
 
     const otp = String(crypto.randomInt(100000, 999999));
     const codeHash = crypto.createHash('sha256').update(`${uid}:${otp}`).digest('hex');
-    otpStore.set(uid, {
+    await saveOtpChallenge(uid, {
       codeHash,
-      expiresAt: now + 5 * 60 * 1000,
+      expiresAt: Date.now() + 5 * 60 * 1000,
       attempts: 0,
       used: false,
     });
@@ -388,21 +784,21 @@ async function startServer() {
     res.json({ sent: true, expiresInSeconds: 300 });
   });
 
-  app.post('/api/mfa/verify', requireFirebaseAuth, (req: AuthedRequest, res: Response) => {
+  app.post('/api/mfa/verify', requireFirebaseAuth, async (req: AuthedRequest, res: Response) => {
     const uid = req.firebaseUser!.uid;
     const code = String(req.body?.code || '').trim();
-    const record = otpStore.get(uid);
+    const record = await loadOtpChallenge(uid);
     if (!record || record.used) {
       res.status(400).json({ verified: false, error: 'No active OTP challenge. Please request a new code.' });
       return;
     }
     if (Date.now() > record.expiresAt) {
-      otpStore.delete(uid);
+      await clearOtpChallenge(uid);
       res.status(400).json({ verified: false, error: 'OTP expired. Request a new code.' });
       return;
     }
     if (record.attempts >= 5) {
-      otpStore.delete(uid);
+      await clearOtpChallenge(uid);
       res.status(429).json({ verified: false, error: 'Maximum OTP attempts exceeded.' });
       return;
     }
@@ -410,12 +806,12 @@ async function startServer() {
     record.attempts += 1;
     const codeHash = crypto.createHash('sha256').update(`${uid}:${code}`).digest('hex');
     if (codeHash !== record.codeHash) {
+      await saveOtpChallenge(uid, record);
       res.status(401).json({ verified: false, error: 'Invalid OTP code.' });
       return;
     }
 
-    record.used = true;
-    otpStore.delete(uid);
+    await clearOtpChallenge(uid);
     res.json({ verified: true });
   });
 
@@ -661,10 +1057,11 @@ async function startServer() {
         const existingSettingsMs = existingSettingsSnap.exists ? extractRecordTimestampMs(existingSettingsSnap.data()) : 0;
         const incomingSettingsMs = extractRecordTimestampMs(snapshot.settings);
         if (overwriteNewer || !existingSettingsSnap.exists || existingSettingsMs <= incomingSettingsMs) {
+          const { id: _omitSettingsId, ...cleanSettingsPayload } = snapshot.settings;
           await settingsRef.set({
-            ...snapshot.settings,
+            ...cleanSettingsPayload,
             orgId: ORG_ID,
-            updatedAt: snapshot.settings.updatedAt || restoreTimestamp,
+            updatedAt: cleanSettingsPayload.updatedAt || restoreTimestamp,
           }, { merge: true });
         } else {
           skippedNewerCount += 1;
@@ -729,7 +1126,14 @@ async function startServer() {
       return;
     }
     const { siteUrl, restUsername, appPassword, wcKey, wcSecret, syncProductsAuto, syncStockAuto, syncOrdersAuto } = req.body || {};
-    if (typeof siteUrl === 'string') wpRuntimeConfig.siteUrl = siteUrl.trim().replace(/\/+$/, '');
+    if (typeof siteUrl === 'string' && siteUrl.trim()) {
+      const check = await validateExternalHttpUrl(siteUrl);
+      if (!check.valid || !check.normalizedUrl) {
+        res.status(400).json({ saved: false, error: check.reason || 'Unsafe or invalid WordPress URL.' });
+        return;
+      }
+      wpRuntimeConfig.siteUrl = check.normalizedUrl;
+    }
     if (typeof restUsername === 'string' && restUsername.trim()) wpRuntimeConfig.restUsername = restUsername.trim();
     if (typeof appPassword === 'string' && appPassword.trim()) wpRuntimeConfig.appPassword = appPassword.trim();
     if (typeof wcKey === 'string' && wcKey.trim()) wpRuntimeConfig.wcKey = wcKey.trim();
@@ -751,14 +1155,16 @@ async function startServer() {
       res.status(403).json({ error: 'Permission denied.' });
       return;
     }
-    const targetUrl = String(req.body?.siteUrl || wpRuntimeConfig.siteUrl || '').trim().replace(/\/+$/, '');
-    if (!targetUrl) {
-      res.status(400).json({ success: false, message: 'WordPress site URL is required.' });
+    const rawTargetUrl = String(req.body?.siteUrl || wpRuntimeConfig.siteUrl || '').trim();
+    const urlCheck = await validateExternalHttpUrl(rawTargetUrl);
+    if (!urlCheck.valid || !urlCheck.normalizedUrl) {
+      res.status(400).json({ success: false, message: urlCheck.reason || 'Valid external WordPress site URL is required.' });
       return;
     }
+    const targetUrl = urlCheck.normalizedUrl;
 
     try {
-      const wpRes = await fetch(`${targetUrl}/wp-json/`);
+      const wpRes = await fetch(`${targetUrl}/wp-json/`, { redirect: 'error' });
       if (!wpRes.ok) {
         res.json({ success: false, isWooCommerce: false, message: `WordPress REST endpoint returned HTTP ${wpRes.status}.` });
         return;
@@ -771,6 +1177,7 @@ async function startServer() {
         const authHeader = 'Basic ' + Buffer.from(`${wpRuntimeConfig.wcKey}:${wpRuntimeConfig.wcSecret}`).toString('base64');
         const wcRes = await fetch(`${targetUrl}/wp-json/wc/v3/system_status`, {
           headers: { Authorization: authHeader },
+          redirect: 'error',
         });
         if (wcRes.ok) {
           res.json({
@@ -826,12 +1233,18 @@ async function startServer() {
         stock_status: product.stockQuantity > 0 ? 'instock' : 'outofstock',
       };
 
-      const wpRes = await fetch(`${wpRuntimeConfig.siteUrl}/wp-json/wc/v3/products`, {
+      const urlCheck = await validateExternalHttpUrl(wpRuntimeConfig.siteUrl);
+      if (!urlCheck.valid || !urlCheck.normalizedUrl) {
+        res.status(400).json({ success: false, message: urlCheck.reason || 'Configured WP_SITE_URL is unsafe.' });
+        return;
+      }
+      const wpRes = await fetch(`${urlCheck.normalizedUrl}/wp-json/wc/v3/products`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: authHeader,
         },
+        redirect: 'error',
         body: JSON.stringify(payload),
       });
       const data = await wpRes.json().catch(() => ({})) as any;
@@ -862,13 +1275,19 @@ async function startServer() {
     const token = Buffer.from(`${wpRuntimeConfig.restUsername}:${wpRuntimeConfig.appPassword}`).toString('base64');
 
     try {
+      const urlCheck = await validateExternalHttpUrl(wpRuntimeConfig.siteUrl);
+      if (!urlCheck.valid || !urlCheck.normalizedUrl) {
+        res.status(400).json({ success: false, message: urlCheck.reason || 'Configured WP_SITE_URL is unsafe.' });
+        return;
+      }
       // Posts backup snapshot metadata & encrypted manifest as a private WP draft post / custom backup endpoint
-      const wpRes = await fetch(`${wpRuntimeConfig.siteUrl}/wp-json/wp/v2/posts`, {
+      const wpRes = await fetch(`${urlCheck.normalizedUrl}/wp-json/wp/v2/posts`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Basic ${token}`,
         },
+        redirect: 'error',
         body: JSON.stringify({
           title: `Al-Madina ERP Backup Snapshot ${backupId || new Date().toISOString()}`,
           status: 'private',
@@ -919,12 +1338,24 @@ async function startServer() {
 
   // ---------------- VITE DEV MIDDLEWARE OR PRODUCTION STATIC ----------------
   if (process.env.NODE_ENV !== 'production') {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true, hmr: false },
-      appType: 'spa',
+    const vitePromise = import('vite').then(({ createServer: createViteServer }) =>
+      createViteServer({
+        mode: 'development',
+        server: { middlewareMode: true, hmr: false, ws: false },
+        appType: 'spa',
+      })
+    );
+    vitePromise.catch(err => {
+      console.error('Failed to initialize Vite dev middleware:', err);
     });
-    app.use(vite.middlewares);
+    app.use(async (req, res, next) => {
+      try {
+        const vite = await vitePromise;
+        vite.middlewares(req, res, next);
+      } catch (err) {
+        next(err);
+      }
+    });
   } else {
     const distDir = path.join(__dirname, 'dist');
     app.use(GH_PAGES_BASE, express.static(distDir));
@@ -934,8 +1365,12 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const httpServer = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Al-Madina Electronics ERP Server running on http://0.0.0.0:${PORT}`);
+  });
+  httpServer.on('error', err => {
+    console.error(`Express server failed to bind port ${PORT}:`, err);
+    process.exit(1);
   });
 }
 

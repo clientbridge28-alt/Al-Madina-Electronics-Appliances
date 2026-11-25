@@ -134,9 +134,62 @@ export interface Product {
   minStockLevel: number;
   warrantyMonths: number;
   hasSerialTracking: boolean;
+  wholesalePrice?: number;
+  openingStock?: number;
+  reorderLevel?: number;
+  warehouseId?: string;
+  warehouseName?: string;
+  damagedQuantity?: number;
+  engineNumber?: string;
+  chassisNumber?: string;
   image?: string;
   description?: string;
   serials?: SerialUnit[];
+}
+
+export interface Warehouse {
+  id: string;
+  orgId?: string;
+  name: string;
+  code: string;
+  city: string;
+  address?: string;
+  managerName?: string;
+  isDefault?: boolean;
+  active: boolean;
+}
+
+export interface StockTransfer {
+  id: string;
+  orgId?: string;
+  createdByUid?: string;
+  transferNumber: string;
+  date: string;
+  productId: string;
+  productName: string;
+  quantity: number;
+  fromWarehouseId: string;
+  fromWarehouseName: string;
+  toWarehouseId: string;
+  toWarehouseName: string;
+  serialNumbers?: string[];
+  notes?: string;
+  transferredBy: string;
+}
+
+export interface StockAdjustmentRecord {
+  id: string;
+  orgId?: string;
+  createdByUid?: string;
+  date: string;
+  productId: string;
+  productName: string;
+  adjustmentQty: number;
+  previousQty: number;
+  newQty: number;
+  adjustmentType: 'Adjustment' | 'Damaged' | 'Opening' | 'CountCorrection';
+  reason: string;
+  adjustedBy: string;
 }
 
 export interface PurchaseItem {
@@ -298,6 +351,23 @@ export interface InstallmentAccount {
   guarantor2Name?: string;
   guarantor2Phone?: string;
   guarantor2Cnic?: string;
+  guarantor2Relation?: string;
+  guarantor2Address?: string;
+  locationSector?: string;
+  mobile2?: string;
+  profession?: string;
+  referenceName?: string;
+  slipNo?: string;
+  commitmentDate?: string;
+  rescheduleHistory?: {
+    date: string;
+    reason: string;
+    previousMonthly: number;
+    newMonthly: number;
+    previousTenure: number;
+    newTenure: number;
+    by: string;
+  }[];
   recoveryOfficerId: string;
   recoveryOfficerName: string;
   totalReceived: number;
@@ -305,6 +375,23 @@ export interface InstallmentAccount {
   status: 'Active' | 'Completed' | 'Overdue' | 'Defaulted' | 'Closed Early';
   schedule: InstallmentScheduleItem[];
   notes?: string;
+}
+
+export interface InstallmentCommitment {
+  id: string;
+  orgId?: string;
+  createdByUid?: string;
+  installmentAccountId: string;
+  accountNumber: string;
+  customerId: string;
+  customerName: string;
+  customerPhone: string;
+  commitmentDate: string;
+  promisedAmount: number;
+  status: 'Pending' | 'Fulfilled' | 'Broken';
+  officerName: string;
+  remarks?: string;
+  createdAt: string;
 }
 
 export interface InstallmentReceipt {
@@ -375,12 +462,17 @@ export interface ChequeRecord {
   chequeNumber: string;
   type: 'Received' | 'Issued';
   bankName: string;
+  bankAccountId?: string;
+  partyId?: string;
+  partyType?: 'Customer' | 'Supplier';
   partyName: string;
   amount: number;
   issueDate: string;
   chequeDate: string;
   clearanceDate?: string;
   status: 'Pending' | 'Deposited' | 'Cleared' | 'Bounced' | 'Cancelled';
+  reconciled?: boolean;
+  reconciledDate?: string;
   remarks?: string;
 }
 
@@ -447,3 +539,61 @@ export interface StaffTask {
   notes?: string;
 }
 
+export interface CashBankBookRow {
+  id: string;
+  date: string;
+  voucherNo: string;
+  voucherType: string;
+  accountId: string;
+  accountName: string;
+  partyName: string;
+  narration: string;
+  receiptDebit: number;
+  paymentCredit: number;
+  runningBalance: number;
+}
+
+export interface GeneralLedgerRow {
+  id: string;
+  date: string;
+  voucherNo: string;
+  voucherType: string;
+  accountId: string;
+  accountCode: string;
+  accountName: string;
+  partyName: string;
+  narration: string;
+  debit: number;
+  credit: number;
+  runningBalance: number;
+}
+
+export interface BalanceSheetSectionRow {
+  id: string;
+  code: string;
+  name: string;
+  subCategory: string;
+  balance: number;
+}
+
+export interface BalanceSheetReport {
+  assets: BalanceSheetSectionRow[];
+  liabilities: BalanceSheetSectionRow[];
+  equity: BalanceSheetSectionRow[];
+  netIncome: number;
+  assetsTotal: number;
+  liabilitiesTotal: number;
+  equityTotal: number;
+  liabilitiesAndEquityTotal: number;
+  isBalanced: boolean;
+}
+
+export interface CashFlowReport {
+  operatingInflows: number;
+  operatingOutflows: number;
+  netOperatingCashFlow: number;
+  investingCashFlow: number;
+  financingCashFlow: number;
+  netCashChange: number;
+  endingCashAndBank: number;
+}

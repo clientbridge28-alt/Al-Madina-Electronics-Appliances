@@ -3,7 +3,9 @@ import {
   Product, PurchaseInvoice, SalesInvoice, InstallmentAccount,
   Voucher, LedgerEntry, AccountHead, ChequeRecord, Target, AuditLog,
   ShowroomSettings, User, UserRole, SerialUnit, StaffTask, TaskStatus,
-  SalesReturn, PurchaseReturn,
+  SalesReturn, PurchaseReturn, Warehouse, StockTransfer, StockAdjustmentRecord,
+  InstallmentCommitment, CashBankBookRow, GeneralLedgerRow, BalanceSheetReport,
+  CashFlowReport, BalanceSheetSectionRow,
 } from '../types/erp';
 import {
   ORG_ID,
@@ -20,12 +22,15 @@ import {
   initialVouchers, initialCheques, initialTargets, initialAuditLogs, initialTasks,
 } from './mockData';
 import {
+  ACCOUNT_IDS,
   applyVoucherToAccounts,
+  buildChequeBounceVoucher,
   buildChequeClearanceVoucher,
   buildInstallmentCreationVoucher,
   buildInstallmentReceiptVoucher,
   buildPurchaseReturnVoucher,
   buildPurchaseVoucher,
+  buildReversalVoucher,
   buildSalesReturnVoucher,
   buildSalesVoucher,
   roundMoney,
@@ -69,11 +74,15 @@ export interface ErpDatabase {
   attendance: AttendanceRecord[];
   visitors: VisitorRecord[];
   products: Product[];
+  warehouses: Warehouse[];
+  stockTransfers: StockTransfer[];
+  stockAdjustments: StockAdjustmentRecord[];
   purchases: PurchaseInvoice[];
   sales: SalesInvoice[];
   salesReturns: SalesReturn[];
   purchaseReturns: PurchaseReturn[];
   installments: InstallmentAccount[];
+  installmentCommitments: InstallmentCommitment[];
   accounts: AccountHead[];
   vouchers: Voucher[];
   cheques: ChequeRecord[];
@@ -90,7 +99,16 @@ export interface StockLedgerRow {
   id: string;
   date: string;
   refNo: string;
-  type: 'Purchase In' | 'Sale Out' | 'Sales Return In' | 'Purchase Return Out' | 'Adjustment';
+  type:
+    | 'Opening Balance'
+    | 'Purchase In'
+    | 'Sale Out'
+    | 'Sales Return In'
+    | 'Purchase Return Out'
+    | 'Adjustment'
+    | 'Damaged Out'
+    | 'Transfer Out'
+    | 'Transfer In';
   party: string;
   qtyIn: number;
   qtyOut: number;
@@ -102,7 +120,13 @@ export interface StockLedgerRow {
 let dbCache: ErpDatabase | null = null;
 let cloudActiveUid: string | null = null;
 let cloudActiveUser: User | null = null;
-let cloudInitializedFlags = { settings: false, accounts: false, seededCheckDone: false };
+let cloudInitializedFlags = {
+  settings: false,
+  settingsReceived: false,
+  accounts: false,
+  accountsReceived: false,
+  seededCheckDone: false,
+};
 let lastCloudSyncError: string | null = null;
 const listeners = new Set<() => void>();
 
@@ -149,11 +173,15 @@ function buildEmptyProductionDatabase(): ErpDatabase {
     attendance: [],
     visitors: [],
     products: [],
+    warehouses: [],
+    stockTransfers: [],
+    stockAdjustments: [],
     purchases: [],
     sales: [],
     salesReturns: [],
     purchaseReturns: [],
     installments: [],
+    installmentCommitments: [],
     accounts: initialChartOfAccounts.map(a => ({ ...a, currentBalance: 0 })),
     vouchers: [],
     cheques: [],
@@ -194,7 +222,13 @@ export function clearCloudSession(): void {
   cloudActiveUser = null;
   cloudActiveUid = null;
   lastCloudSyncError = null;
-  cloudInitializedFlags = { settings: false, accounts: false, seededCheckDone: false };
+  cloudInitializedFlags = {
+    settings: false,
+    settingsReceived: false,
+    accounts: false,
+    accountsReceived: false,
+    seededCheckDone: false,
+  };
   dbCache = buildEmptyProductionDatabase();
   notifySubscribers();
 }
@@ -202,33 +236,41 @@ export function clearCloudSession(): void {
 export function applyCloudCollectionSnapshot(colName: CloudCollectionName, docs: any[]): void {
   const db = getDatabase();
   if (colName === 'settings') {
+    cloudInitializedFlags.settingsReceived = true;
     const main = docs.find(d => d.id === 'main') || docs[0];
     if (main) {
-      db.settings = { ...initialSettings, ...main };
+      const { id: _omitSettingsId, ...cleanMain } = main as Record<string, any>;
+      db.settings = { ...initialSettings, ...cleanMain };
       cloudInitializedFlags.settings = true;
+    } else {
+      cloudInitializedFlags.settings = false;
     }
   } else if (colName === 'accounts') {
+    cloudInitializedFlags.accountsReceived = true;
     if (docs.length > 0) {
-      db.accounts = docs.sort((a, b) => String(a.code).localeCompare(String(b.code)));
+      db.accounts = [...docs].sort((a, b) => String(a.code).localeCompare(String(b.code)));
       cloudInitializedFlags.accounts = true;
+    } else {
+      cloudInitializedFlags.accounts = false;
     }
   } else if (colName in db) {
     (db as any)[colName] = docs;
   }
 
-  // Bootstrap initial empty chart of accounts & showroom settings in Firestore on first login when empty
+  // Bootstrap initial empty chart of accounts & showroom settings in Firestore only after BOTH snapshots arrive
   if (
     !cloudInitializedFlags.seededCheckDone &&
     cloudActiveUser?.role === 'Owner' &&
-    colName === 'accounts'
+    cloudInitializedFlags.settingsReceived &&
+    cloudInitializedFlags.accountsReceived
   ) {
     cloudInitializedFlags.seededCheckDone = true;
-    if (docs.length === 0) {
+    if (!cloudInitializedFlags.settings || !cloudInitializedFlags.accounts) {
       seedInitialCloudDefaultsIfNeeded(
         db.settings,
         initialChartOfAccounts.map(a => ({ ...a, currentBalance: 0 })),
         cloudInitializedFlags.settings ? 1 : 0,
-        docs.length
+        cloudInitializedFlags.accounts ? db.accounts.length : 0
       ).catch(err => console.warn('Initial cloud defaults seed deferred:', err));
     }
   }
@@ -317,16 +359,24 @@ export function getSettings(): ShowroomSettings {
 
 export function saveSettings(settings: ShowroomSettings): void {
   const db = getDatabase();
-  db.settings = settings;
+  const { id: _omitSettingsId, ...cleanSettings } = (settings as ShowroomSettings & { id?: string });
+  db.settings = cleanSettings;
   saveDatabase(db);
   if (isCloudConnected()) {
     persistCloudDoc('settings', 'main', {
-      ...settings,
+      ...cleanSettings,
       orgId: ORG_ID,
       updatedAt: new Date().toISOString(),
-    }).catch(err => console.error(err));
+    })
+      .then(() => {
+        if (lastCloudSyncError !== null) clearLastCloudSyncError();
+      })
+      .catch(err => {
+        console.error(err);
+        setCloudSyncError(err?.message || 'Could not save showroom settings to Cloud Firestore.');
+      });
   }
-  logAuditAction('Settings', 'Update Showroom Profile', `Updated showroom profile for ${settings.showroomName}`);
+  logAuditAction('Settings', 'Update Showroom Profile', `Updated showroom profile for ${cleanSettings.showroomName}`);
 }
 
 // ---------------- AUDIT LOGS ----------------
@@ -627,54 +677,195 @@ export function deleteProduct(productId: string): void {
   logAuditAction('Inventory', 'Delete Product', `Deleted product: ${target?.name || safeId}`, safeId);
 }
 
-export function adjustProductStock(productId: string, adjustmentQty: number, reason: string): void {
+export function adjustProductStock(
+  productId: string,
+  adjustmentQty: number,
+  reason: string,
+  options?: {
+    allowNegativeStock?: boolean;
+    adjustmentType?: StockAdjustmentRecord['adjustmentType'];
+  }
+): StockAdjustmentRecord | null {
   const db = getDatabase();
+  const user = getActiveUser();
+  const uid = getActorUid();
   const p = db.products.find(x => x.id === productId);
-  if (!p) return;
+  if (!p) return null;
 
-  const oldQty = p.stockQuantity;
-  p.stockQuantity = Math.max(0, Math.round(p.stockQuantity + adjustmentQty));
+  const delta = Math.round(Number(adjustmentQty) || 0);
+  const oldQty = Math.round(Number(p.stockQuantity) || 0);
+  const nextQty = oldQty + delta;
+
+  if (nextQty < 0 && !(options?.allowNegativeStock && user.role === 'Owner')) {
+    throw new Error(`Insufficient stock for ${p.name}: available ${oldQty}, requested reduction ${Math.abs(delta)}.`);
+  }
+
+  p.stockQuantity = nextQty;
+  const adjustmentType = options?.adjustmentType || 'Adjustment';
+  if (adjustmentType === 'Damaged' && delta < 0) {
+    p.damagedQuantity = Math.max(0, Math.round(Number(p.damagedQuantity || 0) + Math.abs(delta)));
+  }
   (p as any).updatedAt = new Date().toISOString();
+
+  const record: StockAdjustmentRecord = {
+    id: sanitizeDocId(`ADJ-${Date.now()}-${Math.floor(Math.random() * 1000)}`),
+    orgId: ORG_ID,
+    createdByUid: uid,
+    date: new Date().toISOString().split('T')[0],
+    productId: p.id,
+    productName: p.name,
+    adjustmentQty: delta,
+    previousQty: oldQty,
+    newQty: nextQty,
+    adjustmentType,
+    reason: reason || 'Manual stock adjustment',
+    adjustedBy: user.name,
+  };
+
+  if (!db.stockAdjustments) db.stockAdjustments = [];
+  db.stockAdjustments.unshift(record);
   saveDatabase(db);
-  persistBatchIfLive([{ collection: 'products', id: p.id, data: { ...p, orgId: ORG_ID } }]);
-  logAuditAction('Inventory', 'Stock Adjustment', `Adjusted stock for ${p.name} from ${oldQty} to ${p.stockQuantity}. Reason: ${reason}`, p.id);
+  persistBatchIfLive([
+    { collection: 'products', id: p.id, data: { ...p, orgId: ORG_ID } },
+    { collection: 'stockAdjustments', id: record.id, data: record },
+  ]);
+  logAuditAction('Inventory', adjustmentType === 'Damaged' ? 'Damaged Stock Entry' : 'Stock Adjustment', `Adjusted stock for ${p.name} from ${oldQty} to ${nextQty}. Reason: ${record.reason}`, p.id);
+  return record;
+}
+
+export function getWarehouses(): Warehouse[] {
+  return getDatabase().warehouses || [];
+}
+
+export function saveWarehouse(warehouse: Warehouse): Warehouse {
+  const db = getDatabase();
+  if (!db.warehouses) db.warehouses = [];
+  const payload: Warehouse = {
+    ...warehouse,
+    id: sanitizeDocId(warehouse.id || `WH-${Date.now().toString().slice(-4)}`),
+    orgId: ORG_ID,
+  };
+  const idx = db.warehouses.findIndex(w => w.id === payload.id);
+  if (idx >= 0) {
+    db.warehouses[idx] = payload;
+  } else {
+    db.warehouses.unshift(payload);
+  }
+  saveDatabase(db);
+  persistBatchIfLive([{ collection: 'warehouses', id: payload.id, data: payload }]);
+  logAuditAction('Inventory', 'Save Warehouse', `Saved warehouse ${payload.name} (${payload.code})`, payload.id);
+  return payload;
+}
+
+export function getStockTransfers(): StockTransfer[] {
+  return getDatabase().stockTransfers || [];
+}
+
+export function getStockAdjustments(): StockAdjustmentRecord[] {
+  return getDatabase().stockAdjustments || [];
+}
+
+export function createStockTransfer(transfer: Omit<StockTransfer, 'id' | 'transferredBy' | 'orgId' | 'createdByUid'>): StockTransfer {
+  const db = getDatabase();
+  const user = getActiveUser();
+  const uid = getActorUid();
+  if (!db.stockTransfers) db.stockTransfers = [];
+
+  const qty = Math.round(Number(transfer.quantity) || 0);
+  if (qty <= 0) {
+    throw new Error('Transfer quantity must be greater than zero.');
+  }
+  if (transfer.fromWarehouseId === transfer.toWarehouseId) {
+    throw new Error('Source and destination warehouses must be different.');
+  }
+
+  const product = db.products.find(p => p.id === transfer.productId);
+  if (!product) {
+    throw new Error('Selected product not found.');
+  }
+  if (product.stockQuantity < qty) {
+    throw new Error(`Insufficient stock for transfer of ${product.name}: available ${product.stockQuantity}, requested ${qty}.`);
+  }
+
+  const record: StockTransfer = {
+    ...transfer,
+    id: sanitizeDocId(transfer.transferNumber || `STRF-${Date.now().toString().slice(-5)}`),
+    orgId: ORG_ID,
+    createdByUid: uid,
+    quantity: qty,
+    transferredBy: user.name,
+  };
+
+  product.warehouseId = transfer.toWarehouseId;
+  product.warehouseName = transfer.toWarehouseName;
+  (product as any).updatedAt = new Date().toISOString();
+
+  db.stockTransfers.unshift(record);
+  saveDatabase(db);
+  persistBatchIfLive([
+    { collection: 'stockTransfers', id: record.id, data: record },
+    { collection: 'products', id: product.id, data: { ...product, orgId: ORG_ID } },
+  ]);
+  logAuditAction('Inventory', 'Stock Transfer', `Transferred ${qty} x ${product.name} from ${transfer.fromWarehouseName} to ${transfer.toWarehouseName}`, record.id);
+  return record;
 }
 
 export function getItemStockLedger(productId: string): StockLedgerRow[] {
   const db = getDatabase();
-  const rows: Omit<StockLedgerRow, 'runningQty'>[] = [];
+  const product = db.products.find(p => p.id === productId);
+  const rows: (Omit<StockLedgerRow, 'runningQty'> & { sortOrder: number })[] = [];
 
-  db.purchases.forEach(pur => {
-    pur.items.filter(i => i.productId === productId).forEach((item, idx) => {
-      rows.push({
-        id: `STK-PUR-${pur.id}-${idx}`,
-        date: pur.date,
-        refNo: pur.invoiceNumber,
-        type: 'Purchase In',
-        party: pur.supplierName,
-        qtyIn: item.quantity,
-        qtyOut: 0,
-        unitRate: item.purchasePrice,
-        serial: item.serialNumbers?.join(', '),
+  if (product && (product.openingStock || 0) > 0) {
+    rows.push({
+      id: `STK-OP-${product.id}`,
+      date: '0000-01-01',
+      refNo: 'OPENING',
+      type: 'Opening Balance',
+      party: product.warehouseName || 'Main Showroom',
+      qtyIn: product.openingStock || 0,
+      qtyOut: 0,
+      unitRate: product.purchasePrice,
+      sortOrder: 0,
+    });
+  }
+
+  db.purchases
+    .filter(pur => pur.status !== 'Draft')
+    .forEach(pur => {
+      pur.items.filter(i => i.productId === productId).forEach((item, idx) => {
+        rows.push({
+          id: `STK-PUR-${pur.id}-${idx}`,
+          date: pur.date,
+          refNo: pur.invoiceNumber,
+          type: 'Purchase In',
+          party: pur.supplierName,
+          qtyIn: item.quantity,
+          qtyOut: 0,
+          unitRate: item.purchasePrice,
+          serial: item.serialNumbers?.join(', '),
+          sortOrder: 1,
+        });
       });
     });
-  });
 
-  db.sales.forEach(sale => {
-    sale.items.filter(i => i.productId === productId).forEach((item, idx) => {
-      rows.push({
-        id: `STK-SAL-${sale.id}-${idx}`,
-        date: sale.date,
-        refNo: sale.invoiceNumber,
-        type: 'Sale Out',
-        party: sale.customerName,
-        qtyIn: 0,
-        qtyOut: item.quantity,
-        unitRate: item.unitPrice,
-        serial: item.selectedSerial,
+  db.sales
+    .filter(sale => sale.status !== 'Cancelled')
+    .forEach(sale => {
+      sale.items.filter(i => i.productId === productId).forEach((item, idx) => {
+        rows.push({
+          id: `STK-SAL-${sale.id}-${idx}`,
+          date: sale.date,
+          refNo: sale.invoiceNumber,
+          type: 'Sale Out',
+          party: sale.customerName,
+          qtyIn: 0,
+          qtyOut: item.quantity,
+          unitRate: item.unitPrice,
+          serial: item.selectedSerial,
+          sortOrder: 2,
+        });
       });
     });
-  });
 
   (db.salesReturns || []).forEach(ret => {
     ret.items.filter(i => i.productId === productId).forEach((item, idx) => {
@@ -688,6 +879,7 @@ export function getItemStockLedger(productId: string): StockLedgerRow[] {
         qtyOut: 0,
         unitRate: item.unitPrice,
         serial: item.serialNumber,
+        sortOrder: 3,
       });
     });
   });
@@ -704,13 +896,47 @@ export function getItemStockLedger(productId: string): StockLedgerRow[] {
         qtyOut: item.quantity,
         unitRate: item.purchasePrice,
         serial: item.serialNumber,
+        sortOrder: 4,
       });
     });
   });
 
-  rows.sort((a, b) => a.date.localeCompare(b.date));
+  (db.stockAdjustments || [])
+    .filter(a => a.productId === productId)
+    .forEach(adj => {
+      rows.push({
+        id: `STK-ADJ-${adj.id}`,
+        date: adj.date,
+        refNo: adj.id,
+        type: adj.adjustmentType === 'Damaged' ? 'Damaged Out' : 'Adjustment',
+        party: adj.reason,
+        qtyIn: adj.adjustmentQty > 0 ? adj.adjustmentQty : 0,
+        qtyOut: adj.adjustmentQty < 0 ? Math.abs(adj.adjustmentQty) : 0,
+        unitRate: product?.purchasePrice || 0,
+        sortOrder: 5,
+      });
+    });
+
+  (db.stockTransfers || [])
+    .filter(tr => tr.productId === productId)
+    .forEach(tr => {
+      rows.push({
+        id: `STK-TRF-${tr.id}`,
+        date: tr.date,
+        refNo: tr.transferNumber,
+        type: 'Transfer Out',
+        party: `${tr.fromWarehouseName} -> ${tr.toWarehouseName}`,
+        qtyIn: 0,
+        qtyOut: 0,
+        unitRate: product?.purchasePrice || 0,
+        serial: `${tr.quantity} unit(s) moved`,
+        sortOrder: 6,
+      });
+    });
+
+  rows.sort((a, b) => a.date.localeCompare(b.date) || a.sortOrder - b.sortOrder);
   let running = 0;
-  return rows.map(r => {
+  return rows.map(({ sortOrder: _s, ...r }) => {
     running += r.qtyIn - r.qtyOut;
     return { ...r, runningQty: running };
   });
@@ -748,8 +974,9 @@ export function createPurchaseInvoice(invoice: Omit<PurchaseInvoice, 'id' | 'cre
   newInvoice.items.forEach(item => {
     const prod = db.products.find(p => p.id === item.productId);
     if (prod) {
-      prod.stockQuantity += item.quantity;
+      prod.stockQuantity = Math.round(prod.stockQuantity + Number(item.quantity || 0));
       prod.purchasePrice = item.purchasePrice || prod.purchasePrice;
+      (prod as any).updatedAt = nowIso;
       if (item.serialNumbers && item.serialNumbers.length > 0) {
         if (!prod.serials) prod.serials = [];
         item.serialNumbers.forEach(sn => {
@@ -817,8 +1044,15 @@ export function createPurchaseReturn(returnData: Omit<PurchaseReturn, 'id' | 'pr
 
   newReturn.items.forEach(item => {
     const prod = db.products.find(p => p.id === item.productId);
+    if (prod && prod.stockQuantity < item.quantity) {
+      throw new Error(`Insufficient stock for purchase return of ${prod.name}: available ${prod.stockQuantity}, requested ${item.quantity}.`);
+    }
+  });
+
+  newReturn.items.forEach(item => {
+    const prod = db.products.find(p => p.id === item.productId);
     if (prod) {
-      prod.stockQuantity = Math.max(0, prod.stockQuantity - item.quantity);
+      prod.stockQuantity = Math.round(prod.stockQuantity - item.quantity);
       if (item.serialNumber && prod.serials) {
         const serialUnit = prod.serials.find(s => s.serialNumber === item.serialNumber);
         if (serialUnit) serialUnit.status = 'Returned';
@@ -863,7 +1097,10 @@ export function getSales(): SalesInvoice[] {
   return getDatabase().sales;
 }
 
-export function createSalesInvoice(saleData: Omit<SalesInvoice, 'id' | 'status'>): SalesInvoice {
+export function createSalesInvoice(
+  saleData: Omit<SalesInvoice, 'id' | 'status'>,
+  options?: { allowNegativeStock?: boolean }
+): SalesInvoice {
   const db = getDatabase();
   const user = getActiveUser();
   const uid = getActorUid();
@@ -874,6 +1111,18 @@ export function createSalesInvoice(saleData: Omit<SalesInvoice, 'id' | 'status'>
     throw new Error(`Duplicate Sales Invoice #${saleData.invoiceNumber || safeId} already exists.`);
   }
 
+  let negativeOverrideUsed = false;
+  for (const item of saleData.items) {
+    const prod = db.products.find(p => p.id === item.productId);
+    if (prod && prod.stockQuantity < item.quantity) {
+      if (options?.allowNegativeStock && user.role === 'Owner') {
+        negativeOverrideUsed = true;
+      } else {
+        throw new Error(`Insufficient stock for ${prod.name}: available ${prod.stockQuantity}, requested ${item.quantity}.`);
+      }
+    }
+  }
+
   const nowIso = new Date().toISOString();
   const newSale: SalesInvoice & { orgId?: string; createdByUid?: string; updatedAt?: string } = {
     ...saleData,
@@ -881,6 +1130,9 @@ export function createSalesInvoice(saleData: Omit<SalesInvoice, 'id' | 'status'>
     orgId: ORG_ID,
     createdByUid: uid,
     status: 'Completed',
+    notes: negativeOverrideUsed
+      ? `${saleData.notes ? `${saleData.notes} ` : ''}[Owner Negative Stock Override]`.trim()
+      : saleData.notes,
     updatedAt: nowIso,
   };
 
@@ -889,7 +1141,8 @@ export function createSalesInvoice(saleData: Omit<SalesInvoice, 'id' | 'status'>
   newSale.items.forEach(item => {
     const prod = db.products.find(p => p.id === item.productId);
     if (prod) {
-      prod.stockQuantity = Math.max(0, prod.stockQuantity - item.quantity);
+      prod.stockQuantity = Math.round(prod.stockQuantity - item.quantity);
+      (prod as any).updatedAt = nowIso;
       if (item.selectedSerial && prod.serials) {
         const serialUnit = prod.serials.find(s => s.serialNumber === item.selectedSerial);
         if (serialUnit) {
@@ -951,7 +1204,8 @@ export function createSalesReturn(returnData: Omit<SalesReturn, 'id' | 'processe
   newReturn.items.forEach(item => {
     const prod = db.products.find(p => p.id === item.productId);
     if (prod) {
-      prod.stockQuantity += item.quantity;
+      prod.stockQuantity = Math.round(prod.stockQuantity + Number(item.quantity || 0));
+      (prod as any).updatedAt = new Date().toISOString();
       cogsRestore += roundMoney((prod.purchasePrice || 0) * item.quantity);
       if (item.serialNumber && prod.serials) {
         const serialUnit = prod.serials.find(s => s.serialNumber === item.serialNumber);
@@ -1176,16 +1430,166 @@ export function closeInstallmentAccountEarly(
 
 export function updateInstallmentAccountDetails(
   accountId: string,
-  updates: Partial<Pick<InstallmentAccount, 'guarantor1Name' | 'guarantor1Phone' | 'guarantor1Cnic' | 'guarantor1Relation' | 'recoveryOfficerName' | 'notes'>>
+  updates: Partial<
+    Pick<
+      InstallmentAccount,
+      | 'guarantor1Name'
+      | 'guarantor1Phone'
+      | 'guarantor1Cnic'
+      | 'guarantor1Relation'
+      | 'guarantor2Name'
+      | 'guarantor2Phone'
+      | 'guarantor2Cnic'
+      | 'guarantor2Relation'
+      | 'guarantor2Address'
+      | 'locationSector'
+      | 'mobile2'
+      | 'profession'
+      | 'referenceName'
+      | 'slipNo'
+      | 'commitmentDate'
+      | 'recoveryOfficerId'
+      | 'recoveryOfficerName'
+      | 'status'
+      | 'notes'
+    >
+  >
 ): InstallmentAccount | null {
   const db = getDatabase();
   const account = db.installments.find(a => a.id === accountId);
   if (!account) return null;
-  Object.assign(account, updates);
+  Object.assign(account, updates, { updatedAt: new Date().toISOString() });
   saveDatabase(db);
   persistBatchIfLive([{ collection: 'installments', id: account.id, data: { ...account, orgId: ORG_ID } }]);
   logAuditAction('Installments', 'Update Account Plan', `Updated plan details for #${account.accountNumber}`, account.id);
   return { ...account };
+}
+
+export function rescheduleInstallmentPlan(
+  accountId: string,
+  newTenureMonths: number,
+  newStartDueDate: string,
+  reason: string
+): InstallmentAccount {
+  const db = getDatabase();
+  const user = getActiveUser();
+  const account = db.installments.find(a => a.id === accountId);
+  if (!account) throw new Error('Installment account not found');
+  if (account.status === 'Completed' || account.status === 'Closed Early') {
+    throw new Error('Completed or early-closed installment plans cannot be rescheduled.');
+  }
+
+  const remainingTenure = Math.max(1, Math.min(48, Math.round(Number(newTenureMonths) || 6)));
+  const remainingTotal = roundMoney(account.remainingBalance);
+  if (remainingTotal <= 0) {
+    throw new Error('Account has zero remaining balance to reschedule.');
+  }
+
+  const paidRows = account.schedule.filter(s => s.status === 'Paid');
+  const paidMarkupSum = roundMoney(paidRows.reduce((s, r) => s + r.markupAmount, 0));
+  const remainingMarkupTotal = Math.max(0, roundMoney(account.markupAmount - paidMarkupSum));
+  const remainingPrincipalTotal = Math.max(0, roundMoney(remainingTotal - remainingMarkupTotal));
+
+  const perInstallmentTotal = Math.round(remainingTotal / remainingTenure);
+  const perInstallmentPrincipal = Math.round(remainingPrincipalTotal / remainingTenure);
+  const perInstallmentMarkup = perInstallmentTotal - perInstallmentPrincipal;
+
+  const baseDate = new Date(newStartDueDate || new Date().toISOString().split('T')[0]);
+  const startNo = paidRows.length + 1;
+  const newPendingRows = Array.from({ length: remainingTenure }, (_, idx) => {
+    const due = new Date(baseDate);
+    due.setMonth(due.getMonth() + idx);
+    const isLast = idx === remainingTenure - 1;
+    const allocatedPriorTotal = perInstallmentTotal * idx;
+    const totalDue = isLast ? roundMoney(remainingTotal - allocatedPriorTotal) : perInstallmentTotal;
+    const markupAmt = isLast
+      ? Math.max(0, roundMoney(remainingMarkupTotal - perInstallmentMarkup * idx))
+      : Math.max(0, perInstallmentMarkup);
+    const principalAmt = Math.max(0, roundMoney(totalDue - markupAmt));
+    return {
+      installmentNumber: startNo + idx,
+      dueDate: due.toISOString().split('T')[0],
+      principalAmount: principalAmt,
+      markupAmount: markupAmt,
+      totalDue,
+      paidAmount: 0,
+      remainingAmount: totalDue,
+      status: 'Upcoming' as const,
+    };
+  });
+
+  const previousMonthly = account.monthlyInstallment;
+  const previousTenure = account.durationMonths;
+  account.schedule = [...paidRows, ...newPendingRows];
+  account.durationMonths = paidRows.length + remainingTenure;
+  account.monthlyInstallment = perInstallmentTotal;
+  account.status = 'Active';
+  account.rescheduleHistory = [
+    ...(account.rescheduleHistory || []),
+    {
+      date: new Date().toISOString().split('T')[0],
+      reason: reason || 'Customer payment plan rescheduling',
+      previousMonthly,
+      newMonthly: perInstallmentTotal,
+      previousTenure,
+      newTenure: account.durationMonths,
+      by: user.name,
+    },
+  ];
+  (account as any).updatedAt = new Date().toISOString();
+
+  saveDatabase(db);
+  persistBatchIfLive([{ collection: 'installments', id: account.id, data: { ...account, orgId: ORG_ID } }]);
+  logAuditAction(
+    'Installments',
+    'Reschedule Plan',
+    `Rescheduled #${account.accountNumber} (${account.customerName}) to ${remainingTenure} remaining months @ PKR ${perInstallmentTotal.toLocaleString()}/mo. Reason: ${reason}`,
+    account.id
+  );
+  return { ...account };
+}
+
+export function getInstallmentCommitments(): InstallmentCommitment[] {
+  return [...(getDatabase().installmentCommitments || [])].sort((a, b) => a.commitmentDate.localeCompare(b.commitmentDate));
+}
+
+export function saveInstallmentCommitment(
+  commitment: Omit<InstallmentCommitment, 'id' | 'createdAt' | 'orgId' | 'createdByUid'>
+): InstallmentCommitment {
+  const db = getDatabase();
+  const uid = getActorUid();
+  if (!db.installmentCommitments) db.installmentCommitments = [];
+  const record: InstallmentCommitment = {
+    ...commitment,
+    id: sanitizeDocId(`CMT-${Date.now()}-${Math.floor(Math.random() * 1000)}`),
+    orgId: ORG_ID,
+    createdByUid: uid,
+    createdAt: new Date().toISOString().split('T')[0],
+  };
+  db.installmentCommitments.unshift(record);
+
+  const account = db.installments.find(i => i.id === commitment.installmentAccountId);
+  const ops: BatchWriteOp[] = [{ collection: 'installmentCommitments', id: record.id, data: record }];
+  if (account) {
+    account.commitmentDate = commitment.commitmentDate;
+    (account as any).updatedAt = new Date().toISOString();
+    ops.push({ collection: 'installments', id: account.id, data: { ...account, orgId: ORG_ID } });
+  }
+
+  saveDatabase(db);
+  persistBatchIfLive(ops);
+  logAuditAction('Installments', 'Log Commitment', `Logged payment commitment PKR ${record.promisedAmount.toLocaleString()} due ${record.commitmentDate} for ${record.customerName}`, record.id);
+  return record;
+}
+
+export function updateCommitmentStatus(commitmentId: string, status: InstallmentCommitment['status']): void {
+  const db = getDatabase();
+  const target = (db.installmentCommitments || []).find(c => c.id === commitmentId);
+  if (!target) return;
+  target.status = status;
+  saveDatabase(db);
+  persistBatchIfLive([{ collection: 'installmentCommitments', id: target.id, data: { ...target, orgId: ORG_ID } }]);
+  logAuditAction('Installments', 'Update Commitment', `Marked commitment ${target.id} as ${status}`, target.id);
 }
 
 // ---------------- ACCOUNTS, VOUCHERS & LEDGERS ----------------
@@ -1238,6 +1642,29 @@ export function createVoucher(voucher: Omit<Voucher, 'id' | 'createdBy' | 'statu
     if (acc) batchOps.push({ collection: 'accounts', id: acc.id, data: { ...acc, orgId: ORG_ID } });
   }
 
+  // Synchronize standalone party voucher with Customer / Supplier balances
+  if (newVoucher.partyId && newVoucher.partyType === 'Customer' && !newVoucher.sourceRef) {
+    const cust = db.customers.find(c => c.id === newVoucher.partyId);
+    if (cust) {
+      if (newVoucher.voucherType === 'Receive Voucher') {
+        cust.currentBalance = roundMoney(cust.currentBalance - newVoucher.amount);
+      } else if (newVoucher.voucherType === 'Payment Voucher') {
+        cust.currentBalance = roundMoney(cust.currentBalance + newVoucher.amount);
+      }
+      batchOps.push({ collection: 'customers', id: cust.id, data: { ...cust, orgId: ORG_ID } });
+    }
+  } else if (newVoucher.partyId && newVoucher.partyType === 'Supplier' && !newVoucher.sourceRef) {
+    const supp = db.suppliers.find(s => s.id === newVoucher.partyId);
+    if (supp) {
+      if (newVoucher.voucherType === 'Payment Voucher') {
+        supp.currentBalance = roundMoney(supp.currentBalance - newVoucher.amount);
+      } else if (newVoucher.voucherType === 'Receive Voucher') {
+        supp.currentBalance = roundMoney(supp.currentBalance + newVoucher.amount);
+      }
+      batchOps.push({ collection: 'suppliers', id: supp.id, data: { ...supp, orgId: ORG_ID } });
+    }
+  }
+
   db.vouchers.unshift(newVoucher);
   saveDatabase(db);
   persistBatchIfLive(batchOps);
@@ -1245,15 +1672,72 @@ export function createVoucher(voucher: Omit<Voucher, 'id' | 'createdBy' | 'statu
   return newVoucher;
 }
 
+export function reverseVoucher(voucherId: string, reason: string): Voucher {
+  const db = getDatabase();
+  const user = getActiveUser();
+  const uid = getActorUid();
+  const original = db.vouchers.find(v => v.id === voucherId);
+  if (!original) {
+    throw new Error('Voucher not found.');
+  }
+  if (original.status === 'Cancelled' || original.reversedByVoucherId) {
+    throw new Error(`Voucher ${original.voucherNumber} has already been reversed/cancelled.`);
+  }
+
+  const reversal = buildReversalVoucher(original, reason, user.name, uid);
+  db.accounts = applyVoucherToAccounts(db.accounts, reversal.entries);
+  original.status = 'Cancelled';
+  original.reversedByVoucherId = reversal.id;
+
+  const batchOps: BatchWriteOp[] = [
+    { collection: 'vouchers', id: original.id, data: { ...original, orgId: ORG_ID } },
+    { collection: 'vouchers', id: reversal.id, data: { ...reversal, orgId: ORG_ID } },
+  ];
+
+  for (const entry of reversal.entries) {
+    const acc = db.accounts.find(a => a.id === entry.accountId);
+    if (acc) batchOps.push({ collection: 'accounts', id: acc.id, data: { ...acc, orgId: ORG_ID } });
+  }
+
+  if (original.partyId && !original.sourceRef) {
+    if (original.partyType === 'Customer') {
+      const cust = db.customers.find(c => c.id === original.partyId);
+      if (cust) {
+        if (original.voucherType === 'Receive Voucher') {
+          cust.currentBalance = roundMoney(cust.currentBalance + original.amount);
+        } else if (original.voucherType === 'Payment Voucher') {
+          cust.currentBalance = roundMoney(cust.currentBalance - original.amount);
+        }
+        batchOps.push({ collection: 'customers', id: cust.id, data: { ...cust, orgId: ORG_ID } });
+      }
+    } else if (original.partyType === 'Supplier') {
+      const supp = db.suppliers.find(s => s.id === original.partyId);
+      if (supp) {
+        if (original.voucherType === 'Payment Voucher') {
+          supp.currentBalance = roundMoney(supp.currentBalance + original.amount);
+        } else if (original.voucherType === 'Receive Voucher') {
+          supp.currentBalance = roundMoney(supp.currentBalance - original.amount);
+        }
+        batchOps.push({ collection: 'suppliers', id: supp.id, data: { ...supp, orgId: ORG_ID } });
+      }
+    }
+  }
+
+  db.vouchers.unshift(reversal);
+  saveDatabase(db);
+  persistBatchIfLive(batchOps);
+  logAuditAction('Accounting', 'Reverse Voucher', `Reversed voucher #${original.voucherNumber} via #${reversal.voucherNumber}. Reason: ${reason}`, original.id);
+  return reversal;
+}
+
 export function getCustomerLedgerEntries(customerId: string): LedgerEntry[] {
   const db = getDatabase();
   const cust = db.customers.find(c => c.id === customerId);
   if (!cust) return [];
 
-  const entries: LedgerEntry[] = [];
-  let runningBalance = cust.openingBalance || 0;
+  const rawRows: (Omit<LedgerEntry, 'balance'> & { sortOrder: number })[] = [];
 
-  entries.push({
+  rawRows.push({
     id: 'op-1',
     date: cust.createdAt,
     voucherNo: 'OPENING',
@@ -1261,41 +1745,42 @@ export function getCustomerLedgerEntries(customerId: string): LedgerEntry[] {
     description: 'Account Opening Balance',
     debit: cust.openingBalance > 0 ? cust.openingBalance : 0,
     credit: cust.openingBalance < 0 ? Math.abs(cust.openingBalance) : 0,
-    balance: runningBalance,
     partyId: customerId,
     partyType: 'Customer',
+    sortOrder: 0,
   });
 
+  const coveredSourceRefs = new Set<string>();
+
   db.sales
-    .filter(s => s.customerId === customerId)
+    .filter(s => s.customerId === customerId && s.status !== 'Cancelled')
     .forEach(s => {
-      runningBalance = roundMoney(runningBalance + s.grandTotal);
-      entries.push({
+      coveredSourceRefs.add(s.id);
+      rawRows.push({
         id: `sale-${s.id}`,
         date: s.date,
         voucherNo: s.invoiceNumber,
         voucherType: 'Sales Invoice',
         description: `Sold: ${s.items.map(i => `${i.productName} (x${i.quantity})`).join(', ')}`,
-        debit: s.grandTotal,
+        debit: roundMoney(s.grandTotal),
         credit: 0,
-        balance: runningBalance,
         partyId: customerId,
         partyType: 'Customer',
+        sortOrder: 1,
       });
 
       if (s.paidAmount > 0) {
-        runningBalance = roundMoney(runningBalance - s.paidAmount);
-        entries.push({
+        rawRows.push({
           id: `pay-${s.id}`,
           date: s.date,
           voucherNo: s.invoiceNumber,
           voucherType: 'Receipt / Payment',
           description: `Payment received via ${s.paymentMethod}`,
           debit: 0,
-          credit: s.paidAmount,
-          balance: runningBalance,
+          credit: roundMoney(s.paidAmount),
           partyId: customerId,
           partyType: 'Customer',
+          sortOrder: 2,
         });
       }
     });
@@ -1303,40 +1788,66 @@ export function getCustomerLedgerEntries(customerId: string): LedgerEntry[] {
   (db.salesReturns || [])
     .filter(r => r.customerId === customerId && r.refundMethod === 'Credit Note')
     .forEach(r => {
-      runningBalance = roundMoney(runningBalance - r.grandTotal);
-      entries.push({
+      coveredSourceRefs.add(r.id);
+      rawRows.push({
         id: `srtn-${r.id}`,
         date: r.date,
         voucherNo: r.returnNumber,
         voucherType: 'Sales Return',
         description: `Credit Note for Invoice #${r.originalInvoiceNo}`,
         debit: 0,
-        credit: r.grandTotal,
-        balance: runningBalance,
+        credit: roundMoney(r.grandTotal),
         partyId: customerId,
         partyType: 'Customer',
+        sortOrder: 3,
       });
     });
 
+  (db.installments || [])
+    .filter(i => i.customerId === customerId)
+    .forEach(inst => {
+      coveredSourceRefs.add(inst.id);
+    });
+
   db.vouchers
-    .filter(v => v.partyId === customerId && v.voucherType === 'Receive Voucher' && !v.sourceRef?.startsWith('INV-'))
+    .filter(
+      v =>
+        v.partyId === customerId &&
+        v.status !== 'Cancelled' &&
+        !coveredSourceRefs.has(v.sourceRef || '') &&
+        !v.sourceRef?.startsWith('INV-') &&
+        !v.sourceRef?.startsWith('REV-')
+    )
     .forEach(v => {
-      runningBalance = roundMoney(runningBalance - v.amount);
-      entries.push({
+      const isBounceOrCharge =
+        v.voucherType === 'Payment Voucher' ||
+        v.sourceRef?.startsWith('BOUNCE-') ||
+        v.entries.some(
+          e =>
+            (e.accountId === ACCOUNT_IDS.ACCOUNTS_RECEIVABLE || e.accountId === ACCOUNT_IDS.INSTALLMENT_RECEIVABLE) &&
+            e.debit > 0
+        );
+      rawRows.push({
         id: `vouch-${v.id}`,
         date: v.date,
         voucherNo: v.voucherNumber,
         voucherType: v.voucherType,
         description: v.narration,
-        debit: 0,
-        credit: v.amount,
-        balance: runningBalance,
+        debit: isBounceOrCharge ? roundMoney(v.amount) : 0,
+        credit: isBounceOrCharge ? 0 : roundMoney(v.amount),
         partyId: customerId,
         partyType: 'Customer',
+        sortOrder: 4,
       });
     });
 
-  return entries.sort((a, b) => a.date.localeCompare(b.date));
+  rawRows.sort((a, b) => a.date.localeCompare(b.date) || a.sortOrder - b.sortOrder);
+
+  let runningBalance = 0;
+  return rawRows.map(({ sortOrder: _s, ...row }) => {
+    runningBalance = roundMoney(runningBalance + row.debit - row.credit);
+    return { ...row, balance: runningBalance };
+  });
 }
 
 export function getSupplierLedgerEntries(supplierId: string): LedgerEntry[] {
@@ -1344,52 +1855,52 @@ export function getSupplierLedgerEntries(supplierId: string): LedgerEntry[] {
   const supp = db.suppliers.find(s => s.id === supplierId);
   if (!supp) return [];
 
-  const entries: LedgerEntry[] = [];
-  let runningBalance = supp.openingBalance || 0;
+  const rawRows: (Omit<LedgerEntry, 'balance'> & { sortOrder: number })[] = [];
 
-  entries.push({
+  rawRows.push({
     id: 'op-supp-1',
     date: supp.createdAt,
     voucherNo: 'OPENING',
     voucherType: 'Opening Balance',
     description: 'Initial Opening Balance',
-    debit: 0,
-    credit: runningBalance,
-    balance: runningBalance,
+    debit: supp.openingBalance < 0 ? Math.abs(supp.openingBalance) : 0,
+    credit: supp.openingBalance > 0 ? supp.openingBalance : 0,
     partyId: supplierId,
     partyType: 'Supplier',
+    sortOrder: 0,
   });
 
+  const coveredSourceRefs = new Set<string>();
+
   db.purchases
-    .filter(p => p.supplierId === supplierId)
+    .filter(p => p.supplierId === supplierId && p.status !== 'Draft')
     .forEach(p => {
-      runningBalance = roundMoney(runningBalance + p.grandTotal);
-      entries.push({
+      coveredSourceRefs.add(p.id);
+      rawRows.push({
         id: `pur-${p.id}`,
         date: p.date,
         voucherNo: p.invoiceNumber,
         voucherType: 'Purchase Invoice',
         description: `Purchased: ${p.items.map(i => `${i.productName} (x${i.quantity})`).join(', ')}`,
         debit: 0,
-        credit: p.grandTotal,
-        balance: runningBalance,
+        credit: roundMoney(p.grandTotal),
         partyId: supplierId,
         partyType: 'Supplier',
+        sortOrder: 1,
       });
 
       if (p.paidAmount > 0) {
-        runningBalance = roundMoney(runningBalance - p.paidAmount);
-        entries.push({
+        rawRows.push({
           id: `pur-pay-${p.id}`,
           date: p.date,
           voucherNo: p.invoiceNumber,
           voucherType: 'Payment Voucher',
           description: `Paid via ${p.paymentMethod}`,
-          debit: p.paidAmount,
+          debit: roundMoney(p.paidAmount),
           credit: 0,
-          balance: runningBalance,
           partyId: supplierId,
           partyType: 'Supplier',
+          sortOrder: 2,
         });
       }
     });
@@ -1397,22 +1908,56 @@ export function getSupplierLedgerEntries(supplierId: string): LedgerEntry[] {
   (db.purchaseReturns || [])
     .filter(r => r.supplierId === supplierId && r.refundMethod === 'Deduct Payable')
     .forEach(r => {
-      runningBalance = roundMoney(runningBalance - r.grandTotal);
-      entries.push({
+      coveredSourceRefs.add(r.id);
+      rawRows.push({
         id: `prtn-${r.id}`,
         date: r.date,
         voucherNo: r.returnNumber,
         voucherType: 'Purchase Return',
         description: `Debit Note against Purchase #${r.originalPurchaseNo}`,
-        debit: r.grandTotal,
+        debit: roundMoney(r.grandTotal),
         credit: 0,
-        balance: runningBalance,
         partyId: supplierId,
         partyType: 'Supplier',
+        sortOrder: 3,
       });
     });
 
-  return entries.sort((a, b) => a.date.localeCompare(b.date));
+  db.vouchers
+    .filter(
+      v =>
+        v.partyId === supplierId &&
+        v.status !== 'Cancelled' &&
+        !coveredSourceRefs.has(v.sourceRef || '') &&
+        !v.sourceRef?.startsWith('PINV-') &&
+        !v.sourceRef?.startsWith('REV-')
+    )
+    .forEach(v => {
+      const isCreditPayableIncrease =
+        v.voucherType === 'Receive Voucher' ||
+        v.sourceRef?.startsWith('BOUNCE-') ||
+        v.entries.some(e => e.accountId === ACCOUNT_IDS.ACCOUNTS_PAYABLE && e.credit > 0);
+      rawRows.push({
+        id: `vouch-supp-${v.id}`,
+        date: v.date,
+        voucherNo: v.voucherNumber,
+        voucherType: v.voucherType,
+        description: v.narration,
+        debit: isCreditPayableIncrease ? 0 : roundMoney(v.amount),
+        credit: isCreditPayableIncrease ? roundMoney(v.amount) : 0,
+        partyId: supplierId,
+        partyType: 'Supplier',
+        sortOrder: 4,
+      });
+    });
+
+  rawRows.sort((a, b) => a.date.localeCompare(b.date) || a.sortOrder - b.sortOrder);
+
+  let runningBalance = 0;
+  return rawRows.map(({ sortOrder: _s, ...row }) => {
+    runningBalance = roundMoney(runningBalance + row.credit - row.debit);
+    return { ...row, balance: runningBalance };
+  });
 }
 
 // ---------------- CHEQUES ----------------
@@ -1436,7 +1981,7 @@ export function saveCheque(cheque: ChequeRecord): void {
   persistBatchIfLive([{ collection: 'cheques', id: payload.id, data: payload }]);
 }
 
-export function clearChequeWithAccounting(chequeId: string, clearanceDate: string): boolean {
+export function clearChequeWithAccounting(chequeId: string, clearanceDate: string, bankAccountId?: string): boolean {
   const db = getDatabase();
   const user = getActiveUser();
   const uid = getActorUid();
@@ -1445,8 +1990,16 @@ export function clearChequeWithAccounting(chequeId: string, clearanceDate: strin
 
   cheque.status = 'Cleared';
   cheque.clearanceDate = clearanceDate;
+  if (bankAccountId) cheque.bankAccountId = bankAccountId;
 
-  const voucher = buildChequeClearanceVoucher(cheque, clearanceDate, user.name, uid);
+  const bankAcc = db.accounts.find(a => a.id === (bankAccountId || cheque.bankAccountId || ACCOUNT_IDS.MEEZAN_BANK));
+  const voucher = buildChequeClearanceVoucher(
+    cheque,
+    clearanceDate,
+    user.name,
+    uid,
+    bankAcc ? { id: bankAcc.id, name: bankAcc.name } : undefined
+  );
   db.accounts = applyVoucherToAccounts(db.accounts, voucher.entries);
   db.vouchers.unshift(voucher);
 
@@ -1459,9 +2012,96 @@ export function clearChequeWithAccounting(chequeId: string, clearanceDate: strin
     if (acc) batchOps.push({ collection: 'accounts', id: acc.id, data: { ...acc, orgId: ORG_ID } });
   }
 
+  if (cheque.partyId) {
+    if (cheque.type === 'Received') {
+      const cust = db.customers.find(c => c.id === cheque.partyId);
+      if (cust) {
+        cust.currentBalance = Math.max(0, roundMoney(cust.currentBalance - cheque.amount));
+        batchOps.push({ collection: 'customers', id: cust.id, data: { ...cust, orgId: ORG_ID } });
+      }
+    } else {
+      const supp = db.suppliers.find(s => s.id === cheque.partyId);
+      if (supp) {
+        supp.currentBalance = Math.max(0, roundMoney(supp.currentBalance - cheque.amount));
+        batchOps.push({ collection: 'suppliers', id: supp.id, data: { ...supp, orgId: ORG_ID } });
+      }
+    }
+  }
+
   saveDatabase(db);
   persistBatchIfLive(batchOps);
-  logAuditAction('Cheques', 'Clear Cheque', `Cheque #${cheque.chequeNumber} (${cheque.type}) cleared through ${cheque.bankName} for PKR ${cheque.amount.toLocaleString()}`, cheque.id);
+  logAuditAction('Cheques', 'Clear Cheque', `Cheque #${cheque.chequeNumber} (${cheque.type}) cleared through ${bankAcc?.name || cheque.bankName} for PKR ${cheque.amount.toLocaleString()}`, cheque.id);
+  return true;
+}
+
+export function bounceChequeWithAccounting(chequeId: string, bounceDate: string, reason?: string): boolean {
+  const db = getDatabase();
+  const user = getActiveUser();
+  const uid = getActorUid();
+  const cheque = db.cheques.find(c => c.id === chequeId);
+  if (!cheque || cheque.status === 'Bounced' || cheque.status === 'Cancelled') return false;
+
+  const wasCleared = cheque.status === 'Cleared';
+  cheque.status = 'Bounced';
+  cheque.clearanceDate = bounceDate;
+  cheque.reconciled = false;
+  if (reason) {
+    cheque.remarks = `${cheque.remarks ? `${cheque.remarks} | ` : ''}[Bounced: ${reason}]`;
+  }
+
+  const batchOps: BatchWriteOp[] = [
+    { collection: 'cheques', id: cheque.id, data: { ...cheque, orgId: ORG_ID } },
+  ];
+
+  if (wasCleared) {
+    const bankAcc = db.accounts.find(a => a.id === (cheque.bankAccountId || ACCOUNT_IDS.MEEZAN_BANK));
+    const voucher = buildChequeBounceVoucher(
+      cheque,
+      bounceDate,
+      user.name,
+      uid,
+      bankAcc ? { id: bankAcc.id, name: bankAcc.name } : undefined
+    );
+    db.accounts = applyVoucherToAccounts(db.accounts, voucher.entries);
+    db.vouchers.unshift(voucher);
+    batchOps.push({ collection: 'vouchers', id: voucher.id, data: { ...voucher, orgId: ORG_ID } });
+    for (const entry of voucher.entries) {
+      const acc = db.accounts.find(a => a.id === entry.accountId);
+      if (acc) batchOps.push({ collection: 'accounts', id: acc.id, data: { ...acc, orgId: ORG_ID } });
+    }
+
+    if (cheque.partyId) {
+      if (cheque.type === 'Received') {
+        const cust = db.customers.find(c => c.id === cheque.partyId);
+        if (cust) {
+          cust.currentBalance = roundMoney(cust.currentBalance + cheque.amount);
+          batchOps.push({ collection: 'customers', id: cust.id, data: { ...cust, orgId: ORG_ID } });
+        }
+      } else {
+        const supp = db.suppliers.find(s => s.id === cheque.partyId);
+        if (supp) {
+          supp.currentBalance = roundMoney(supp.currentBalance + cheque.amount);
+          batchOps.push({ collection: 'suppliers', id: supp.id, data: { ...supp, orgId: ORG_ID } });
+        }
+      }
+    }
+  }
+
+  saveDatabase(db);
+  persistBatchIfLive(batchOps);
+  logAuditAction('Cheques', 'Bounce Cheque', `Marked ${cheque.type} cheque #${cheque.chequeNumber} as Bounced.${wasCleared ? ' Reversal entry posted.' : ''} ${reason || ''}`, cheque.id);
+  return true;
+}
+
+export function reconcileCheque(chequeId: string, reconciledDate: string, reconciled: boolean = true): boolean {
+  const db = getDatabase();
+  const cheque = db.cheques.find(c => c.id === chequeId);
+  if (!cheque) return false;
+  cheque.reconciled = reconciled;
+  cheque.reconciledDate = reconciled ? reconciledDate : undefined;
+  saveDatabase(db);
+  persistBatchIfLive([{ collection: 'cheques', id: cheque.id, data: { ...cheque, orgId: ORG_ID } }]);
+  logAuditAction('Cheques', 'Reconcile Cheque', `${reconciled ? 'Reconciled' : 'Unreconciled'} cheque #${cheque.chequeNumber} on ${reconciledDate}`, cheque.id);
   return true;
 }
 
@@ -1581,6 +2221,527 @@ export function getMonthlyReceivedReport(monthYear: string) {
   return [...cashSalesReceived, ...installmentReceived].sort((a, b) => b.date.localeCompare(a.date));
 }
 
+export function getCashBookEntries(startDate?: string, endDate?: string): CashBankBookRow[] {
+  return getAccountBookEntries(ACCOUNT_IDS.CASH, startDate, endDate);
+}
+
+export function getBankBookEntries(bankAccountId: string = ACCOUNT_IDS.MEEZAN_BANK, startDate?: string, endDate?: string): CashBankBookRow[] {
+  return getAccountBookEntries(bankAccountId, startDate, endDate);
+}
+
+function getAccountBookEntries(accountId: string, startDate?: string, endDate?: string): CashBankBookRow[] {
+  const db = getDatabase();
+  const raw: Omit<CashBankBookRow, 'runningBalance'>[] = [];
+
+  for (const v of db.vouchers) {
+    if (v.status === 'Cancelled') continue;
+    if (startDate && v.date < startDate) continue;
+    if (endDate && v.date > endDate) continue;
+    v.entries.forEach((e, idx) => {
+      if (e.accountId === accountId && (e.debit > 0 || e.credit > 0)) {
+        raw.push({
+          id: `${v.id}-${idx}`,
+          date: v.date,
+          voucherNo: v.voucherNumber,
+          voucherType: v.voucherType,
+          accountId: e.accountId,
+          accountName: e.accountName,
+          partyName: v.partyName || 'Showroom / General',
+          narration: e.narration || v.narration,
+          receiptDebit: roundMoney(e.debit || 0),
+          paymentCredit: roundMoney(e.credit || 0),
+        });
+      }
+    });
+  }
+
+  raw.sort((a, b) => a.date.localeCompare(b.date));
+  let running = 0;
+  return raw.map(row => {
+    running = roundMoney(running + row.receiptDebit - row.paymentCredit);
+    return { ...row, runningBalance: running };
+  });
+}
+
+export function getGeneralLedgerEntries(accountId?: string, startDate?: string, endDate?: string): GeneralLedgerRow[] {
+  const db = getDatabase();
+  const accMap = new Map(db.accounts.map(a => [a.id, a]));
+  const raw: Omit<GeneralLedgerRow, 'runningBalance'>[] = [];
+
+  for (const v of db.vouchers) {
+    if (v.status === 'Cancelled') continue;
+    if (startDate && v.date < startDate) continue;
+    if (endDate && v.date > endDate) continue;
+    v.entries.forEach((e, idx) => {
+      if (accountId && e.accountId !== accountId) return;
+      const acc = accMap.get(e.accountId);
+      raw.push({
+        id: `${v.id}-${idx}`,
+        date: v.date,
+        voucherNo: v.voucherNumber,
+        voucherType: v.voucherType,
+        accountId: e.accountId,
+        accountCode: acc?.code || '-',
+        accountName: acc?.name || e.accountName,
+        partyName: v.partyName || 'General',
+        narration: e.narration || v.narration,
+        debit: roundMoney(e.debit || 0),
+        credit: roundMoney(e.credit || 0),
+      });
+    });
+  }
+
+  raw.sort((a, b) => a.date.localeCompare(b.date));
+  const runningPerAccount = new Map<string, number>();
+  return raw.map(row => {
+    const acc = accMap.get(row.accountId);
+    const isDebitNormal = !acc || acc.category === 'Asset' || acc.category === 'Expense';
+    const prev = runningPerAccount.get(row.accountId) || 0;
+    const next = roundMoney(prev + (isDebitNormal ? row.debit - row.credit : row.credit - row.debit));
+    runningPerAccount.set(row.accountId, next);
+    return { ...row, runningBalance: next };
+  });
+}
+
+export function getHeadWiseBalanceReport() {
+  const accounts = getChartOfAccounts();
+  const rows = accounts.map(acc => {
+    const isDebitNormal = acc.category === 'Asset' || acc.category === 'Expense';
+    const bal = roundMoney(acc.currentBalance);
+    return {
+      id: acc.id,
+      code: acc.code,
+      name: acc.name,
+      category: acc.category,
+      subCategory: acc.subCategory,
+      debit: isDebitNormal ? (bal >= 0 ? bal : 0) : bal < 0 ? Math.abs(bal) : 0,
+      credit: !isDebitNormal ? (bal >= 0 ? bal : 0) : bal < 0 ? Math.abs(bal) : 0,
+      balance: bal,
+    };
+  });
+
+  const totalDebit = roundMoney(rows.reduce((s, r) => s + r.debit, 0));
+  const totalCredit = roundMoney(rows.reduce((s, r) => s + r.credit, 0));
+  return {
+    rows,
+    totalDebit,
+    totalCredit,
+    isBalanced: Math.abs(totalDebit - totalCredit) < 0.5,
+  };
+}
+
+export function getBalanceSheetStatement(): BalanceSheetReport {
+  const accounts = getChartOfAccounts();
+  const toSection = (cat: AccountHead['category']): BalanceSheetSectionRow[] =>
+    accounts
+      .filter(a => a.category === cat)
+      .map(a => ({ id: a.id, code: a.code, name: a.name, subCategory: a.subCategory, balance: roundMoney(a.currentBalance) }));
+
+  const assets = toSection('Asset');
+  const liabilities = toSection('Liability');
+  const equity = toSection('Equity');
+
+  const incomeTotal = roundMoney(accounts.filter(a => a.category === 'Income').reduce((s, a) => s + a.currentBalance, 0));
+  const expenseTotal = roundMoney(accounts.filter(a => a.category === 'Expense').reduce((s, a) => s + a.currentBalance, 0));
+  const netIncome = roundMoney(incomeTotal - expenseTotal);
+
+  const assetsTotal = roundMoney(assets.reduce((s, a) => s + a.balance, 0));
+  const liabilitiesTotal = roundMoney(liabilities.reduce((s, a) => s + a.balance, 0));
+  const equityTotal = roundMoney(equity.reduce((s, a) => s + a.balance, 0) + netIncome);
+  const liabilitiesAndEquityTotal = roundMoney(liabilitiesTotal + equityTotal);
+
+  return {
+    assets,
+    liabilities,
+    equity,
+    netIncome,
+    assetsTotal,
+    liabilitiesTotal,
+    equityTotal,
+    liabilitiesAndEquityTotal,
+    isBalanced: Math.abs(assetsTotal - liabilitiesAndEquityTotal) < 0.5,
+  };
+}
+
+export function getCashFlowStatement(): CashFlowReport {
+  const db = getDatabase();
+  const cashAccountIds = new Set(
+    db.accounts.filter(a => a.subCategory === 'Cash & Bank' || a.id === ACCOUNT_IDS.CASH || a.id === ACCOUNT_IDS.MEEZAN_BANK || a.id === ACCOUNT_IDS.ALFALAH_BANK).map(a => a.id)
+  );
+
+  let operatingInflows = 0;
+  let operatingOutflows = 0;
+  let investingCashFlow = 0;
+  let financingCashFlow = 0;
+
+  for (const v of db.vouchers) {
+    if (v.status === 'Cancelled') continue;
+    let cashDelta = 0;
+    let touchesFixedAsset = false;
+    let touchesEquity = false;
+
+    for (const e of v.entries) {
+      if (cashAccountIds.has(e.accountId)) {
+        cashDelta += roundMoney(e.debit - e.credit);
+      } else {
+        const acc = db.accounts.find(a => a.id === e.accountId);
+        if (acc?.subCategory === 'Fixed Assets') touchesFixedAsset = true;
+        if (acc?.category === 'Equity') touchesEquity = true;
+      }
+    }
+
+    if (Math.abs(cashDelta) < 0.01) continue;
+    if (touchesFixedAsset) {
+      investingCashFlow = roundMoney(investingCashFlow + cashDelta);
+    } else if (touchesEquity) {
+      financingCashFlow = roundMoney(financingCashFlow + cashDelta);
+    } else if (cashDelta > 0) {
+      operatingInflows = roundMoney(operatingInflows + cashDelta);
+    } else {
+      operatingOutflows = roundMoney(operatingOutflows + Math.abs(cashDelta));
+    }
+  }
+
+  const netOperatingCashFlow = roundMoney(operatingInflows - operatingOutflows);
+  const netCashChange = roundMoney(netOperatingCashFlow + investingCashFlow + financingCashFlow);
+  const endingCashAndBank = roundMoney(
+    db.accounts.filter(a => cashAccountIds.has(a.id)).reduce((s, a) => s + a.currentBalance, 0)
+  );
+
+  return {
+    operatingInflows,
+    operatingOutflows,
+    netOperatingCashFlow,
+    investingCashFlow,
+    financingCashFlow,
+    netCashChange,
+    endingCashAndBank,
+  };
+}
+
+export function getInventoryReportsData() {
+  const db = getDatabase();
+  const products = db.products || [];
+  const warehouses = db.warehouses || [];
+
+  const stockValuation = products.map(p => {
+    const costValue = roundMoney(p.purchasePrice * p.stockQuantity);
+    const retailValue = roundMoney(p.retailPrice * p.stockQuantity);
+    const wholesaleValue = roundMoney((p.wholesalePrice ?? p.minSalePrice ?? p.retailPrice) * p.stockQuantity);
+    return {
+      id: p.id,
+      sku: p.sku,
+      name: p.name,
+      brand: p.brand,
+      category: p.category,
+      warehouseName: p.warehouseName || 'Main Showroom',
+      stockQuantity: p.stockQuantity,
+      damagedQuantity: p.damagedQuantity || 0,
+      purchasePrice: p.purchasePrice,
+      retailPrice: p.retailPrice,
+      wholesalePrice: p.wholesalePrice ?? p.minSalePrice ?? p.retailPrice,
+      costValue,
+      retailValue,
+      wholesaleValue,
+      potentialMargin: roundMoney(retailValue - costValue),
+    };
+  });
+
+  const brandWise = getBrandWiseStockReport();
+
+  const catMap = new Map<string, { category: string; models: number; units: number; costValue: number; retailValue: number }>();
+  for (const p of products) {
+    const cur = catMap.get(p.category) || { category: p.category, models: 0, units: 0, costValue: 0, retailValue: 0 };
+    cur.models += 1;
+    cur.units += p.stockQuantity;
+    cur.costValue = roundMoney(cur.costValue + p.purchasePrice * p.stockQuantity);
+    cur.retailValue = roundMoney(cur.retailValue + p.retailPrice * p.stockQuantity);
+    catMap.set(p.category, cur);
+  }
+  const categoryWise = Array.from(catMap.values()).sort((a, b) => b.costValue - a.costValue);
+
+  const lowStockReorder = products.filter(p => p.stockQuantity <= (p.reorderLevel ?? p.minStockLevel));
+  const outOfStock = products.filter(p => p.stockQuantity <= 0);
+  const serializedUnits = products.flatMap(p =>
+    (p.serials || []).map(s => ({
+      ...s,
+      sku: p.sku,
+      brand: p.brand,
+      category: p.category,
+      engineNumber: p.engineNumber,
+      chassisNumber: p.chassisNumber,
+    }))
+  );
+  const damagedAndReturned = products.filter(
+    p => (p.damagedQuantity || 0) > 0 || (p.serials || []).some(s => s.status === 'Damaged' || s.status === 'Returned')
+  );
+
+  const stockMovementSummary = products.map(p => {
+    const qtyPurchased = db.purchases.reduce(
+      (s, pur) => s + pur.items.filter(i => i.productId === p.id).reduce((q, i) => q + i.quantity, 0),
+      0
+    );
+    const qtySold = db.sales
+      .filter(sa => sa.status !== 'Cancelled')
+      .reduce((s, sa) => s + sa.items.filter(i => i.productId === p.id).reduce((q, i) => q + i.quantity, 0), 0);
+    const qtyReturned = (db.salesReturns || []).reduce(
+      (s, r) => s + r.items.filter(i => i.productId === p.id).reduce((q, i) => q + i.quantity, 0),
+      0
+    );
+    return {
+      productId: p.id,
+      sku: p.sku,
+      name: p.name,
+      openingStock: p.openingStock || 0,
+      qtyPurchased,
+      qtySold,
+      qtyReturned,
+      closingStock: p.stockQuantity,
+    };
+  });
+
+  const whMap = new Map<string, { warehouseId: string; warehouseName: string; models: number; units: number; costValue: number }>();
+  for (const w of warehouses) {
+    whMap.set(w.id, { warehouseId: w.id, warehouseName: w.name, models: 0, units: 0, costValue: 0 });
+  }
+  for (const p of products) {
+    const wId = p.warehouseId || 'MAIN';
+    const wName = p.warehouseName || 'Main Showroom';
+    const cur = whMap.get(wId) || { warehouseId: wId, warehouseName: wName, models: 0, units: 0, costValue: 0 };
+    cur.models += 1;
+    cur.units += p.stockQuantity;
+    cur.costValue = roundMoney(cur.costValue + p.purchasePrice * p.stockQuantity);
+    whMap.set(wId, cur);
+  }
+  const warehouseWiseStock = Array.from(whMap.values());
+
+  const marginAndPricingAnalysis = products.map(p => {
+    const margin = roundMoney(p.retailPrice - p.purchasePrice);
+    const marginPct = p.retailPrice > 0 ? Math.round((margin / p.retailPrice) * 1000) / 10 : 0;
+    const wholesale = p.wholesalePrice ?? p.minSalePrice ?? p.retailPrice;
+    return {
+      id: p.id,
+      name: p.name,
+      brand: p.brand,
+      purchasePrice: p.purchasePrice,
+      wholesalePrice: wholesale,
+      retailPrice: p.retailPrice,
+      unitMargin: margin,
+      marginPercent: marginPct,
+    };
+  });
+
+  return {
+    stockValuation,
+    brandWise,
+    categoryWise,
+    lowStockReorder,
+    outOfStock,
+    serializedUnits,
+    damagedAndReturned,
+    stockMovementSummary,
+    warehouseWiseStock,
+    marginAndPricingAnalysis,
+  };
+}
+
+export function getInstallmentReportsData(asOfDate: string = new Date().toISOString().split('T')[0]) {
+  const db = getDatabase();
+  const accounts = db.installments || [];
+  const commitments = db.installmentCommitments || [];
+
+  const activeAccounts = accounts.filter(a => a.status === 'Active');
+  const completedAccounts = accounts.filter(a => a.status === 'Completed');
+  const closedEarlyAccounts = accounts.filter(a => a.status === 'Closed Early');
+  const overdueAccounts = accounts.filter(a => a.status === 'Overdue');
+  const defaultedAccounts = accounts.filter(a => a.status === 'Defaulted');
+
+  const horizon30 = new Date(asOfDate);
+  horizon30.setDate(horizon30.getDate() + 30);
+  const horizonStr = horizon30.toISOString().split('T')[0];
+
+  const upcomingDues = accounts.flatMap(a =>
+    a.schedule
+      .filter(s => s.status !== 'Paid' && s.dueDate >= asOfDate && s.dueDate <= horizonStr)
+      .map(s => ({
+        accountNumber: a.accountNumber,
+        customerName: a.customerName,
+        customerPhone: a.customerPhone,
+        officer: a.recoveryOfficerName,
+        installmentNumber: s.installmentNumber,
+        dueDate: s.dueDate,
+        remainingAmount: s.remainingAmount,
+      }))
+  );
+
+  const dueToday = upcomingDues.filter(u => u.dueDate === asOfDate);
+
+  const officerMap = new Map<string, { officerName: string; accountCount: number; financedTotal: number; collectedTotal: number; remainingTotal: number; overdueCount: number }>();
+  for (const a of accounts) {
+    const key = a.recoveryOfficerName || 'Unassigned';
+    const cur = officerMap.get(key) || { officerName: key, accountCount: 0, financedTotal: 0, collectedTotal: 0, remainingTotal: 0, overdueCount: 0 };
+    cur.accountCount += 1;
+    cur.financedTotal = roundMoney(cur.financedTotal + a.totalPayableWithDown);
+    cur.collectedTotal = roundMoney(cur.collectedTotal + a.totalReceived);
+    cur.remainingTotal = roundMoney(cur.remainingTotal + a.remainingBalance);
+    if (a.status === 'Overdue' || a.status === 'Defaulted') cur.overdueCount += 1;
+    officerMap.set(key, cur);
+  }
+  const officerPerformance = Array.from(officerMap.values());
+
+  const recoveryCollections = accounts.flatMap(a =>
+    a.schedule
+      .filter(s => s.paidAmount > 0 && s.paidDate)
+      .map(s => ({
+        accountNumber: a.accountNumber,
+        customerName: a.customerName,
+        receiptNo: s.receiptNo || '-',
+        paidDate: s.paidDate!,
+        installmentNumber: s.installmentNumber,
+        paidAmount: s.paidAmount,
+        officer: a.recoveryOfficerName,
+      }))
+  ).sort((a, b) => b.paidDate.localeCompare(a.paidDate));
+
+  const guarantorDirectory = accounts.map(a => ({
+    accountNumber: a.accountNumber,
+    customerName: a.customerName,
+    guarantor1Name: a.guarantor1Name,
+    guarantor1Phone: a.guarantor1Phone,
+    guarantor1Cnic: a.guarantor1Cnic,
+    guarantor1Relation: a.guarantor1Relation,
+    guarantor2Name: a.guarantor2Name || '—',
+    guarantor2Phone: a.guarantor2Phone || '—',
+    guarantor2Cnic: a.guarantor2Cnic || '—',
+    guarantor2Relation: a.guarantor2Relation || '—',
+  }));
+
+  const sectorMap = new Map<string, { sector: string; accounts: number; totalRemaining: number; overdueAccounts: number }>();
+  for (const a of accounts) {
+    const sec = a.locationSector || 'General Showroom Area';
+    const cur = sectorMap.get(sec) || { sector: sec, accounts: 0, totalRemaining: 0, overdueAccounts: 0 };
+    cur.accounts += 1;
+    cur.totalRemaining = roundMoney(cur.totalRemaining + a.remainingBalance);
+    if (a.status === 'Overdue' || a.status === 'Defaulted') cur.overdueAccounts += 1;
+    sectorMap.set(sec, cur);
+  }
+  const sectorWiseDistribution = Array.from(sectorMap.values());
+
+  const prodMap = new Map<string, { productName: string; count: number; cashTotal: number; markupTotal: number; remaining: number }>();
+  for (const a of accounts) {
+    const cur = prodMap.get(a.productName) || { productName: a.productName, count: 0, cashTotal: 0, markupTotal: 0, remaining: 0 };
+    cur.count += 1;
+    cur.cashTotal = roundMoney(cur.cashTotal + a.cashPrice);
+    cur.markupTotal = roundMoney(cur.markupTotal + a.markupAmount);
+    cur.remaining = roundMoney(cur.remaining + a.remainingBalance);
+    prodMap.set(a.productName, cur);
+  }
+  const productBrandFinanced = Array.from(prodMap.values());
+
+  const markupVsPrincipal = accounts.map(a => {
+    const principalPaid = roundMoney(a.schedule.filter(s => s.status === 'Paid').reduce((sum, s) => sum + s.principalAmount, 0) + a.downPayment);
+    const markupEarned = roundMoney(a.schedule.filter(s => s.status === 'Paid').reduce((sum, s) => sum + s.markupAmount, 0));
+    return {
+      accountNumber: a.accountNumber,
+      customerName: a.customerName,
+      cashPrice: a.cashPrice,
+      markupAmount: a.markupAmount,
+      principalPaid,
+      markupEarned,
+      remainingBalance: a.remainingBalance,
+    };
+  });
+
+  const asOfMs = Date.parse(asOfDate);
+  const agingBuckets = [
+    { bucket: '1 - 30 Days Overdue', count: 0, amount: 0 },
+    { bucket: '31 - 60 Days Overdue', count: 0, amount: 0 },
+    { bucket: '61 - 90 Days Overdue', count: 0, amount: 0 },
+    { bucket: '90+ Days Overdue', count: 0, amount: 0 },
+  ];
+  for (const a of accounts) {
+    for (const s of a.schedule) {
+      if (s.status !== 'Paid' && s.dueDate < asOfDate && s.remainingAmount > 0) {
+        const diffDays = Math.floor((asOfMs - Date.parse(s.dueDate)) / (1000 * 60 * 60 * 24));
+        const idx = diffDays <= 30 ? 0 : diffDays <= 60 ? 1 : diffDays <= 90 ? 2 : 3;
+        agingBuckets[idx].count += 1;
+        agingBuckets[idx].amount = roundMoney(agingBuckets[idx].amount + s.remainingAmount);
+      }
+    }
+  }
+
+  const rescheduledPlans = accounts.filter(a => (a.rescheduleHistory?.length || 0) > 0);
+  const defaulterFollowUpList = [...overdueAccounts, ...defaultedAccounts].map(a => ({
+    accountNumber: a.accountNumber,
+    customerName: a.customerName,
+    mobile1: a.customerPhone,
+    mobile2: a.mobile2 || '—',
+    sector: a.locationSector || a.customerAddress,
+    remainingBalance: a.remainingBalance,
+    commitmentDate: a.commitmentDate || 'None',
+    officer: a.recoveryOfficerName,
+  }));
+
+  const downPaymentSummary = accounts.map(a => ({
+    accountNumber: a.accountNumber,
+    customerName: a.customerName,
+    cashPrice: a.cashPrice,
+    downPayment: a.downPayment,
+    downPercent: a.cashPrice > 0 ? Math.round((a.downPayment / a.cashPrice) * 1000) / 10 : 0,
+    financedAmount: a.financedAmount,
+  }));
+
+  const riskExposureReport = accounts
+    .filter(a => a.remainingBalance > 0)
+    .map(a => {
+      const overdueCount = a.schedule.filter(s => s.status === 'Overdue' || (s.status !== 'Paid' && s.dueDate < asOfDate)).length;
+      return {
+        accountNumber: a.accountNumber,
+        customerName: a.customerName,
+        status: a.status,
+        overdueInstallments: overdueCount,
+        remainingBalance: a.remainingBalance,
+        riskTier: a.status === 'Defaulted' || overdueCount >= 2 ? 'HIGH' : overdueCount === 1 ? 'MEDIUM' : 'LOW',
+      };
+    })
+    .sort((a, b) => b.overdueInstallments - a.overdueInstallments || b.remainingBalance - a.remainingBalance);
+
+  const customerPortfolioSummary = accounts.map(a => ({
+    accountNumber: a.accountNumber,
+    slipNo: a.slipNo || '—',
+    customerName: a.customerName,
+    profession: a.profession || '—',
+    referenceName: a.referenceName || '—',
+    totalPayableWithDown: a.totalPayableWithDown,
+    totalReceived: a.totalReceived,
+    remainingBalance: a.remainingBalance,
+    status: a.status,
+  }));
+
+  return {
+    activeAccounts,
+    completedAccounts,
+    closedEarlyAccounts,
+    overdueAccounts,
+    defaultedAccounts,
+    upcomingDues,
+    dueToday,
+    officerPerformance,
+    recoveryCollections,
+    guarantorDirectory,
+    sectorWiseDistribution,
+    productBrandFinanced,
+    markupVsPrincipal,
+    agingBuckets,
+    commitmentsSchedule: commitments,
+    rescheduledPlans,
+    defaulterFollowUpList,
+    downPaymentSummary,
+    riskExposureReport,
+    customerPortfolioSummary,
+  };
+}
+
 // ---------------- BACKUP, RESTORE & EXPORT ----------------
 
 export function getDatabaseSnapshot(): Record<string, any> {
@@ -1593,11 +2754,15 @@ export function getDatabaseSnapshot(): Record<string, any> {
     attendance: db.attendance,
     visitors: db.visitors,
     products: db.products,
+    warehouses: db.warehouses,
+    stockTransfers: db.stockTransfers,
+    stockAdjustments: db.stockAdjustments,
     purchases: db.purchases,
     purchaseReturns: db.purchaseReturns,
     sales: db.sales,
     salesReturns: db.salesReturns,
     installments: db.installments,
+    installmentCommitments: db.installmentCommitments,
     accounts: db.accounts,
     vouchers: db.vouchers,
     cheques: db.cheques,
@@ -1655,8 +2820,9 @@ export function importDatabaseJSON(jsonStr: string, options: { overwriteNewer?: 
     const overwriteNewer = Boolean(options.overwriteNewer);
     const arrayKeys: (keyof ErpDatabase)[] = [
       'customers', 'suppliers', 'employees', 'attendance', 'visitors',
-      'products', 'purchases', 'purchaseReturns', 'sales', 'salesReturns',
-      'installments', 'accounts', 'vouchers', 'cheques', 'targets', 'tasks', 'auditLogs',
+      'products', 'warehouses', 'stockTransfers', 'stockAdjustments',
+      'purchases', 'purchaseReturns', 'sales', 'salesReturns',
+      'installments', 'installmentCommitments', 'accounts', 'vouchers', 'cheques', 'targets', 'tasks', 'auditLogs',
     ];
 
     for (const key of arrayKeys) {
@@ -1761,7 +2927,14 @@ export function deleteTask(taskId: string): void {
   db.tasks = db.tasks.filter(t => t.id !== taskId);
   saveDatabase(db);
   if (isCloudConnected()) {
-    deleteCloudDoc('tasks', taskId).catch(err => console.error('Cloud task deletion error:', err));
+    deleteCloudDoc('tasks', taskId)
+      .then(() => {
+        if (lastCloudSyncError !== null) clearLastCloudSyncError();
+      })
+      .catch(err => {
+        console.error('Cloud task deletion error:', err);
+        setCloudSyncError(err?.message || 'Could not delete task from Cloud Firestore.');
+      });
   }
   logAuditAction('Tasks', 'Task Deleted', `Removed task ${taskId}`, taskId);
 }

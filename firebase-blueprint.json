@@ -262,11 +262,80 @@
         "minStockLevel": { "type": "integer" },
         "warrantyMonths": { "type": "integer" },
         "hasSerialTracking": { "type": "boolean" },
+        "wholesalePrice": { "type": "number" },
+        "openingStock": { "type": "integer" },
+        "reorderLevel": { "type": "integer" },
+        "warehouseId": { "type": "string", "maxLength": 128 },
+        "warehouseName": { "type": "string", "maxLength": 160 },
+        "damagedQuantity": { "type": "integer" },
+        "engineNumber": { "type": "string", "maxLength": 120 },
+        "chassisNumber": { "type": "string", "maxLength": 120 },
         "image": { "type": "string", "maxLength": 500 },
         "description": { "type": "string", "maxLength": 1000 },
+        "updatedAt": { "type": "string", "maxLength": 64 },
         "serials": { "type": "array", "description": "Bounded array of tracked unit serials." }
       },
       "required": ["id", "orgId", "name", "category", "brand", "modelNumber", "sku", "purchasePrice", "retailPrice", "stockQuantity", "minStockLevel"]
+    },
+    "Warehouse": {
+      "title": "Warehouse",
+      "description": "Showroom or godown storage location.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "code": { "type": "string", "maxLength": 32 },
+        "city": { "type": "string", "maxLength": 80 },
+        "address": { "type": "string", "maxLength": 300 },
+        "managerName": { "type": "string", "maxLength": 120 },
+        "isDefault": { "type": "boolean" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["id", "orgId", "name", "code", "city", "active"]
+    },
+    "StockTransfer": {
+      "title": "StockTransfer",
+      "description": "Inter-warehouse inventory stock movement record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "transferNumber": { "type": "string", "maxLength": 64 },
+        "date": { "type": "string", "maxLength": 32 },
+        "productId": { "type": "string", "maxLength": 128 },
+        "productName": { "type": "string", "maxLength": 200 },
+        "quantity": { "type": "integer" },
+        "fromWarehouseId": { "type": "string", "maxLength": 128 },
+        "fromWarehouseName": { "type": "string", "maxLength": 160 },
+        "toWarehouseId": { "type": "string", "maxLength": 128 },
+        "toWarehouseName": { "type": "string", "maxLength": 160 },
+        "serialNumbers": { "type": "array" },
+        "notes": { "type": "string", "maxLength": 500 },
+        "transferredBy": { "type": "string", "maxLength": 120 }
+      },
+      "required": ["id", "orgId", "createdByUid", "transferNumber", "date", "productId", "quantity", "fromWarehouseId", "toWarehouseId"]
+    },
+    "StockAdjustment": {
+      "title": "StockAdjustment",
+      "description": "Audit-tracked inventory count adjustment or damaged stock entry.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "date": { "type": "string", "maxLength": 32 },
+        "productId": { "type": "string", "maxLength": 128 },
+        "productName": { "type": "string", "maxLength": 200 },
+        "adjustmentQty": { "type": "integer" },
+        "previousQty": { "type": "integer" },
+        "newQty": { "type": "integer" },
+        "adjustmentType": { "type": "string", "enum": ["Adjustment", "Damaged", "Opening", "CountCorrection"] },
+        "reason": { "type": "string", "maxLength": 500 },
+        "adjustedBy": { "type": "string", "maxLength": 120 }
+      },
+      "required": ["id", "orgId", "createdByUid", "date", "productId", "adjustmentQty", "previousQty", "newQty", "adjustmentType", "reason"]
     },
     "PurchaseInvoice": {
       "title": "PurchaseInvoice",
@@ -403,15 +472,50 @@
         "guarantor1Phone": { "type": "string", "maxLength": 40 },
         "guarantor1Cnic": { "type": "string", "maxLength": 32 },
         "guarantor1Relation": { "type": "string", "maxLength": 60 },
+        "guarantor2Name": { "type": "string", "maxLength": 120 },
+        "guarantor2Phone": { "type": "string", "maxLength": 40 },
+        "guarantor2Cnic": { "type": "string", "maxLength": 32 },
+        "guarantor2Relation": { "type": "string", "maxLength": 60 },
+        "guarantor2Address": { "type": "string", "maxLength": 300 },
+        "locationSector": { "type": "string", "maxLength": 120 },
+        "mobile2": { "type": "string", "maxLength": 40 },
+        "profession": { "type": "string", "maxLength": 120 },
+        "referenceName": { "type": "string", "maxLength": 120 },
+        "slipNo": { "type": "string", "maxLength": 64 },
+        "commitmentDate": { "type": "string", "maxLength": 32 },
+        "rescheduleHistory": { "type": "array" },
         "recoveryOfficerId": { "type": "string", "maxLength": 128 },
         "recoveryOfficerName": { "type": "string", "maxLength": 120 },
         "totalReceived": { "type": "number" },
         "remainingBalance": { "type": "number" },
         "status": { "type": "string", "enum": ["Active", "Completed", "Overdue", "Defaulted", "Closed Early"] },
         "schedule": { "type": "array" },
-        "notes": { "type": "string", "maxLength": 500 }
+        "notes": { "type": "string", "maxLength": 500 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "orgId", "accountNumber", "customerId", "customerName", "productId", "cashPrice", "totalFinancedPayable", "remainingBalance", "status", "schedule"]
+    },
+    "InstallmentCommitment": {
+      "title": "InstallmentCommitment",
+      "description": "Recovery officer follow-up promise/commitment record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "installmentAccountId": { "type": "string", "maxLength": 128 },
+        "accountNumber": { "type": "string", "maxLength": 64 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "maxLength": 160 },
+        "customerPhone": { "type": "string", "maxLength": 40 },
+        "commitmentDate": { "type": "string", "maxLength": 32 },
+        "promisedAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["Pending", "Fulfilled", "Broken"] },
+        "officerName": { "type": "string", "maxLength": 120 },
+        "remarks": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "orgId", "createdByUid", "installmentAccountId", "customerId", "customerName", "commitmentDate", "promisedAmount", "status"]
     },
     "AccountHead": {
       "title": "AccountHead",
@@ -463,12 +567,17 @@
         "chequeNumber": { "type": "string", "maxLength": 64 },
         "type": { "type": "string", "enum": ["Received", "Issued"] },
         "bankName": { "type": "string", "maxLength": 120 },
+        "bankAccountId": { "type": "string", "maxLength": 128 },
+        "partyId": { "type": "string", "maxLength": 128 },
+        "partyType": { "type": "string", "enum": ["Customer", "Supplier"] },
         "partyName": { "type": "string", "maxLength": 160 },
         "amount": { "type": "number" },
         "issueDate": { "type": "string", "maxLength": 32 },
         "chequeDate": { "type": "string", "maxLength": 32 },
         "clearanceDate": { "type": "string", "maxLength": 32 },
         "status": { "type": "string", "enum": ["Pending", "Deposited", "Cleared", "Bounced", "Cancelled"] },
+        "reconciled": { "type": "boolean" },
+        "reconciledDate": { "type": "string", "maxLength": 32 },
         "remarks": { "type": "string", "maxLength": 400 }
       },
       "required": ["id", "orgId", "chequeNumber", "type", "bankName", "partyName", "amount", "chequeDate", "status"]
@@ -652,6 +761,22 @@
     "/backups/{backupId}": {
       "schema": { "$ref": "#/entities/BackupRecord" },
       "description": "Backup snapshots, checksums, and WordPress secondary backup logs."
+    },
+    "/warehouses/{warehouseId}": {
+      "schema": { "$ref": "#/entities/Warehouse" },
+      "description": "Showroom and godown storage locations."
+    },
+    "/stockTransfers/{transferId}": {
+      "schema": { "$ref": "#/entities/StockTransfer" },
+      "description": "Inter-warehouse stock transfer vouchers."
+    },
+    "/stockAdjustments/{adjustmentId}": {
+      "schema": { "$ref": "#/entities/StockAdjustment" },
+      "description": "Stock count adjustment and damaged stock entries."
+    },
+    "/installmentCommitments/{commitmentId}": {
+      "schema": { "$ref": "#/entities/InstallmentCommitment" },
+      "description": "Installment recovery promise/commitment tracking."
     }
   }
 }

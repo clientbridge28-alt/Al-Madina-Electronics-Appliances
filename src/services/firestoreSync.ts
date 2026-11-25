@@ -44,11 +44,15 @@ export type CloudCollectionName =
   | 'attendance'
   | 'visitors'
   | 'products'
+  | 'warehouses'
+  | 'stockTransfers'
+  | 'stockAdjustments'
   | 'purchases'
   | 'purchaseReturns'
   | 'sales'
   | 'salesReturns'
   | 'installments'
+  | 'installmentCommitments'
   | 'accounts'
   | 'vouchers'
   | 'cheques'
@@ -57,6 +61,7 @@ export type CloudCollectionName =
   | 'auditLogs'
   | 'backups'
   | 'users'
+  | 'users_public'
   | 'roles'
   | 'sessions'
   | 'securityEvents';
@@ -87,7 +92,10 @@ export function attachPermittedCloudListeners(
     const unsub = onSnapshot(
       q,
       snapshot => {
-        const rows = snapshot.docs.map(d => ({ ...d.data(), id: d.data().id || d.id }));
+        const omitId = colName === 'settings' || colName === 'users_public';
+        const rows = snapshot.docs.map(d =>
+          omitId ? d.data() : { ...d.data(), id: d.data().id || d.id }
+        );
         callbacks.onCollectionUpdate(colName, rows);
       },
       error => {
@@ -108,11 +116,15 @@ export function attachPermittedCloudListeners(
   watchOrgCollection('attendance', userCanView(isOwner, permissions, 'attendance'));
   watchOrgCollection('visitors', userCanView(isOwner, permissions, 'visitors'));
   watchOrgCollection('products', userCanView(isOwner, permissions, 'inventory') || userCanView(isOwner, permissions, 'pos') || userCanView(isOwner, permissions, 'purchases'));
+  watchOrgCollection('warehouses', userCanView(isOwner, permissions, 'inventory') || userCanView(isOwner, permissions, 'pos') || userCanView(isOwner, permissions, 'purchases'));
+  watchOrgCollection('stockTransfers', userCanView(isOwner, permissions, 'inventory'));
+  watchOrgCollection('stockAdjustments', userCanView(isOwner, permissions, 'inventory'));
   watchOrgCollection('purchases', userCanView(isOwner, permissions, 'purchases'));
   watchOrgCollection('purchaseReturns', userCanView(isOwner, permissions, 'purchaseReturns') || userCanView(isOwner, permissions, 'purchases') || userCanView(isOwner, permissions, 'reports'));
   watchOrgCollection('sales', userCanView(isOwner, permissions, 'pos') || userCanView(isOwner, permissions, 'reports') || userCanView(isOwner, permissions, 'ledgers'));
   watchOrgCollection('salesReturns', userCanView(isOwner, permissions, 'salesReturns') || userCanView(isOwner, permissions, 'pos') || userCanView(isOwner, permissions, 'reports'));
   watchOrgCollection('installments', userCanView(isOwner, permissions, 'installments') || userCanView(isOwner, permissions, 'reports'));
+  watchOrgCollection('installmentCommitments', userCanView(isOwner, permissions, 'installments') || userCanView(isOwner, permissions, 'reports'));
   watchOrgCollection('accounts', userCanView(isOwner, permissions, 'accounting') || userCanView(isOwner, permissions, 'ledgers') || userCanView(isOwner, permissions, 'reports'));
   watchOrgCollection('vouchers', userCanView(isOwner, permissions, 'accounting') || userCanView(isOwner, permissions, 'ledgers'));
   watchOrgCollection('cheques', userCanView(isOwner, permissions, 'cheques'));
@@ -155,14 +167,25 @@ export function attachPermittedCloudListeners(
   };
 }
 
+export function buildCloudDocPayload(
+  colName: CloudCollectionName,
+  docId: string,
+  payload: Record<string, any>
+): Record<string, any> {
+  const safeId = sanitizeDocId(docId);
+  const omitId = colName === 'settings' || colName === 'users_public';
+  const { id: _omitPayloadId, ...restPayload } = payload || {};
+  return stripUndefined({
+    ...restPayload,
+    ...(omitId ? {} : { id: safeId }),
+    orgId: ORG_ID,
+  });
+}
+
 export async function persistCloudDoc(colName: CloudCollectionName, docId: string, payload: Record<string, any>): Promise<void> {
   if (!db || !auth?.currentUser) return;
   const safeId = sanitizeDocId(docId);
-  const cleanPayload = stripUndefined({
-    ...payload,
-    id: safeId,
-    orgId: ORG_ID,
-  });
+  const cleanPayload = buildCloudDocPayload(colName, safeId, payload);
   try {
     await setDoc(doc(db, colName, safeId), cleanPayload, { merge: true });
   } catch (error) {
@@ -193,11 +216,7 @@ export async function commitCloudBatch(ops: BatchWriteOp[]): Promise<void> {
     const batch = writeBatch(db);
     for (const op of ops) {
       const safeId = sanitizeDocId(op.id);
-      const clean = stripUndefined({
-        ...op.data,
-        ...(op.collection !== 'settings' ? { id: safeId } : {}),
-        orgId: ORG_ID,
-      });
+      const clean = buildCloudDocPayload(op.collection, safeId, op.data);
       const ref = doc(db, op.collection, safeId);
       if (op.merge === false) {
         batch.set(ref, clean);
@@ -258,12 +277,36 @@ export async function persistSecurityEvent(event: SecurityEvent): Promise<void> 
 
 export async function updateStaffMemberDoc(user: User): Promise<void> {
   const uid = user.uid || user.id;
-  await persistCloudDoc('users', uid, { ...user, id: uid, uid, orgId: ORG_ID });
-  await persistCloudDoc('users_public' as any, uid, {
+  const normalizedSessionVersion =
+    Number.isFinite(Number(user.sessionVersion)) && Number(user.sessionVersion) >= 1
+      ? Math.floor(Number(user.sessionVersion))
+      : 1;
+  await persistCloudDoc('users', uid, {
+    id: uid,
+    uid,
+    orgId: ORG_ID,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    customRoleName: user.customRoleName,
+    phone: user.phone,
+    avatar: user.avatar,
+    active: Boolean(user.active),
+    suspended: Boolean(user.suspended),
+    suspendedReason: user.suspendedReason,
+    emailVerified: user.emailVerified,
+    mfaEnabled: user.mfaEnabled,
+    sessionVersion: normalizedSessionVersion,
+    permissions: user.permissions || {},
+    lastLogin: user.lastLogin,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt || new Date().toISOString(),
+  });
+  await persistCloudDoc('users_public', uid, {
     uid,
     orgId: ORG_ID,
     name: user.name,
     role: user.role,
-    active: user.active && !user.suspended,
+    active: Boolean(user.active) && !Boolean(user.suspended),
   });
 }

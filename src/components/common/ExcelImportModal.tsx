@@ -42,12 +42,14 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     errors: ExcelValidationError[];
   } | null>(null);
   const [imported, setImported] = useState(false);
+  const [commitError, setCommitError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const resetState = () => {
     setFile(null);
     setResult(null);
     setImported(false);
+    setCommitError(null);
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -57,6 +59,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
     setAnalyzing(true);
     setResult(null);
     setImported(false);
+    setCommitError(null);
 
     try {
       const buffer = await selected.arrayBuffer();
@@ -75,12 +78,17 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 
   const handleConfirmImport = () => {
     if (!result || result.validRows.length === 0) return;
-    onCommitImport(result.validRows);
-    setImported(true);
-    setTimeout(() => {
-      onClose();
-      resetState();
-    }, 1500);
+    setCommitError(null);
+    try {
+      onCommitImport(result.validRows);
+      setImported(true);
+      setTimeout(() => {
+        onClose();
+        resetState();
+      }, 1500);
+    } catch (err: any) {
+      setCommitError(err?.message || 'Failed to commit imported records.');
+    }
   };
 
   return (
@@ -191,6 +199,13 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 </button>
               </div>
             </div>
+
+            {commitError && (
+              <div className="rounded-xl border border-rose-300 bg-rose-50 p-3 flex items-center gap-2 text-rose-800 font-semibold">
+                <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+                <span>{commitError}</span>
+              </div>
+            )}
 
             {/* Error table if errors exist */}
             {result.errors.length > 0 && (

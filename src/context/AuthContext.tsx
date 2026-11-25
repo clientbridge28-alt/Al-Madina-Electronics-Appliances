@@ -5,6 +5,7 @@ import {
   GoogleAuthProvider,
   onAuthStateChanged,
   reauthenticateWithPopup,
+  sendEmailVerification,
   sendPasswordResetEmail,
   setPersistence,
   signInWithEmailAndPassword,
@@ -13,7 +14,7 @@ import {
   signOut,
   type User as FirebaseUser,
 } from 'firebase/auth';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
 import {
   auth,
   authorizedApiFetch,
@@ -30,6 +31,7 @@ import {
   type ModulePermissionKey,
   type PermissionAction,
   type PermissionsMatrix,
+  type UserSession,
 } from '../types/rbac';
 import type { User } from '../types/erp';
 import {
@@ -37,9 +39,26 @@ import {
   clearCloudSession,
   setCloudSessionUser,
 } from '../services/storage';
-import { attachPermittedCloudListeners } from '../services/firestoreSync';
+import {
+  attachPermittedCloudListeners,
+  persistUserSession,
+  stripUndefined,
+} from '../services/firestoreSync';
 
-export type AuthStatus = 'loading' | 'unauthenticated' | 'authenticated';
+export type AuthStatus =
+  | 'loading'
+  | 'unauthenticated'
+  | 'verification_required'
+  | 'mfa_required'
+  | 'authenticated';
+
+export interface MfaState {
+  sending: boolean;
+  sent: boolean;
+  verifying: boolean;
+  error: string | null;
+  info: string | null;
+}
 
 interface AuthContextValue {
   status: AuthStatus;
@@ -47,10 +66,15 @@ interface AuthContextValue {
   staffUser: User | null;
   isOwner: boolean;
   authError: string | null;
+  mfaState: MfaState;
   connectionStatus: { online: boolean; message: string };
   signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   requestPasswordReset: (email: string) => Promise<{ ok: boolean; message: string }>;
+  resendVerificationEmail: () => Promise<{ ok: boolean; message: string }>;
+  refreshVerificationStatus: () => Promise<boolean>;
+  requestMfaOtp: () => Promise<void>;
+  verifyMfaOtp: (code: string) => Promise<boolean>;
   reauthenticateOwner: () => Promise<boolean>;
   logout: () => Promise<void>;
   can: (moduleKey: ModulePermissionKey, action?: PermissionAction) => boolean;
@@ -63,6 +87,24 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+const SESSION_ID_STORAGE_KEY = 'almadina_active_session_id';
+
+function getOrCreateSessionId(uid: string): string {
+  const fallback = `SESS-${uid.slice(0, 12)}-${Date.now().toString(36)}`;
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      const existing = sessionStorage.getItem(SESSION_ID_STORAGE_KEY);
+      if (existing && existing.startsWith(`SESS-${uid.slice(0, 12)}`)) {
+        return existing;
+      }
+      sessionStorage.setItem(SESSION_ID_STORAGE_KEY, fallback);
+    }
+  } catch {
+    // Ignore sessionStorage restrictions
+  }
+  return fallback;
+}
 
 export function mapFirebaseAuthError(
   err: unknown,
@@ -126,31 +168,99 @@ export function mapFirebaseAuthError(
   return msg || 'Authentication failed. Please try again.';
 }
 
-function buildFallbackStaffProfile(fbUser: FirebaseUser): User {
-  const email = (fbUser.email || '').trim();
-  const isOwnerEmail = email.toLowerCase() === OWNER_EMAIL;
-  const role = isOwnerEmail ? 'Owner' : 'Manager';
-  const permissions: PermissionsMatrix = isOwnerEmail
-    ? buildFullOwnerPermissions()
-    : getDefaultPermissionsForRole('Manager');
-
+export function buildCanonicalOwnerProfile(fbUser: Pick<FirebaseUser, 'uid' | 'email' | 'displayName' | 'phoneNumber' | 'emailVerified'>): User {
+  const email = (fbUser.email || OWNER_EMAIL).trim();
+  const now = new Date().toISOString();
   return {
     id: fbUser.uid,
     uid: fbUser.uid,
     orgId: ORG_ID,
-    name: fbUser.displayName || email.split('@')[0] || 'Showroom User',
+    name: fbUser.displayName || 'Muhammad Tariq Khan',
     email,
-    role,
+    role: 'Owner',
     phone: fbUser.phoneNumber || '',
     active: true,
     suspended: false,
-    emailVerified: fbUser.emailVerified,
+    emailVerified: Boolean(fbUser.emailVerified),
     mfaEnabled: false,
     sessionVersion: 1,
-    permissions,
-    lastLogin: new Date().toISOString(),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    permissions: buildFullOwnerPermissions(),
+    lastLogin: now,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export type ProfileResolutionResult =
+  | { allowed: true; profile: User; needsOwnerBootstrap: boolean }
+  | { allowed: false; reason: string; securityEventType: string };
+
+/**
+ * Fail-closed RBAC resolution:
+ * - Requires emailVerified === true.
+ * - Only canonical OWNER_EMAIL may bootstrap a new Owner doc automatically.
+ * - Any non-owner without a provisioned Firestore `users/{uid}` profile is rejected.
+ * - Suspended or inactive accounts are rejected.
+ */
+export function resolveAuthenticatedProfile(
+  fbUser: Pick<FirebaseUser, 'uid' | 'email' | 'displayName' | 'phoneNumber' | 'emailVerified'>,
+  existingDoc: User | null
+): ProfileResolutionResult {
+  if (!fbUser.emailVerified) {
+    return {
+      allowed: false,
+      reason: 'Email verification is required before accessing Al-Madina ERP.',
+      securityEventType: 'UNVERIFIED_EMAIL_LOGIN',
+    };
+  }
+
+  const email = (fbUser.email || '').trim().toLowerCase();
+  const isCanonicalOwner = email === OWNER_EMAIL;
+
+  if (existingDoc) {
+    if (!isCanonicalOwner && (!existingDoc.active || existingDoc.suspended)) {
+      return {
+        allowed: false,
+        reason: existingDoc.suspended
+          ? `Account Suspended: ${existingDoc.suspendedReason || 'Contact the Showroom Owner.'}`
+          : 'Account Inactive: Ask the Showroom Owner to activate your profile.',
+        securityEventType: 'SUSPENDED_OR_INACTIVE_LOGIN',
+      };
+    }
+
+    const effectivePermissions: PermissionsMatrix = isCanonicalOwner || existingDoc.role === 'Owner'
+      ? buildFullOwnerPermissions()
+      : existingDoc.permissions && Object.keys(existingDoc.permissions).length > 0
+      ? existingDoc.permissions
+      : getDefaultPermissionsForRole(existingDoc.role);
+
+    return {
+      allowed: true,
+      profile: {
+        ...existingDoc,
+        uid: fbUser.uid,
+        id: fbUser.uid,
+        orgId: ORG_ID,
+        role: isCanonicalOwner ? 'Owner' : existingDoc.role,
+        emailVerified: true,
+        permissions: effectivePermissions,
+      },
+      needsOwnerBootstrap: isCanonicalOwner,
+    };
+  }
+
+  if (isCanonicalOwner) {
+    return {
+      allowed: true,
+      profile: buildCanonicalOwnerProfile(fbUser),
+      needsOwnerBootstrap: true,
+    };
+  }
+
+  return {
+    allowed: false,
+    reason: `Access Denied: "${fbUser.email || fbUser.uid}" is not provisioned in the Al-Madina ERP staff directory. Contact the Showroom Owner.`,
+    securityEventType: 'UNPROVISIONED_USER_LOGIN',
   };
 }
 
@@ -159,6 +269,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [staffUser, setStaffUser] = useState<User | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [mfaState, setMfaState] = useState<MfaState>({
+    sending: false,
+    sent: false,
+    verifying: false,
+    error: null,
+    info: null,
+  });
   const [connectionStatus, setConnectionStatus] = useState<{ online: boolean; message: string }>({
     online: false,
     message: 'Checking Cloud Firestore connectivity...',
@@ -166,17 +283,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const cloudListenersUnsubRef = useRef<(() => void) | null>(null);
   const userDocUnsubRef = useRef<(() => void) | null>(null);
+  const sessionDocUnsubRef = useRef<(() => void) | null>(null);
+  const pendingMfaRef = useRef<{ fbUser: FirebaseUser; profile: User } | null>(null);
+  const activeSessionVersionRef = useRef<number>(1);
+  const mfaVerifiedForUidRef = useRef<string | null>(null);
 
   const cleanupSubscriptions = () => {
     cloudListenersUnsubRef.current?.();
     cloudListenersUnsubRef.current = null;
     userDocUnsubRef.current?.();
     userDocUnsubRef.current = null;
+    sessionDocUnsubRef.current?.();
+    sessionDocUnsubRef.current = null;
   };
-
-  useEffect(() => {
-    testConnection().then(setConnectionStatus).catch(() => {});
-  }, []);
 
   const notifyOwnerSecurityEvent = async (payload: {
     type: string;
@@ -194,6 +313,80 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const ensureOwnerBootstrapDocs = async (fbUser: FirebaseUser, ownerProfile: User) => {
+    if (!db) return;
+    const now = new Date().toISOString();
+    const safeSessionVersion =
+      Number.isFinite(Number(ownerProfile.sessionVersion)) && Number(ownerProfile.sessionVersion) >= 1
+        ? Math.floor(Number(ownerProfile.sessionVersion))
+        : 1;
+    const cleanOwnerUser = stripUndefined({
+      id: fbUser.uid,
+      uid: fbUser.uid,
+      orgId: ORG_ID,
+      name: ownerProfile.name || fbUser.displayName || 'Showroom Owner Admin',
+      email: OWNER_EMAIL,
+      role: 'Owner' as const,
+      customRoleName: ownerProfile.customRoleName,
+      phone: ownerProfile.phone || '',
+      avatar: ownerProfile.avatar,
+      active: true,
+      suspended: false,
+      suspendedReason: ownerProfile.suspendedReason,
+      emailVerified: true,
+      mfaEnabled: Boolean(ownerProfile.mfaEnabled),
+      sessionVersion: safeSessionVersion,
+      permissions: buildFullOwnerPermissions(),
+      lastLogin: now,
+      createdAt: ownerProfile.createdAt || now,
+      updatedAt: now,
+    });
+    try {
+      await setDoc(
+        doc(db, 'admins', fbUser.uid),
+        {
+          uid: fbUser.uid,
+          email: OWNER_EMAIL,
+          role: 'Owner',
+          createdAt: ownerProfile.createdAt || now,
+        },
+        { merge: true }
+      );
+      await setDoc(
+        doc(db, 'users', fbUser.uid),
+        cleanOwnerUser,
+        { merge: true }
+      );
+      await setDoc(
+        doc(db, 'users_public', fbUser.uid),
+        {
+          uid: fbUser.uid,
+          orgId: ORG_ID,
+          name: cleanOwnerUser.name,
+          role: 'Owner',
+          active: true,
+        },
+        { merge: true }
+      );
+    } catch (err) {
+      console.warn('Owner Firestore bootstrap warning:', err);
+    }
+  };
+
+  const forceRevokedSignOut = async (message: string) => {
+    cleanupSubscriptions();
+    pendingMfaRef.current = null;
+    mfaVerifiedForUidRef.current = null;
+    clearCloudSession();
+    setFirebaseUser(null);
+    setStaffUser(null);
+    setAuthError(message);
+    if (auth) {
+      await signOut(auth).catch(() => {});
+    }
+    setStatus('unauthenticated');
+  };
+
   const activateAuthenticatedSession = (fbUser: FirebaseUser, profile: User) => {
     const isOwnerAccount =
       profile.role === 'Owner' || (fbUser.email || '').toLowerCase() === OWNER_EMAIL;
@@ -204,6 +397,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ? profile.permissions
       : getDefaultPermissionsForRole(profile.role);
 
+    const now = new Date().toISOString();
     const hydratedUser: User = {
       ...profile,
       uid: fbUser.uid,
@@ -211,11 +405,83 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       orgId: ORG_ID,
       role: isOwnerAccount ? 'Owner' : profile.role,
       permissions: effectivePermissions,
-      lastLogin: new Date().toISOString(),
+      lastLogin: now,
     };
 
+    activeSessionVersionRef.current = Number(hydratedUser.sessionVersion || 1);
     setStaffUser(hydratedUser);
     setCloudSessionUser(hydratedUser);
+
+    if (db) {
+      const sessionId = getOrCreateSessionId(fbUser.uid);
+      const sessionDoc: UserSession = {
+        id: sessionId,
+        orgId: ORG_ID,
+        uid: fbUser.uid,
+        email: hydratedUser.email,
+        userName: hydratedUser.name,
+        role: hydratedUser.role,
+        deviceInfo: typeof navigator !== 'undefined' ? navigator.userAgent.slice(0, 180) : 'Browser',
+        revoked: false,
+        createdAt: now,
+        lastActiveAt: now,
+      };
+      persistUserSession(sessionDoc).catch(() => {});
+
+      sessionDocUnsubRef.current?.();
+      sessionDocUnsubRef.current = onSnapshot(
+        doc(db, 'sessions', sessionId),
+        snap => {
+          if (snap.exists() && snap.data()?.revoked === true) {
+            forceRevokedSignOut('Session Revoked: Your session was terminated by the Showroom Owner.');
+          }
+        },
+        err => console.warn('Session listener warning:', err.message)
+      );
+
+      userDocUnsubRef.current?.();
+      userDocUnsubRef.current = onSnapshot(
+        doc(db, 'users', fbUser.uid),
+        snap => {
+          if (!snap.exists()) return;
+          const updated = snap.data() as User;
+          const updatedIsOwner =
+            updated.role === 'Owner' || (fbUser.email || '').toLowerCase() === OWNER_EMAIL;
+
+          if (!updatedIsOwner && (!updated.active || updated.suspended)) {
+            forceRevokedSignOut(
+              updated.suspended
+                ? `Account Suspended: ${updated.suspendedReason || 'Contact the Showroom Owner.'}`
+                : 'Account Deactivated: Contact the Showroom Owner.'
+            );
+            return;
+          }
+
+          const newVersion = Number(updated.sessionVersion || 1);
+          if (newVersion > activeSessionVersionRef.current) {
+            forceRevokedSignOut('Session Revoked: Permissions or sessions were reset by the Showroom Owner. Please sign in again.');
+            return;
+          }
+
+          const updatedHydrated: User = {
+            ...updated,
+            uid: fbUser.uid,
+            id: fbUser.uid,
+            orgId: ORG_ID,
+            permissions: updatedIsOwner
+              ? buildFullOwnerPermissions()
+              : updated.permissions && Object.keys(updated.permissions).length > 0
+              ? updated.permissions
+              : getDefaultPermissionsForRole(updated.role),
+          };
+          setStaffUser(updatedHydrated);
+          setCloudSessionUser(updatedHydrated);
+        },
+        err => {
+          console.warn('Staff profile snapshot listener warning:', err.message);
+        }
+      );
+    }
 
     cloudListenersUnsubRef.current?.();
     cloudListenersUnsubRef.current = attachPermittedCloudListeners(
@@ -231,11 +497,95 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setStatus('authenticated');
   };
 
+  const triggerMfaChallenge = async () => {
+    setMfaState({ sending: true, sent: false, verifying: false, error: null, info: null });
+    try {
+      const res = await authorizedApiFetch('/api/mfa/request', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMfaState({
+          sending: false,
+          sent: false,
+          verifying: false,
+          error: data.error || `Could not send verification code (HTTP ${res.status}).`,
+          info: null,
+        });
+        return;
+      }
+      setMfaState({
+        sending: false,
+        sent: true,
+        verifying: false,
+        error: null,
+        info: 'A 6-digit verification code has been sent to your registered email (valid 5 minutes).',
+      });
+    } catch (err: any) {
+      setMfaState({
+        sending: false,
+        sent: false,
+        verifying: false,
+        error: err?.message || 'Unable to contact MFA verification server.',
+        info: null,
+      });
+    }
+  };
+
+  const evaluateFirebaseUser = async (fbUser: FirebaseUser) => {
+    if (!fbUser.emailVerified) {
+      setFirebaseUser(fbUser);
+      setStatus('verification_required');
+      return;
+    }
+
+    let existingProfile: User | null = null;
+    if (db) {
+      try {
+        const snap = await getDoc(doc(db, 'users', fbUser.uid));
+        if (snap.exists()) {
+          existingProfile = snap.data() as User;
+        }
+      } catch (err: any) {
+        const isCanonicalOwner = (fbUser.email || '').toLowerCase() === OWNER_EMAIL;
+        if (!isCanonicalOwner) {
+          await forceRevokedSignOut(
+            `Access Verification Failed: Could not verify your staff permissions in Cloud Firestore (${err?.message || 'permission denied'}).`
+          );
+          return;
+        }
+      }
+    }
+
+    const resolution = resolveAuthenticatedProfile(fbUser, existingProfile);
+    if (!resolution.allowed) {
+      await notifyOwnerSecurityEvent({
+        type: resolution.securityEventType,
+        severity: 'WARNING',
+        title: `Blocked Sign-In: ${fbUser.email || fbUser.uid}`,
+        details: resolution.reason,
+      });
+      await forceRevokedSignOut(resolution.reason);
+      return;
+    }
+
+    if (resolution.needsOwnerBootstrap) {
+      await ensureOwnerBootstrapDocs(fbUser, resolution.profile);
+    }
+
+    if (resolution.profile.mfaEnabled && mfaVerifiedForUidRef.current !== fbUser.uid) {
+      pendingMfaRef.current = { fbUser, profile: resolution.profile };
+      setFirebaseUser(fbUser);
+      setStatus('mfa_required');
+      await triggerMfaChallenge();
+      return;
+    }
+
+    activateAuthenticatedSession(fbUser, resolution.profile);
+  };
+
   useEffect(() => {
     if (!isFirebaseConfigured() || !auth) {
       const missing = getFirebaseMissingFields();
-      const missingDetail =
-        missing.length > 0 ? ` (${missing.join(', ')})` : '';
+      const missingDetail = missing.length > 0 ? ` (${missing.join(', ')})` : '';
       setConnectionStatus({
         online: false,
         message: `Firebase Configuration Missing${missingDetail}`,
@@ -259,61 +609,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const unsubAuth = onAuthStateChanged(auth, async fbUser => {
       cleanupSubscriptions();
+      pendingMfaRef.current = null;
       setAuthError(null);
 
       if (!fbUser) {
+        mfaVerifiedForUidRef.current = null;
         setFirebaseUser(null);
         setStaffUser(null);
         clearCloudSession();
+        setConnectionStatus({
+          online: false,
+          message: 'Firebase SDK ready (sign in to connect to Cloud Firestore).',
+        });
         setStatus('unauthenticated');
         return;
       }
 
       setFirebaseUser(fbUser);
-
-      // Load existing Firestore profile if present without blocking direct login
-      let profile: User | null = null;
-      if (db) {
-        try {
-          const snap = await getDoc(doc(db, 'users', fbUser.uid));
-          if (snap.exists()) {
-            profile = snap.data() as User;
-          }
-        } catch (err) {
-          console.warn('Could not read optional staff profile doc; proceeding with Firebase Auth session:', err);
-        }
-      }
-
-      const resolvedProfile = profile || buildFallbackStaffProfile(fbUser);
-      activateAuthenticatedSession(fbUser, resolvedProfile);
-
-      if (db) {
-        userDocUnsubRef.current = onSnapshot(
-          doc(db, 'users', fbUser.uid),
-          snap => {
-            if (!snap.exists()) return;
-            const updated = snap.data() as User;
-            const isOwnerAccount =
-              updated.role === 'Owner' || (fbUser.email || '').toLowerCase() === OWNER_EMAIL;
-            const hydrated: User = {
-              ...updated,
-              uid: fbUser.uid,
-              id: fbUser.uid,
-              orgId: ORG_ID,
-              permissions: isOwnerAccount
-                ? buildFullOwnerPermissions()
-                : updated.permissions && Object.keys(updated.permissions).length > 0
-                ? updated.permissions
-                : getDefaultPermissionsForRole(updated.role),
-            };
-            setStaffUser(hydrated);
-            setCloudSessionUser(hydrated);
-          },
-          err => {
-            console.warn('Staff profile snapshot listener warning:', err.message);
-          }
-        );
-      }
+      testConnection().then(setConnectionStatus).catch(() => {});
+      await evaluateFirebaseUser(fbUser);
     });
 
     return () => {
@@ -409,6 +723,67 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const resendVerificationEmail = async () => {
+    const user = auth?.currentUser;
+    if (!user) {
+      return { ok: false, message: 'No active user session found.' };
+    }
+    try {
+      await sendEmailVerification(user);
+      return { ok: true, message: `Verification email sent to ${user.email}. Check your inbox and spam folder.` };
+    } catch (err: any) {
+      return { ok: false, message: err?.message || 'Failed to send verification email.' };
+    }
+  };
+
+  const refreshVerificationStatus = async () => {
+    const user = auth?.currentUser;
+    if (!user) return false;
+    await user.reload();
+    if (!user.emailVerified) {
+      return false;
+    }
+    await evaluateFirebaseUser(user);
+    return true;
+  };
+
+  const requestMfaOtp = async () => {
+    await triggerMfaChallenge();
+  };
+
+  const verifyMfaOtp = async (code: string) => {
+    const pending = pendingMfaRef.current;
+    if (!pending) return false;
+    setMfaState(prev => ({ ...prev, verifying: true, error: null }));
+    try {
+      const res = await authorizedApiFetch('/api/mfa/verify', {
+        method: 'POST',
+        body: JSON.stringify({ code: code.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.verified) {
+        setMfaState(prev => ({
+          ...prev,
+          verifying: false,
+          error: data.error || 'Invalid or expired OTP code.',
+        }));
+        return false;
+      }
+      mfaVerifiedForUidRef.current = pending.fbUser.uid;
+      pendingMfaRef.current = null;
+      setMfaState({ sending: false, sent: false, verifying: false, error: null, info: null });
+      activateAuthenticatedSession(pending.fbUser, pending.profile);
+      return true;
+    } catch (err: any) {
+      setMfaState(prev => ({
+        ...prev,
+        verifying: false,
+        error: err?.message || 'OTP verification request failed.',
+      }));
+      return false;
+    }
+  };
+
   const reauthenticateOwner = async (): Promise<boolean> => {
     if (!auth?.currentUser) return false;
     try {
@@ -422,7 +797,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     cleanupSubscriptions();
+    pendingMfaRef.current = null;
+    mfaVerifiedForUidRef.current = null;
     setAuthError(null);
+    setMfaState({ sending: false, sent: false, verifying: false, error: null, info: null });
     clearCloudSession();
     setFirebaseUser(null);
     setStaffUser(null);
@@ -452,10 +830,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         staffUser,
         isOwner,
         authError,
+        mfaState,
         connectionStatus,
         signInWithGoogle,
         signInWithEmail,
         requestPasswordReset,
+        resendVerificationEmail,
+        refreshVerificationStatus,
+        requestMfaOtp,
+        verifyMfaOtp,
         reauthenticateOwner,
         logout,
         can,

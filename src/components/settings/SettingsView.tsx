@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react';
 import {
   Save, Store, CheckCircle2,
   Globe, Database, RefreshCw, AlertCircle,
-  Check, Key, Link2, Lock
+  Check, Key, Link2, Lock, Activity
 } from 'lucide-react';
 import {
-  getSettings, saveSettings, subscribeToDatabase
+  getSettings, saveSettings, subscribeToDatabase, logAuditAction
 } from '../../services/storage';
 import { ShowroomSettings } from '../../types/erp';
 import {
@@ -16,10 +16,11 @@ import {
   type WordPressStatus
 } from '../../services/wordpressService';
 import { useAuth } from '../../context/AuthContext';
+import { ActivityLogs } from './ActivityLogs';
 
 export const SettingsView: React.FC = () => {
   const { isOwner } = useAuth();
-  const [activeTab, setActiveTab] = useState<'General' | 'WooCommerce' | 'Database'>('General');
+  const [activeTab, setActiveTab] = useState<'General' | 'WooCommerce' | 'Database' | 'ActivityLogs'>('General');
   const [settings, setSettingsState] = useState<ShowroomSettings>(getSettings());
 
   // Server-side WordPress configuration state (never persisted in localStorage)
@@ -83,6 +84,7 @@ export const SettingsView: React.FC = () => {
       setWpWcSecret('');
       const refreshed = await fetchWordPressServerStatus();
       setWpStatus(refreshed);
+      logAuditAction('Settings', 'Update WooCommerce Configuration', `Updated server-side WordPress/WooCommerce integration for ${wpSiteUrl.trim()}`);
       setNotice({ type: 'success', text: 'WordPress/WooCommerce credentials stored securely in server memory (never in browser storage).' });
     } else {
       setNotice({ type: 'error', text: res.message || 'Could not save server WordPress configuration.' });
@@ -119,7 +121,7 @@ export const SettingsView: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-semibold text-slate-600">
+        <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-semibold text-slate-600">
           <button
             onClick={() => setActiveTab('General')}
             className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg transition ${
@@ -148,6 +150,16 @@ export const SettingsView: React.FC = () => {
           >
             <Database className="h-4 w-4 text-blue-600" />
             <span>Workspace Mode</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('ActivityLogs')}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg transition ${
+              activeTab === 'ActivityLogs' ? 'bg-white text-slate-900 shadow-2xs font-bold' : 'hover:text-slate-900'
+            }`}
+          >
+            <Activity className="h-4 w-4 text-emerald-600" />
+            <span>Activity Logs</span>
           </button>
         </div>
       </div>
@@ -495,6 +507,8 @@ export const SettingsView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {activeTab === 'ActivityLogs' && <ActivityLogs />}
     </div>
   );
 };

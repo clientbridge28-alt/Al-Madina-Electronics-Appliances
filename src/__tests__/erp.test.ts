@@ -18,7 +18,10 @@ Object.defineProperty(globalThis, 'localStorage', {
   configurable: true,
 });
 
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import * as XLSX from 'xlsx';
+import { POSReceiptPrintLayout } from '../components/pos/POSReceiptPrintLayout';
 import {
   ACCOUNT_IDS,
   buildChequeClearanceVoucher,
@@ -46,7 +49,14 @@ import {
   resolveFirebaseConfig,
 } from '../services/firebase';
 import {
+  buildCloudDocPayload,
+} from '../services/firestoreSync';
+import {
+  adjustProductStock,
+  applyCloudCollectionSnapshot,
+  bounceChequeWithAccounting,
   clearChequeWithAccounting,
+  clearCloudSession,
   clearToProductionEmpty,
   closeInstallmentAccountEarly,
   createInstallmentAccount,
@@ -54,14 +64,29 @@ import {
   createPurchaseReturn,
   createSalesInvoice,
   createSalesReturn,
+  createStockTransfer,
+  createVoucher,
   deleteCustomer,
   deleteProduct,
   deleteSupplier,
   deleteTask,
+  getAuditLogs,
+  getSettings,
+  logAuditAction,
+  saveSettings,
+  getBalanceSheetStatement,
+  getBankBookEntries,
+  getCashBookEntries,
+  getCashFlowStatement,
   getChartOfAccounts,
   getCustomerById,
   getCustomerLedgerEntries,
   getDatabaseSnapshot,
+  getGeneralLedgerEntries,
+  getHeadWiseBalanceReport,
+  getInstallmentCommitments,
+  getInstallmentReportsData,
+  getInventoryReportsData,
   getItemStockLedger,
   getProductById,
   getSupplierById,
@@ -71,11 +96,18 @@ import {
   importDatabaseJSON,
   isDemoMode,
   receiveInstallmentPayment,
+  reconcileCheque,
+  rescheduleInstallmentPlan,
+  reverseVoucher,
   saveCheque,
   saveCustomer,
+  saveInstallmentCommitment,
   saveProduct,
   saveSupplier,
   saveTask,
+  saveWarehouse,
+  setActiveUser,
+  updateCommitmentStatus,
 } from '../services/storage';
 import { mapFirebaseAuthError } from '../context/AuthContext';
 import { buildFullOwnerPermissions, getDefaultPermissionsForRole } from '../types/rbac';
@@ -140,6 +172,7 @@ function seedCleanFixtures(): { customer: Customer; supplier: Supplier; product:
 describe('Al-Madina Electronics ERP — Core Accounting, Inventory & RBAC Suite', () => {
   beforeEach(() => {
     memoryStorage.clear();
+    clearCloudSession();
     clearToProductionEmpty();
   });
 
@@ -1076,5 +1109,930 @@ describe('Al-Madina Electronics ERP — Core Accounting, Inventory & RBAC Suite'
     const summary = getPublicFirebaseSummary();
     expect(summary).not.toHaveProperty('apiKey');
     expect(typeof summary.apiKeyConfigured).toBe('boolean');
+  });
+
+  it('10. Rejects negative stock for non-Owners and allows explicit Owner negative stock override with audit note', () => {
+    const { customer, product } = seedCleanFixtures();
+    saveProduct({ ...product, stockQuantity: 2 });
+
+    // Non-Owner cannot adjust or sell below 0 even if allowNegativeStock is passed
+    setActiveUser({
+      id: 'cashier-1',
+      uid: 'cashier-1',
+      name: 'Cashier Ali',
+      email: 'cashier@almadina.pk',
+      role: 'Cashier',
+      phone: '0300-0000001',
+      active: true,
+      lastLogin: '2026-11-15',
+    });
+
+    expect(() => adjustProductStock(product.id, -5, 'Unauthorized reduction')).toThrow(/Insufficient stock/i);
+    expect(() =>
+      adjustProductStock(product.id, -5, 'Unauthorized override attempt', { allowNegativeStock: true })
+    ).toThrow(/Insufficient stock/i);
+
+    expect(() =>
+      createSalesInvoice(
+        {
+          invoiceNumber: 'INV-NEG-FAIL',
+          customerId: customer.id,
+          customerName: customer.name,
+          customerPhone: customer.phone,
+          saleType: 'Cash',
+          date: '2026-11-15',
+          items: [
+            {
+              productId: product.id,
+              productName: product.name,
+              brand: product.brand,
+              modelNumber: product.modelNumber,
+              quantity: 5,
+              unitPrice: 70000,
+              costPrice: 50000,
+              discount: 0,
+              total: 350000,
+            },
+          ],
+          subTotal: 350000,
+          discount: 0,
+          tax: 0,
+          grandTotal: 350000,
+          paidAmount: 350000,
+          changeAmount: 0,
+          remainingBalance: 0,
+          paymentMethod: 'Cash',
+          salesPerson: 'Cashier Ali',
+        },
+        { allowNegativeStock: true }
+      )
+    ).toThrow(/Insufficient stock/i);
+    expect(getProductById(product.id)?.stockQuantity).toBe(2);
+
+    // Owner override succeeds cleanly and records [Owner Negative Stock Override]
+    setActiveUser({
+      id: 'owner-1',
+      uid: 'owner-1',
+      name: 'Owner Al-Madina',
+      email: 'clientbridge28@gmail.com',
+      role: 'Owner',
+      phone: '0300-0000000',
+      active: true,
+      lastLogin: '2026-11-15',
+    });
+
+    const adj = adjustProductStock(product.id, -5, 'Owner count override', { allowNegativeStock: true });
+    expect(adj?.newQty).toBe(-3);
+    expect(getProductById(product.id)?.stockQuantity).toBe(-3);
+
+    const sale = createSalesInvoice(
+      {
+        invoiceNumber: 'INV-NEG-OK',
+        customerId: customer.id,
+        customerName: customer.name,
+        customerPhone: customer.phone,
+        saleType: 'Cash',
+        date: '2026-11-15',
+        items: [
+          {
+            productId: product.id,
+            productName: product.name,
+            brand: product.brand,
+            modelNumber: product.modelNumber,
+            quantity: 2,
+            unitPrice: 70000,
+            costPrice: 50000,
+            discount: 0,
+            total: 140000,
+          },
+        ],
+        subTotal: 140000,
+        discount: 0,
+        tax: 0,
+        grandTotal: 140000,
+        paidAmount: 140000,
+        changeAmount: 0,
+        remainingBalance: 0,
+        paymentMethod: 'Cash',
+        salesPerson: 'Owner Al-Madina',
+      },
+      { allowNegativeStock: true }
+    );
+    expect(sale.notes).toContain('[Owner Negative Stock Override]');
+    expect(getProductById(product.id)?.stockQuantity).toBe(-5);
+  });
+
+  it('11. Supports double-entry voucher reversal and restores standalone customer/supplier balances', () => {
+    const { customer, supplier, product } = seedCleanFixtures();
+    saveProduct({ ...product, stockQuantity: 10 });
+
+    // Credit sale leaves 100,000 customer receivable
+    createSalesInvoice({
+      invoiceNumber: 'INV-REV-1',
+      customerId: customer.id,
+      customerName: customer.name,
+      customerPhone: customer.phone,
+      saleType: 'Credit',
+      date: '2026-11-10',
+      items: [
+        {
+          productId: product.id,
+          productName: product.name,
+          brand: product.brand,
+          modelNumber: product.modelNumber,
+          quantity: 2,
+          unitPrice: 70000,
+          costPrice: 50000,
+          discount: 0,
+          total: 140000,
+        },
+      ],
+      subTotal: 140000,
+      discount: 0,
+      tax: 0,
+      grandTotal: 140000,
+      paidAmount: 40000,
+      changeAmount: 0,
+      remainingBalance: 100000,
+      paymentMethod: 'Cash',
+      salesPerson: 'Admin',
+    });
+    expect(getCustomerById(customer.id)?.currentBalance).toBe(100000);
+
+    const cashBeforeReceipt = getChartOfAccounts().find(a => a.id === ACCOUNT_IDS.CASH)?.currentBalance || 0;
+
+    // Standalone Receive Voucher for 25,000 reduces customer receivable to 75,000
+    const rv = createVoucher({
+      voucherNumber: 'RV-TEST-1',
+      date: '2026-11-11',
+      voucherType: 'Receive Voucher',
+      partyId: customer.id,
+      partyType: 'Customer',
+      partyName: customer.name,
+      paymentMethod: 'Cash',
+      amount: 25000,
+      narration: 'Cash recovery from customer',
+      entries: [
+        { accountId: ACCOUNT_IDS.CASH, accountName: 'Cash in Hand', debit: 25000, credit: 0 },
+        { accountId: ACCOUNT_IDS.ACCOUNTS_RECEIVABLE, accountName: 'Accounts Receivable', debit: 0, credit: 25000 },
+      ],
+    });
+    expect(getCustomerById(customer.id)?.currentBalance).toBe(75000);
+    expect(getChartOfAccounts().find(a => a.id === ACCOUNT_IDS.CASH)?.currentBalance).toBe(cashBeforeReceipt + 25000);
+
+    // Reverse the Receive Voucher: cancels original, restores Cash & Customer Balance back to 100,000
+    const reversal = reverseVoucher(rv.id, 'Wrong customer selected');
+    expect(sumVoucherSides(reversal.entries).isBalanced).toBe(true);
+    expect(getVouchers().find(v => v.id === rv.id)?.status).toBe('Cancelled');
+    expect(getVouchers().find(v => v.id === rv.id)?.reversedByVoucherId).toBe(reversal.id);
+    expect(getCustomerById(customer.id)?.currentBalance).toBe(100000);
+    expect(getChartOfAccounts().find(a => a.id === ACCOUNT_IDS.CASH)?.currentBalance).toBe(cashBeforeReceipt);
+    expect(() => reverseVoucher(rv.id, 'Duplicate reversal')).toThrow(/already been reversed/i);
+
+    // Standalone Supplier Payment Voucher + reversal
+    createPurchaseInvoice({
+      invoiceNumber: 'PINV-REV-1',
+      supplierId: supplier.id,
+      supplierName: supplier.companyName,
+      date: '2026-11-10',
+      items: [
+        {
+          productId: product.id,
+          productName: product.name,
+          brand: product.brand,
+          modelNumber: product.modelNumber,
+          quantity: 2,
+          purchasePrice: 50000,
+          total: 100000,
+        },
+      ],
+      subTotal: 100000,
+      discount: 0,
+      tax: 0,
+      freightCharges: 0,
+      grandTotal: 100000,
+      paidAmount: 0,
+      remainingBalance: 100000,
+      paymentMethod: 'Cash',
+      status: 'Received',
+    });
+    expect(getSupplierById(supplier.id)?.currentBalance).toBe(100000);
+
+    const pv = createVoucher({
+      voucherNumber: 'PV-TEST-1',
+      date: '2026-11-12',
+      voucherType: 'Payment Voucher',
+      partyId: supplier.id,
+      partyType: 'Supplier',
+      partyName: supplier.companyName,
+      paymentMethod: 'Cash',
+      amount: 40000,
+      narration: 'Supplier installment payment',
+      entries: [
+        { accountId: ACCOUNT_IDS.ACCOUNTS_PAYABLE, accountName: 'Accounts Payable', debit: 40000, credit: 0 },
+        { accountId: ACCOUNT_IDS.CASH, accountName: 'Cash in Hand', debit: 0, credit: 40000 },
+      ],
+    });
+    expect(getSupplierById(supplier.id)?.currentBalance).toBe(60000);
+    reverseVoucher(pv.id, 'Cheque issued instead');
+    expect(getSupplierById(supplier.id)?.currentBalance).toBe(100000);
+  });
+
+  it('12. Builds chronological Customer & Supplier ledgers with standalone vouchers and bounced cheques matching balances', () => {
+    const { customer, supplier, product } = seedCleanFixtures();
+    saveProduct({ ...product, stockQuantity: 10 });
+
+    createPurchaseInvoice({
+      invoiceNumber: 'PINV-LED-1',
+      supplierId: supplier.id,
+      supplierName: supplier.companyName,
+      date: '2026-11-02',
+      items: [
+        {
+          productId: product.id,
+          productName: product.name,
+          brand: product.brand,
+          modelNumber: product.modelNumber,
+          quantity: 2,
+          purchasePrice: 50000,
+          total: 100000,
+        },
+      ],
+      subTotal: 100000,
+      discount: 0,
+      tax: 0,
+      freightCharges: 0,
+      grandTotal: 100000,
+      paidAmount: 20000,
+      remainingBalance: 80000,
+      paymentMethod: 'Bank Transfer',
+      status: 'Received',
+    });
+
+    createVoucher({
+      voucherNumber: 'PV-LED-1',
+      date: '2026-11-05',
+      voucherType: 'Payment Voucher',
+      partyId: supplier.id,
+      partyType: 'Supplier',
+      partyName: supplier.companyName,
+      paymentMethod: 'Bank',
+      amount: 30000,
+      narration: 'Mid-month supplier settlement',
+      entries: [
+        { accountId: ACCOUNT_IDS.ACCOUNTS_PAYABLE, accountName: 'Accounts Payable', debit: 30000, credit: 0 },
+        { accountId: ACCOUNT_IDS.MEEZAN_BANK, accountName: 'Meezan Bank', debit: 0, credit: 30000 },
+      ],
+    });
+
+    const suppLedger = getSupplierLedgerEntries(supplier.id);
+    expect(suppLedger[suppLedger.length - 1].balance).toBe(getSupplierById(supplier.id)?.currentBalance);
+    expect(suppLedger[suppLedger.length - 1].balance).toBe(50000);
+
+    createSalesInvoice({
+      invoiceNumber: 'INV-LED-1',
+      customerId: customer.id,
+      customerName: customer.name,
+      customerPhone: customer.phone,
+      saleType: 'Credit',
+      date: '2026-11-03',
+      items: [
+        {
+          productId: product.id,
+          productName: product.name,
+          brand: product.brand,
+          modelNumber: product.modelNumber,
+          quantity: 1,
+          unitPrice: 70000,
+          costPrice: 50000,
+          discount: 0,
+          total: 70000,
+        },
+      ],
+      subTotal: 70000,
+      discount: 0,
+      tax: 0,
+      grandTotal: 70000,
+      paidAmount: 10000,
+      changeAmount: 0,
+      remainingBalance: 60000,
+      paymentMethod: 'Cash',
+      salesPerson: 'Admin',
+    });
+
+    createVoucher({
+      voucherNumber: 'RV-LED-1',
+      date: '2026-11-06',
+      voucherType: 'Receive Voucher',
+      partyId: customer.id,
+      partyType: 'Customer',
+      partyName: customer.name,
+      paymentMethod: 'Cash',
+      amount: 15000,
+      narration: 'Standalone cash recovery',
+      entries: [
+        { accountId: ACCOUNT_IDS.CASH, accountName: 'Cash in Hand', debit: 15000, credit: 0 },
+        { accountId: ACCOUNT_IDS.ACCOUNTS_RECEIVABLE, accountName: 'Accounts Receivable', debit: 0, credit: 15000 },
+      ],
+    });
+
+    const custLedger = getCustomerLedgerEntries(customer.id);
+    expect(custLedger.map(r => r.date)).toEqual([...custLedger.map(r => r.date)].sort());
+    expect(custLedger[custLedger.length - 1].balance).toBe(getCustomerById(customer.id)?.currentBalance);
+    expect(custLedger[custLedger.length - 1].balance).toBe(45000);
+  });
+
+  it('13. Clears cheques to specific bank, supports reconciliation, and reverses cleared cheques on bounce', () => {
+    const { customer } = seedCleanFixtures();
+    saveCustomer({ ...customer, currentBalance: 50000 });
+
+    const cheque: ChequeRecord = {
+      id: 'CHQ-LIFE-1',
+      chequeNumber: '445566',
+      type: 'Received',
+      bankName: 'Bank Alfalah',
+      bankAccountId: ACCOUNT_IDS.ALFALAH_BANK,
+      partyId: customer.id,
+      partyType: 'Customer',
+      partyName: customer.name,
+      amount: 30000,
+      issueDate: '2026-11-10',
+      chequeDate: '2026-11-11',
+      status: 'Deposited',
+    };
+    saveCheque(cheque);
+
+    expect(clearChequeWithAccounting(cheque.id, '2026-11-12', ACCOUNT_IDS.ALFALAH_BANK)).toBe(true);
+    expect(getCustomerById(customer.id)?.currentBalance).toBe(20000);
+    expect(getChartOfAccounts().find(a => a.id === ACCOUNT_IDS.ALFALAH_BANK)?.currentBalance).toBe(30000);
+
+    expect(reconcileCheque(cheque.id, '2026-11-13', true)).toBe(true);
+
+    // Bounce after clearance reverses bank credit & restores customer receivable
+    expect(bounceChequeWithAccounting(cheque.id, '2026-11-15', 'Insufficient funds')).toBe(true);
+    expect(getCustomerById(customer.id)?.currentBalance).toBe(50000);
+    expect(getChartOfAccounts().find(a => a.id === ACCOUNT_IDS.ALFALAH_BANK)?.currentBalance).toBe(0);
+    expect(bounceChequeWithAccounting(cheque.id, '2026-11-16', 'Already bounced')).toBe(false);
+  });
+
+  it('14. Manages warehouses, stock transfers, damaged stock entries, and chronological item stock ledger', () => {
+    const { supplier, product } = seedCleanFixtures();
+    const whMain = saveWarehouse({ id: 'WH-MAIN', name: 'Main Showroom', code: 'MAIN', city: 'Lahore', address: 'Hall Road', isDefault: true, active: true });
+    const whGodown = saveWarehouse({ id: 'WH-GODOWN', name: 'Godown #2', code: 'GDN2', city: 'Lahore', address: 'Peco Road', active: true });
+
+    saveProduct({
+      ...product,
+      openingStock: 4,
+      stockQuantity: 4,
+      warehouseId: whMain.id,
+      warehouseName: whMain.name,
+    });
+
+    createPurchaseInvoice({
+      invoiceNumber: 'PINV-WH-1',
+      supplierId: supplier.id,
+      supplierName: supplier.companyName,
+      date: '2026-11-05',
+      items: [
+        {
+          productId: product.id,
+          productName: product.name,
+          brand: product.brand,
+          modelNumber: product.modelNumber,
+          quantity: 6,
+          purchasePrice: 50000,
+          total: 300000,
+        },
+      ],
+      subTotal: 300000,
+      discount: 0,
+      tax: 0,
+      freightCharges: 0,
+      grandTotal: 300000,
+      paidAmount: 300000,
+      remainingBalance: 0,
+      paymentMethod: 'Cash',
+      status: 'Received',
+    });
+
+    expect(() =>
+      createStockTransfer({
+        transferNumber: 'STRF-BAD',
+        date: '2026-11-06',
+        productId: product.id,
+        productName: product.name,
+        quantity: 2,
+        fromWarehouseId: whMain.id,
+        fromWarehouseName: whMain.name,
+        toWarehouseId: whMain.id,
+        toWarehouseName: whMain.name,
+      })
+    ).toThrow(/must be different/i);
+
+    const tr = createStockTransfer({
+      transferNumber: 'STRF-1',
+      date: '2026-11-06',
+      productId: product.id,
+      productName: product.name,
+      quantity: 4,
+      fromWarehouseId: whMain.id,
+      fromWarehouseName: whMain.name,
+      toWarehouseId: whGodown.id,
+      toWarehouseName: whGodown.name,
+    });
+    expect(tr.quantity).toBe(4);
+    expect(getProductById(product.id)?.warehouseId).toBe(whGodown.id);
+
+    adjustProductStock(product.id, -2, 'Transit casing dent', { adjustmentType: 'Damaged' });
+    expect(getProductById(product.id)?.stockQuantity).toBe(8);
+    expect(getProductById(product.id)?.damagedQuantity).toBe(2);
+
+    const ledger = getItemStockLedger(product.id);
+    expect(ledger.map(r => r.type)).toEqual(['Opening Balance', 'Purchase In', 'Transfer Out', 'Damaged Out']);
+    expect(ledger[ledger.length - 1].runningQty).toBe(8);
+  });
+
+  it('15. Reschedules installment plans while preserving paid installments and tracks customer commitments', () => {
+    const { customer, product } = seedCleanFixtures();
+    const account = createInstallmentAccount({
+      accountNumber: 'INST-RES-1',
+      customerId: customer.id,
+      customerName: customer.name,
+      customerPhone: customer.phone,
+      customerCnic: customer.cnic,
+      customerAddress: customer.address,
+      locationSector: 'Johar Town',
+      mobile2: '0333-1122334',
+      profession: 'Government Employee',
+      referenceName: 'Haji Akram',
+      slipNo: 'SLP-901',
+      productId: product.id,
+      productName: product.name,
+      productModel: product.modelNumber,
+      salesInvoiceNo: 'INV-RES-1',
+      cashPrice: 70000,
+      downPayment: 10000,
+      financedAmount: 60000,
+      markupPercentage: 20,
+      markupAmount: 12000,
+      totalFinancedPayable: 72000,
+      totalPayableWithDown: 82000,
+      durationMonths: 6,
+      monthlyInstallment: 12000,
+      startDate: '2026-11-01',
+      firstDueDate: '2026-12-01',
+      guarantor1Name: 'Zain Ali',
+      guarantor1Phone: '0300-5554443',
+      guarantor1Cnic: '35202-2223334-1',
+      guarantor1Relation: 'Brother',
+      guarantor2Name: 'Nadeem Tariq',
+      guarantor2Phone: '0322-7776665',
+      guarantor2Cnic: '35202-8889990-1',
+      guarantor2Relation: 'Colleague',
+      recoveryOfficerId: 'EMP-2',
+      recoveryOfficerName: 'Salman',
+      schedule: Array.from({ length: 6 }, (_, idx) => ({
+        installmentNumber: idx + 1,
+        dueDate: `2027-0${idx + 1}-01`,
+        principalAmount: 10000,
+        markupAmount: 2000,
+        totalDue: 12000,
+        paidAmount: 0,
+        remainingAmount: 12000,
+        status: 'Upcoming',
+      })),
+    });
+
+    receiveInstallmentPayment(account.id, 12000, 'Cash', 'Paid installment #1');
+    const rescheduled = rescheduleInstallmentPlan(account.id, 5, '2027-03-01', 'Salary cycle changed');
+    expect(rescheduled.schedule).toHaveLength(6);
+    expect(rescheduled.schedule[0].status).toBe('Paid');
+    expect(rescheduled.schedule[1].dueDate).toBe('2027-03-01');
+    expect(rescheduled.rescheduleHistory).toHaveLength(1);
+    const pendingSum = rescheduled.schedule
+      .filter(s => s.status !== 'Paid')
+      .reduce((sum, s) => sum + s.remainingAmount, 0);
+    expect(pendingSum).toBe(60000);
+
+    const cmt = saveInstallmentCommitment({
+      installmentAccountId: account.id,
+      accountNumber: account.accountNumber,
+      customerId: customer.id,
+      customerName: account.customerName,
+      customerPhone: account.customerPhone,
+      commitmentDate: '2027-02-28',
+      promisedAmount: 12000,
+      officerName: 'Salman',
+      remarks: 'Promised transfer before month end',
+      status: 'Pending',
+    });
+    expect(getInstallmentCommitments()).toHaveLength(1);
+    updateCommitmentStatus(cmt.id, 'Fulfilled');
+    expect(getInstallmentCommitments()[0].status).toBe('Fulfilled');
+  });
+
+  it('16. Produces balanced Head-Wise Trial Balance, Balance Sheet, Cash Flow, Cash/Bank Books, and General Ledger', () => {
+    const { customer, supplier, product } = seedCleanFixtures();
+    saveProduct({ ...product, stockQuantity: 0 });
+
+    createPurchaseInvoice({
+      invoiceNumber: 'PINV-FS-1',
+      supplierId: supplier.id,
+      supplierName: supplier.companyName,
+      date: '2026-11-01',
+      items: [
+        {
+          productId: product.id,
+          productName: product.name,
+          brand: product.brand,
+          modelNumber: product.modelNumber,
+          quantity: 5,
+          purchasePrice: 50000,
+          total: 250000,
+        },
+      ],
+      subTotal: 250000,
+      discount: 0,
+      tax: 0,
+      freightCharges: 0,
+      grandTotal: 250000,
+      paidAmount: 100000,
+      remainingBalance: 150000,
+      paymentMethod: 'Bank Transfer',
+      status: 'Received',
+    });
+
+    createSalesInvoice({
+      invoiceNumber: 'INV-FS-1',
+      customerId: customer.id,
+      customerName: customer.name,
+      customerPhone: customer.phone,
+      saleType: 'Cash',
+      date: '2026-11-05',
+      items: [
+        {
+          productId: product.id,
+          productName: product.name,
+          brand: product.brand,
+          modelNumber: product.modelNumber,
+          quantity: 2,
+          unitPrice: 70000,
+          costPrice: 50000,
+          discount: 0,
+          total: 140000,
+        },
+      ],
+      subTotal: 140000,
+      discount: 0,
+      tax: 0,
+      grandTotal: 140000,
+      paidAmount: 140000,
+      changeAmount: 0,
+      remainingBalance: 0,
+      paymentMethod: 'Cash',
+      salesPerson: 'Admin',
+    });
+
+    const trial = getHeadWiseBalanceReport();
+    expect(trial.isBalanced).toBe(true);
+    expect(trial.totalDebit).toBe(trial.totalCredit);
+
+    const bs = getBalanceSheetStatement();
+    expect(bs.isBalanced).toBe(true);
+    expect(bs.assetsTotal).toBe(bs.liabilitiesAndEquityTotal);
+    expect(bs.netIncome).toBe(40000); // 140k revenue - 100k COGS
+
+    const cf = getCashFlowStatement();
+    expect(cf.operatingInflows).toBe(140000);
+    expect(cf.operatingOutflows).toBe(100000);
+    expect(cf.netOperatingCashFlow).toBe(40000);
+
+    const cashBook = getCashBookEntries();
+    expect(cashBook).toHaveLength(1);
+    expect(cashBook[0].runningBalance).toBe(140000);
+
+    const bankBook = getBankBookEntries(ACCOUNT_IDS.MEEZAN_BANK);
+    expect(bankBook).toHaveLength(1);
+    expect(bankBook[0].runningBalance).toBe(-100000);
+
+    const gl = getGeneralLedgerEntries();
+    expect(gl.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('17. Populates all 10 Inventory report datasets and all 20 Installment report datasets accurately', () => {
+    const { customer, product } = seedCleanFixtures();
+    saveWarehouse({ id: 'WH-1', name: 'Main Showroom', code: 'MAIN', city: 'Lahore', address: 'Hall Road', isDefault: true, active: true });
+
+    saveProduct({
+      ...product,
+      openingStock: 2,
+      stockQuantity: 1,
+      reorderLevel: 3,
+      wholesalePrice: 63000,
+      warehouseId: 'WH-1',
+      warehouseName: 'Main Showroom',
+      damagedQuantity: 1,
+      serials: [
+        {
+          serialNumber: 'SN-1001',
+          productId: product.id,
+          productName: product.name,
+          condition: 'Brand New',
+          purchaseCost: 50000,
+          purchaseDate: '2026-11-01',
+          status: 'In Stock',
+          warrantyMonths: 120,
+        },
+      ],
+    });
+
+    saveProduct({
+      ...product,
+      id: 'PROD-OOS-1',
+      name: 'Orient 18 Cu.Ft Fridge',
+      sku: 'ORI-FR-18',
+      stockQuantity: 0,
+      minStockLevel: 2,
+      reorderLevel: 2,
+      serials: [],
+    });
+
+    const invReports = getInventoryReportsData();
+    expect(invReports.stockValuation).toHaveLength(2);
+    expect(invReports.brandWise).toHaveLength(1);
+    expect(invReports.categoryWise).toHaveLength(1);
+    expect(invReports.lowStockReorder).toHaveLength(2);
+    expect(invReports.outOfStock).toHaveLength(1);
+    expect(invReports.serializedUnits).toHaveLength(1);
+    expect(invReports.damagedAndReturned).toHaveLength(1);
+    expect(invReports.stockMovementSummary).toHaveLength(2);
+    expect(invReports.warehouseWiseStock.length).toBeGreaterThanOrEqual(1);
+    expect(invReports.marginAndPricingAnalysis).toHaveLength(2);
+
+    const inst = createInstallmentAccount({
+      accountNumber: 'INST-RPT-1',
+      customerId: customer.id,
+      customerName: customer.name,
+      customerPhone: customer.phone,
+      customerCnic: customer.cnic,
+      customerAddress: customer.address,
+      locationSector: 'DHA Phase 5',
+      productId: product.id,
+      productName: product.name,
+      productModel: product.modelNumber,
+      salesInvoiceNo: 'INV-RPT-1',
+      cashPrice: 70000,
+      downPayment: 10000,
+      financedAmount: 60000,
+      markupPercentage: 20,
+      markupAmount: 12000,
+      totalFinancedPayable: 72000,
+      totalPayableWithDown: 82000,
+      durationMonths: 3,
+      monthlyInstallment: 24000,
+      startDate: '2026-11-01',
+      firstDueDate: '2026-12-01',
+      guarantor1Name: 'Zain Ali',
+      guarantor1Phone: '0300-5554443',
+      guarantor1Cnic: '35202-2223334-1',
+      guarantor1Relation: 'Brother',
+      guarantor2Name: 'Tariq Aziz',
+      guarantor2Phone: '0321-4445556',
+      guarantor2Cnic: '35202-3334445-1',
+      guarantor2Relation: 'Neighbor',
+      recoveryOfficerId: 'EMP-2',
+      recoveryOfficerName: 'Salman',
+      schedule: [
+        { installmentNumber: 1, dueDate: '2026-12-01', principalAmount: 20000, markupAmount: 4000, totalDue: 24000, paidAmount: 0, remainingAmount: 24000, status: 'Overdue' },
+        { installmentNumber: 2, dueDate: '2027-01-15', principalAmount: 20000, markupAmount: 4000, totalDue: 24000, paidAmount: 0, remainingAmount: 24000, status: 'Upcoming' },
+        { installmentNumber: 3, dueDate: '2027-02-01', principalAmount: 20000, markupAmount: 4000, totalDue: 24000, paidAmount: 0, remainingAmount: 24000, status: 'Upcoming' },
+      ],
+    });
+    expect(inst.accountNumber).toBe('INST-RPT-1');
+
+    const instReports = getInstallmentReportsData('2027-01-15');
+    expect(Object.keys(instReports)).toHaveLength(20);
+    expect(instReports.activeAccounts).toHaveLength(1);
+    expect(instReports.dueToday).toHaveLength(1);
+    expect(instReports.upcomingDues).toHaveLength(2);
+    expect(instReports.guarantorDirectory[0].guarantor2Name).toBe('Tariq Aziz');
+    expect(instReports.sectorWiseDistribution[0].sector).toBe('DHA Phase 5');
+    expect(instReports.agingBuckets.some(b => b.count > 0)).toBe(true);
+    expect(instReports.riskExposureReport[0].riskTier).toBe('MEDIUM');
+  });
+
+  it('18. Strips disallowed id fields on settings and users_public Firestore payloads while keeping id on normal collections', () => {
+    const settingsPayload = buildCloudDocPayload('settings', 'main', {
+      id: 'main',
+      showroomName: 'Al-Madina Electronics',
+      ownerName: 'Owner',
+      currency: 'PKR',
+      printFormat: 'A4',
+      notes: undefined,
+    });
+    expect('id' in settingsPayload).toBe(false);
+    expect('notes' in settingsPayload).toBe(false);
+    expect(settingsPayload.orgId).toBe('al-madina-main');
+
+    const userPublicPayload = buildCloudDocPayload('users_public', 'uid-123', {
+      id: 'uid-123',
+      uid: 'uid-123',
+      name: 'Salman',
+      role: 'Cashier',
+      active: true,
+    });
+    expect('id' in userPublicPayload).toBe(false);
+    expect(userPublicPayload.uid).toBe('uid-123');
+    expect(userPublicPayload.orgId).toBe('al-madina-main');
+
+    const productPayload = buildCloudDocPayload('products', 'PROD 1', {
+      name: 'Inverter AC',
+    });
+    expect(productPayload.id).toBe('PROD-1');
+    expect(productPayload.orgId).toBe('al-madina-main');
+
+    applyCloudCollectionSnapshot('settings', [{ id: 'main', showroomName: 'Al-Madina Showroom', ownerName: 'Owner', currency: 'PKR', printFormat: 'A4' }]);
+    const hydratedSettings = getSettings() as unknown as Record<string, unknown>;
+    expect('id' in hydratedSettings).toBe(false);
+    expect(hydratedSettings.showroomName).toBe('Al-Madina Showroom');
+
+    saveSettings({ ...getSettings(), showroomName: 'Al-Madina Updated' });
+    const savedSettings = getSettings() as unknown as Record<string, unknown>;
+    expect('id' in savedSettings).toBe(false);
+    expect(savedSettings.showroomName).toBe('Al-Madina Updated');
+  });
+
+  it('19. Keeps settings intact regardless of snapshot arrival order and preserves integer stock quantities', () => {
+    const accountsInput = [
+      { id: 'ACC-201', orgId: 'al-madina-main', code: '2001', name: 'Accounts Payable', category: 'Liability' as const, subCategory: 'Current Liability', currentBalance: 0 },
+      { id: 'ACC-101', orgId: 'al-madina-main', code: '1001', name: 'Cash in Hand', category: 'Asset' as const, subCategory: 'Cash', currentBalance: 5000 },
+    ];
+    const snapshotCopy = [...accountsInput];
+    applyCloudCollectionSnapshot('accounts', snapshotCopy);
+    expect(snapshotCopy[0].code).toBe('2001'); // caller array not mutated
+    expect(getChartOfAccounts()[0].code).toBe('1001');
+
+    applyCloudCollectionSnapshot('settings', [{
+      showroomName: 'Al-Madina Flagship Showroom',
+      ownerName: 'Tariq Khan',
+      currency: 'PKR',
+      printFormat: 'Thermal',
+    }]);
+    expect(getSettings().showroomName).toBe('Al-Madina Flagship Showroom');
+    expect(getSettings().printFormat).toBe('Thermal');
+
+    const { supplier, customer, product } = seedCleanFixtures();
+    const pur = createPurchaseInvoice({
+      invoiceNumber: 'PUR-INT-1',
+      supplierId: supplier.id,
+      supplierName: supplier.companyName,
+      date: '2026-11-20',
+      items: [{
+        productId: product.id,
+        productName: product.name,
+        brand: product.brand,
+        modelNumber: product.modelNumber,
+        quantity: 4,
+        purchasePrice: 50000,
+        total: 200000,
+      }],
+      subTotal: 200000,
+      discount: 0,
+      tax: 0,
+      freightCharges: 0,
+      grandTotal: 200000,
+      paidAmount: 200000,
+      remainingBalance: 0,
+      paymentMethod: 'Cash',
+      status: 'Received',
+    });
+    expect(pur.invoiceNumber).toBe('PUR-INT-1');
+    expect(Number.isInteger(getProductById(product.id)?.stockQuantity)).toBe(true);
+
+    const sale = createSalesInvoice({
+      invoiceNumber: 'INV-INT-1',
+      customerId: customer.id,
+      customerName: customer.name,
+      customerPhone: customer.phone,
+      saleType: 'Cash',
+      date: '2026-11-21',
+      items: [{ productId: product.id, productName: product.name, brand: product.brand, modelNumber: product.modelNumber, quantity: 2, unitPrice: 70000, costPrice: 50000, discount: 0, total: 140000 }],
+      subTotal: 140000,
+      discount: 0,
+      tax: 0,
+      grandTotal: 140000,
+      paidAmount: 140000,
+      changeAmount: 0,
+      remainingBalance: 0,
+      paymentMethod: 'Cash',
+      salesPerson: 'Admin',
+    });
+    createSalesReturn({
+      returnNumber: 'SRTN-INT-1',
+      originalInvoiceNo: sale.invoiceNumber,
+      customerId: customer.id,
+      customerName: customer.name,
+      date: '2026-11-22',
+      items: [{ productId: product.id, productName: product.name, quantity: 1, unitPrice: 70000, total: 70000, reason: 'Defective fan blade' }],
+      grandTotal: 70000,
+      refundMethod: 'Cash',
+      remarks: 'Defective fan blade',
+    });
+    expect(getProductById(product.id)?.stockQuantity).toBe(3);
+    expect(Number.isInteger(getProductById(product.id)?.stockQuantity)).toBe(true);
+  });
+
+  it('20. Renders POSReceiptPrintLayout cleanly for both A4 and Thermal formats and tracks user activity logs in descending order', () => {
+    const { customer, supplier, product } = seedCleanFixtures();
+
+    createPurchaseInvoice({
+      invoiceNumber: 'PINV-PRT-1',
+      supplierId: supplier.id,
+      supplierName: supplier.companyName,
+      date: '2026-11-24',
+      items: [{
+        productId: product.id,
+        productName: product.name,
+        brand: product.brand,
+        modelNumber: product.modelNumber,
+        quantity: 2,
+        purchasePrice: 50000,
+        total: 100000,
+      }],
+      subTotal: 100000,
+      discount: 0,
+      tax: 0,
+      freightCharges: 0,
+      grandTotal: 100000,
+      paidAmount: 100000,
+      remainingBalance: 0,
+      paymentMethod: 'Cash',
+      status: 'Received',
+    });
+
+    const invoice = createSalesInvoice({
+      invoiceNumber: 'INV-PRT-99',
+      customerId: customer.id,
+      customerName: customer.name,
+      customerPhone: customer.phone,
+      saleType: 'Cash',
+      date: '2026-11-25',
+      items: [{
+        productId: product.id,
+        productName: product.name,
+        brand: product.brand,
+        modelNumber: product.modelNumber,
+        quantity: 1,
+        unitPrice: 70000,
+        costPrice: 50000,
+        discount: 0,
+        total: 70000,
+        selectedSerial: 'SN-AC-9901',
+      }],
+      subTotal: 70000,
+      discount: 2000,
+      tax: 0,
+      grandTotal: 68000,
+      paidAmount: 68000,
+      changeAmount: 0,
+      remainingBalance: 0,
+      paymentMethod: 'Cash',
+      salesPerson: 'Cashier',
+      notes: '1 Year Compressor Warranty Card Issued',
+    });
+
+    const settings = getSettings();
+    const a4Html = renderToStaticMarkup(
+      React.createElement(POSReceiptPrintLayout, {
+        invoice,
+        settings,
+        format: 'A4',
+      })
+    );
+    expect(a4Html).toContain('SALES INVOICE');
+    expect(a4Html).toContain('INV-PRT-99');
+    expect(a4Html).toContain('SN-AC-9901');
+    expect(a4Html).toContain('68,000');
+    expect(a4Html).toContain('1 Year Compressor Warranty Card Issued');
+
+    const thermalHtml = renderToStaticMarkup(
+      React.createElement(POSReceiptPrintLayout, {
+        invoice,
+        settings,
+        format: 'Thermal',
+      })
+    );
+    expect(thermalHtml).toContain('thermal-receipt-sheet');
+    expect(thermalHtml).toContain('CASH SALE RECEIPT');
+    expect(thermalHtml).toContain('INV-PRT-99');
+    expect(thermalHtml).toContain('SN-AC-9901');
+    expect(thermalHtml).toContain('68,000');
+
+    logAuditAction('Settings', 'Update WooCommerce Configuration', 'Configured live store sync', 'WC-1');
+    const logs = getAuditLogs();
+    expect(logs.length).toBeGreaterThanOrEqual(3);
+    expect(logs[0].action).toBe('Update WooCommerce Configuration');
+    expect(logs[0].recordId).toBe('WC-1');
+    expect(logs.some(l => l.module === 'Sales & POS' && l.action === 'Post Sales Invoice')).toBe(true);
   });
 });

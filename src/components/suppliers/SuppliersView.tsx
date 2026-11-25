@@ -89,9 +89,7 @@ export const SuppliersView: React.FC = () => {
       ]
     });
 
-    selectedSupplier.currentBalance = Math.max(0, selectedSupplier.currentBalance - payAmount);
-    saveSupplier(selectedSupplier);
-    setSuppliers(getSuppliers());
+    setSuppliers([...getSuppliers()]);
     setShowPayModal(false);
     setPayAmount(0);
     setPayNarration('');

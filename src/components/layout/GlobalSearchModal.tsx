@@ -69,7 +69,13 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
 
   if (!isOpen) return null;
 
-  const totalResults = results.products.length + results.customers.length + results.sales.length + results.installments.length + results.visitors.length;
+  const totalResults =
+    results.products.length +
+    results.customers.length +
+    results.sales.length +
+    results.installments.length +
+    results.visitors.length +
+    results.tasks.length;
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto no-print">

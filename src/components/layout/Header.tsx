@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Search, Bell, UserCheck, ShoppingCart,
   UserPlus, Shield, ChevronDown, LogOut,
-  AlertTriangle, Store, Cloud, ShieldCheck, KeyRound
+  AlertTriangle, Store, Cloud, ShieldCheck, KeyRound, Sparkles
 } from 'lucide-react';
 import {
   getSettings, getProducts,
@@ -19,6 +19,7 @@ interface HeaderProps {
   onOpenQuickVisitor: () => void;
   onOpenQuickAttendance: () => void;
   onOpenLoginModal: () => void;
+  onOpenAiAssistant?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -27,6 +28,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenQuickSale,
   onOpenQuickVisitor,
   onOpenQuickAttendance,
+  onOpenAiAssistant,
 }) => {
   const {
     staffUser,
@@ -57,10 +59,7 @@ export const Header: React.FC<HeaderProps> = ({
   const cloudStatus = getCloudPersistenceStatus();
 
   return (
-    <header
-      style={{ fontFamily: 'Georgia', fontStyle: 'italic', textAlign: 'left', fontSize: '14px' }}
-      className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-200 bg-white/95 px-4 sm:px-6 backdrop-blur-md no-print"
-    >
+    <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-200 bg-white/95 px-4 sm:px-6 backdrop-blur-md no-print">
       {/* Left: Showroom Identity */}
       <div className="flex items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-700 to-indigo-600 text-white shadow-md shadow-blue-500/20">
@@ -68,10 +67,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
         <div>
           <div className="flex items-center gap-2">
-            <h1
-              style={{ fontFamily: 'Georgia', fontSize: '18px' }}
-              className="text-sm sm:text-base font-bold text-slate-900 tracking-tight leading-tight"
-            >
+            <h1 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight leading-tight">
               {settings.showroomName}
             </h1>
             <span
@@ -92,10 +88,7 @@ export const Header: React.FC<HeaderProps> = ({
               </span>
             )}
           </div>
-          <p
-            style={{ fontFamily: 'Times New Roman', fontSize: '8px' }}
-            className="text-[11px] text-slate-500 hidden sm:block"
-          >
+          <p className="text-[11px] text-slate-500 hidden sm:block">
             {settings.city} • Fiscal Year 2026-27 • Currency: {settings.currency} (₨)
           </p>
         </div>
@@ -105,8 +98,7 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="hidden md:flex items-center flex-1 max-w-md mx-6">
         <button
           onClick={onOpenSearch}
-          style={{ fontFamily: 'Courier New', textAlign: 'left', fontSize: '6px' }}
-          className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2 text-xs text-slate-400 hover:border-slate-300 hover:bg-slate-100/70 transition shadow-xs"
+          className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2 text-xs text-slate-400 hover:border-slate-300 hover:bg-slate-100/70 transition shadow-xs text-left"
         >
           <div className="flex items-center gap-2">
             <Search className="h-4 w-4 text-slate-400" />
@@ -152,11 +144,22 @@ export const Header: React.FC<HeaderProps> = ({
         {can('attendance', 'CREATE') && (
           <button
             onClick={onOpenQuickAttendance}
-            className="hidden xl:inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-xs transition"
+            className="hidden xl:inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-xs transition whitespace-nowrap shrink-0"
             title="Staff Attendance"
           >
             <UserCheck className="h-3.5 w-3.5 text-indigo-600" />
             <span>Attendance</span>
+          </button>
+        )}
+
+        {onOpenAiAssistant && (
+          <button
+            onClick={onOpenAiAssistant}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-900 hover:bg-slate-800 px-2.5 py-1.5 text-xs font-semibold text-white shadow-xs transition whitespace-nowrap shrink-0"
+            title="ERP Business Assistant"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">AI Assistant</span>
           </button>
         )}
 
