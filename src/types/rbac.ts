@@ -136,7 +136,33 @@ export interface BackupRecord {
   notes?: string;
 }
 
+export interface StaffInvite {
+  id: string;
+  orgId: string;
+  email: string;
+  name: string;
+  role: Exclude<ExtendedUserRole, 'Owner'>;
+  customRoleName?: string;
+  phone?: string;
+  permissions: PermissionsMatrix;
+  active: boolean;
+  mfaEnabled: boolean;
+  invitedBy: string;
+  createdAt: string;
+}
+
 export const OWNER_EMAIL = 'clientbridge28@gmail.com';
+export const SECONDARY_ADMIN_EMAIL = 'wrelectronicsofficial@gmail.com';
+export const ADMIN_OWNER_EMAILS: readonly string[] = [
+  OWNER_EMAIL,
+  SECONDARY_ADMIN_EMAIL,
+];
+
+export function isOwnerEmail(email?: string | null): boolean {
+  const normalized = String(email || '').trim().toLowerCase();
+  return Boolean(normalized && ADMIN_OWNER_EMAILS.includes(normalized));
+}
+
 export const ORG_ID = 'al-madina-main';
 
 export function buildFullOwnerPermissions(): PermissionsMatrix {

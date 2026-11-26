@@ -13,9 +13,11 @@ import {
   subscribeToDatabase,
 } from '../../services/storage';
 import {
+  ADMIN_OWNER_EMAILS,
   ALL_PERMISSION_ACTIONS,
   ERP_MODULE_DEFINITIONS,
   getDefaultPermissionsForRole,
+  isOwnerEmail,
   ORG_ID,
   OWNER_EMAIL,
   type ExtendedUserRole,
@@ -25,7 +27,7 @@ import {
 } from '../../types/rbac';
 import type { User } from '../../types/erp';
 import { authorizedApiFetch } from '../../services/firebase';
-import { persistUserSession, updateStaffMemberDoc } from '../../services/firestoreSync';
+import { persistStaffInviteDoc, persistUserSession, updateStaffMemberDoc } from '../../services/firestoreSync';
 import { computeCanonicalSnapshotChecksum, parseBackupWorkbookForRestore } from '../../services/excelService';
 
 type AdminTab = 'users' | 'permissions' | 'sessions' | 'events' | 'recovery';
@@ -93,7 +95,7 @@ export const SuperAdminView: React.FC = () => {
   const sessions = getUserSessions();
   const events = getSecurityEvents();
 
-  const editableUsers = users.filter(u => (u.email || '').toLowerCase() !== OWNER_EMAIL && u.role !== 'Owner');
+  const editableUsers = users.filter(u => !isOwnerEmail(u.email) && u.role !== 'Owner');
 
   useEffect(() => {
     if (!selectedUid && editableUsers.length > 0) {
@@ -116,7 +118,7 @@ export const SuperAdminView: React.FC = () => {
         <Lock className="h-10 w-10 text-rose-600 mx-auto mb-3" />
         <h2 className="text-lg font-bold text-rose-950">Owner Super Admin Access Required</h2>
         <p className="text-xs text-rose-800 mt-1">
-          Only the verified Showroom Owner ({OWNER_EMAIL}) can manage staff accounts, RBAC permissions, sessions, or disaster recovery restores.
+          Only a verified Showroom Owner ({ADMIN_OWNER_EMAILS.join(', ')}) can manage staff accounts, RBAC permissions, sessions, or disaster recovery restores.
         </p>
       </div>
     );
@@ -143,6 +145,34 @@ export const SuperAdminView: React.FC = () => {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        if (res.status === 503 && newRole !== 'Owner') {
+          const normalized = newEmail.trim().toLowerCase();
+          await persistStaffInviteDoc({
+            orgId: ORG_ID,
+            email: normalized,
+            name: newName.trim(),
+            role: newRole,
+            customRoleName: newRole === 'Custom' ? newCustomRoleName.trim() : undefined,
+            phone: newPhone.trim() || undefined,
+            permissions: defaultPerms,
+            active: true,
+            mfaEnabled: newMfaEnabled,
+            invitedBy: staffUser?.email || OWNER_EMAIL,
+            createdAt: new Date().toISOString(),
+          });
+          logAuditAction('SuperAdmin', 'Invite Staff User (Google Sign-In)', `Invited ${newName} (${normalized}) as ${newRole}`);
+          setBanner({
+            type: 'success',
+            text: `Staff invite saved to Cloud Firestore for ${normalized} (${newRole}). They can now click "Continue with Google" to log in immediately.`,
+          });
+          setShowCreateModal(false);
+          setNewName('');
+          setNewEmail('');
+          setNewPassword('');
+          setNewPhone('');
+          setNewCustomRoleName('');
+          return;
+        }
         setBanner({ type: 'error', text: data.error || 'Failed to provision staff account.' });
         return;
       }
@@ -472,7 +502,7 @@ export const SuperAdminView: React.FC = () => {
               <tbody className="divide-y divide-slate-100">
                 {users.map(u => {
                   const uid = u.uid || u.id;
-                  const isTargetOwner = (u.email || '').toLowerCase() === OWNER_EMAIL || u.role === 'Owner';
+                  const isTargetOwner = isOwnerEmail(u.email) || u.role === 'Owner';
                   return (
                     <tr key={uid} className="hover:bg-slate-50/70">
                       <td className="p-3">
@@ -861,14 +891,13 @@ export const SuperAdminView: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Initial Password (min 8 chars) *</label>
+                <label className="block font-semibold text-slate-700 mb-1">Initial Password (optional for Google Sign-In, min 8 chars)</label>
                 <input
                   type="password"
-                  required
                   minLength={8}
                   value={newPassword}
                   onChange={e => setNewPassword(e.target.value)}
-                  placeholder="StrongTempPass#2026"
+                  placeholder="StrongTempPass#2026 (or leave blank for Google)"
                   className="w-full rounded-xl border border-slate-200 p-2.5 focus:border-blue-600 focus:outline-none"
                 />
               </div>

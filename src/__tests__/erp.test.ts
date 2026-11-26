@@ -110,7 +110,7 @@ import {
   updateCommitmentStatus,
 } from '../services/storage';
 import { mapFirebaseAuthError, resolveAuthenticatedProfile, withTimeout } from '../context/AuthContext';
-import { buildFullOwnerPermissions, getDefaultPermissionsForRole } from '../types/rbac';
+import { buildFullOwnerPermissions, ERP_MODULE_DEFINITIONS, getDefaultPermissionsForRole, isOwnerEmail } from '../types/rbac';
 import type { ChequeRecord, Customer, InstallmentAccount, Product, Supplier } from '../types/erp';
 
 function seedCleanFixtures(): { customer: Customer; supplier: Supplier; product: Product } {
@@ -2099,5 +2099,34 @@ describe('Al-Madina Electronics ERP — Core Accounting, Inventory & RBAC Suite'
       null
     );
     expect(unprovisionedStaff.allowed).toBe(false);
+  });
+
+  it('22. Authorizes wrelectronicsofficial@gmail.com as full Admin/Owner with complete 21-module access alongside primary owner', () => {
+    expect(isOwnerEmail('wrelectronicsofficial@gmail.com')).toBe(true);
+    expect(isOwnerEmail('WRElectronicsOfficial@gmail.com')).toBe(true);
+    expect(isOwnerEmail('clientbridge28@gmail.com')).toBe(true);
+    expect(isOwnerEmail('cashier@almadina.pk')).toBe(false);
+
+    const secondaryAdmin = resolveAuthenticatedProfile(
+      {
+        uid: 'admin-uid-wr',
+        email: 'wrelectronicsofficial@gmail.com',
+        displayName: 'WR Electronics Admin',
+        phoneNumber: null,
+        emailVerified: true,
+      },
+      null
+    );
+    expect(secondaryAdmin.allowed).toBe(true);
+    if (secondaryAdmin.allowed) {
+      expect(secondaryAdmin.profile.role).toBe('Owner');
+      expect(secondaryAdmin.profile.email).toBe('wrelectronicsofficial@gmail.com');
+      expect(secondaryAdmin.needsOwnerBootstrap).toBe(true);
+      for (const mod of ERP_MODULE_DEFINITIONS) {
+        expect(secondaryAdmin.profile.permissions?.[mod.key]).toEqual(
+          expect.arrayContaining(['VIEW', 'CREATE', 'EDIT', 'DELETE', 'EXPORT', 'APPROVE', 'MANAGE'])
+        );
+      }
+    }
   });
 });

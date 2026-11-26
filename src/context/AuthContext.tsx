@@ -14,7 +14,7 @@ import {
   signOut,
   type User as FirebaseUser,
 } from 'firebase/auth';
-import { doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
+import { deleteDoc, doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
 import {
   auth,
   authorizedApiFetch,
@@ -26,11 +26,14 @@ import {
 import {
   buildFullOwnerPermissions,
   getDefaultPermissionsForRole,
+  isOwnerEmail,
   ORG_ID,
   OWNER_EMAIL,
+  SECONDARY_ADMIN_EMAIL,
   type ModulePermissionKey,
   type PermissionAction,
   type PermissionsMatrix,
+  type StaffInvite,
   type UserSession,
 } from '../types/rbac';
 import type { User } from '../types/erp';
@@ -151,6 +154,15 @@ export function mapFirebaseAuthError(
     if (code === 'auth/operation-not-allowed') {
       return 'Google Sign-In Failed: Google Sign-In is not enabled in Firebase Console.';
     }
+    if (code === 'auth/account-exists-with-different-credential') {
+      return 'Google Sign-In Failed: An account already exists with this email using Email & Password. Sign in with Email & Password first or enable account linking in Firebase Console.';
+    }
+    if (code === 'auth/popup-blocked') {
+      return 'Google Sign-In Popup Blocked: Allow popups for this site and try again.';
+    }
+    if (code === 'auth/internal-error') {
+      return 'Google Sign-In Failed: Browser storage or popup was blocked. Allow cookies and popups for this site and retry.';
+    }
     return `Google Sign-In Failed: ${msg || 'Unable to sign in with Google.'}`;
   }
 
@@ -184,13 +196,15 @@ export function mapFirebaseAuthError(
 }
 
 export function buildCanonicalOwnerProfile(fbUser: Pick<FirebaseUser, 'uid' | 'email' | 'displayName' | 'phoneNumber' | 'emailVerified'>): User {
-  const email = (fbUser.email || OWNER_EMAIL).trim();
+  const email = (fbUser.email || OWNER_EMAIL).trim().toLowerCase();
   const now = new Date().toISOString();
+  const defaultOwnerName =
+    email === SECONDARY_ADMIN_EMAIL ? 'Al-Madina Showroom Admin' : 'Muhammad Tariq Khan';
   return {
     id: fbUser.uid,
     uid: fbUser.uid,
     orgId: ORG_ID,
-    name: fbUser.displayName || 'Muhammad Tariq Khan',
+    name: fbUser.displayName || defaultOwnerName,
     email,
     role: 'Owner',
     phone: fbUser.phoneNumber || '',
@@ -230,7 +244,7 @@ export function resolveAuthenticatedProfile(
   }
 
   const email = (fbUser.email || '').trim().toLowerCase();
-  const isCanonicalOwner = email === OWNER_EMAIL;
+  const isCanonicalOwner = isOwnerEmail(email);
 
   if (existingDoc) {
     if (!isCanonicalOwner && (!existingDoc.active || existingDoc.suspended)) {
@@ -335,12 +349,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       Number.isFinite(Number(ownerProfile.sessionVersion)) && Number(ownerProfile.sessionVersion) >= 1
         ? Math.floor(Number(ownerProfile.sessionVersion))
         : 1;
+    const canonicalEmail = (fbUser.email || ownerProfile.email || OWNER_EMAIL).trim().toLowerCase();
     const cleanOwnerUser = stripUndefined({
       id: fbUser.uid,
       uid: fbUser.uid,
       orgId: ORG_ID,
       name: ownerProfile.name || fbUser.displayName || 'Showroom Owner Admin',
-      email: OWNER_EMAIL,
+      email: canonicalEmail,
       role: 'Owner' as const,
       customRoleName: ownerProfile.customRoleName,
       phone: ownerProfile.phone || '',
@@ -363,7 +378,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             doc(db, 'admins', fbUser.uid),
             {
               uid: fbUser.uid,
-              email: OWNER_EMAIL,
+              email: canonicalEmail,
               role: 'Owner',
               createdAt: ownerProfile.createdAt || now,
             },
@@ -410,7 +425,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const activateAuthenticatedSession = (fbUser: FirebaseUser, profile: User) => {
     const isOwnerAccount =
-      profile.role === 'Owner' || (fbUser.email || '').toLowerCase() === OWNER_EMAIL;
+      profile.role === 'Owner' || isOwnerEmail(fbUser.email);
 
     const effectivePermissions: PermissionsMatrix = isOwnerAccount
       ? buildFullOwnerPermissions()
@@ -467,7 +482,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (!snap.exists()) return;
           const updated = snap.data() as User;
           const updatedIsOwner =
-            updated.role === 'Owner' || (fbUser.email || '').toLowerCase() === OWNER_EMAIL;
+            updated.role === 'Owner' || isOwnerEmail(fbUser.email);
 
           if (!updatedIsOwner && (!updated.active || updated.suspended)) {
             forceRevokedSignOut(
@@ -558,7 +573,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
-    const isCanonicalOwner = (fbUser.email || '').trim().toLowerCase() === OWNER_EMAIL;
+    const normalizedEmail = (fbUser.email || '').trim().toLowerCase();
+    const isCanonicalOwner = isOwnerEmail(normalizedEmail);
     let existingProfile: User | null = null;
     if (db) {
       try {
@@ -569,6 +585,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         );
         if (snap.exists()) {
           existingProfile = snap.data() as User;
+        } else if (!isCanonicalOwner && normalizedEmail) {
+          // Check Owner-issued staff invite so Google Sign-In works even on static GitHub Pages without server.ts
+          const inviteSnap = await withTimeout(
+            getDoc(doc(db, 'staffInvites', normalizedEmail)),
+            6000,
+            'Cloud Firestore staff invite lookup timed out.'
+          );
+          if (inviteSnap.exists()) {
+            const invite = inviteSnap.data() as StaffInvite;
+            if (invite.active !== false && invite.orgId === ORG_ID) {
+              const now = new Date().toISOString();
+              const newStaffDoc: User = stripUndefined({
+                id: fbUser.uid,
+                uid: fbUser.uid,
+                orgId: ORG_ID,
+                name: invite.name || fbUser.displayName || normalizedEmail.split('@')[0],
+                email: normalizedEmail,
+                role: invite.role,
+                customRoleName: invite.customRoleName,
+                phone: invite.phone || fbUser.phoneNumber || '',
+                active: true,
+                suspended: false,
+                emailVerified: true,
+                mfaEnabled: Boolean(invite.mfaEnabled),
+                sessionVersion: 1,
+                permissions:
+                  invite.permissions && Object.keys(invite.permissions).length > 0
+                    ? invite.permissions
+                    : getDefaultPermissionsForRole(invite.role),
+                lastLogin: now,
+                createdAt: invite.createdAt || now,
+                updatedAt: now,
+              });
+              await withTimeout(
+                setDoc(doc(db, 'users', fbUser.uid), newStaffDoc),
+                6000,
+                'Staff profile activation timed out.'
+              );
+              await deleteDoc(doc(db, 'staffInvites', normalizedEmail)).catch(() => {});
+              existingProfile = newStaffDoc;
+            }
+          }
         }
       } catch (err: any) {
         if (!isCanonicalOwner) {
@@ -893,7 +951,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const isOwner = Boolean(
     staffUser &&
-      (staffUser.role === 'Owner' || (firebaseUser?.email || '').toLowerCase() === OWNER_EMAIL)
+      (staffUser.role === 'Owner' || isOwnerEmail(firebaseUser?.email))
   );
 
   const can = (moduleKey: ModulePermissionKey, action: PermissionAction = 'VIEW'): boolean => {

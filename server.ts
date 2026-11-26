@@ -43,9 +43,19 @@ function resolveServerPort(): number {
 
 const PORT = resolveServerPort();
 const CANONICAL_OWNER_EMAIL = 'clientbridge28@gmail.com';
+const SECONDARY_ADMIN_EMAIL = 'wrelectronicsofficial@gmail.com';
+const CANONICAL_OWNER_EMAILS: readonly string[] = [
+  CANONICAL_OWNER_EMAIL,
+  SECONDARY_ADMIN_EMAIL,
+];
 const OWNER_ALERT_EMAIL = (process.env.OWNER_ALERT_EMAIL || CANONICAL_OWNER_EMAIL).toLowerCase();
 const ORG_ID = 'al-madina-main';
 const GH_PAGES_BASE = '/Al-Madina-Electronics-Appliances';
+
+function isCanonicalOwnerEmail(email?: string | null): boolean {
+  const normalized = String(email || '').trim().toLowerCase();
+  return Boolean(normalized && (CANONICAL_OWNER_EMAILS.includes(normalized) || normalized === OWNER_ALERT_EMAIL));
+}
 
 interface FirebaseAppletConfig {
   projectId: string;
@@ -367,7 +377,7 @@ async function requireFirebaseAuth(req: AuthedRequest, res: Response, next: Next
     }
     req.staffProfile = profile;
     const decodedEmail = (decoded.email || '').toLowerCase();
-    const isOwnerEmail = decodedEmail === CANONICAL_OWNER_EMAIL || decodedEmail === OWNER_ALERT_EMAIL;
+    const isOwnerEmail = isCanonicalOwnerEmail(decodedEmail);
     const isOwnerRole = profile?.role === 'Owner' && profile?.active === true && profile?.suspended === false;
     req.isOwnerUser = Boolean(isOwnerEmail || isOwnerRole);
 
@@ -479,6 +489,7 @@ async function startServer() {
       smsConfigured: isSmsConfigured(),
       geminiConfigured: Boolean(getGeminiApiKey()),
       ownerEmail: CANONICAL_OWNER_EMAIL,
+      ownerEmails: CANONICAL_OWNER_EMAILS,
       ownerAlertEmail: OWNER_ALERT_EMAIL,
       wordpressConfigured: Boolean(wpRuntimeConfig.siteUrl && (wpRuntimeConfig.wcKey || wpRuntimeConfig.appPassword)),
     });
@@ -832,8 +843,8 @@ async function startServer() {
       res.status(400).json({ error: `Invalid staff role "${role}".` });
       return;
     }
-    if (role === 'Owner' && normalizedEmail !== CANONICAL_OWNER_EMAIL) {
-      res.status(403).json({ error: `Owner Super Admin role can only be assigned to canonical owner ${CANONICAL_OWNER_EMAIL}.` });
+    if (role === 'Owner' && !isCanonicalOwnerEmail(normalizedEmail)) {
+      res.status(403).json({ error: `Owner Super Admin role can only be assigned to canonical owners (${CANONICAL_OWNER_EMAILS.join(', ')}).` });
       return;
     }
 

@@ -12,6 +12,10 @@ service cloud.firestore {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    function isValidEmailId(id) {
+      return id is string && id.size() >= 3 && id.size() <= 200 && id.matches('^[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}$');
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -29,7 +33,9 @@ service cloud.firestore {
     }
 
     function isBootstrappedOwner() {
-      return isEmailVerified() && request.auth.token.email == 'clientbridge28@gmail.com';
+      return isEmailVerified()
+        && request.auth.token.email is string
+        && request.auth.token.email.lower() in ['clientbridge28@gmail.com', 'wrelectronicsofficial@gmail.com'];
     }
 
     function isAdminDoc() {
@@ -127,6 +133,39 @@ service cloud.firestore {
         && isNonEmptyStr(data.name, 120)
         && isNonEmptyStr(data.role, 60)
         && data.active is bool;
+    }
+
+    function isValidStaffInvite(data) {
+      return data.keys().hasAll(['id', 'orgId', 'email', 'name', 'role', 'permissions', 'active', 'mfaEnabled', 'invitedBy', 'createdAt'])
+        && data.keys().hasOnly(['id', 'orgId', 'email', 'name', 'role', 'customRoleName', 'phone', 'permissions', 'active', 'mfaEnabled', 'invitedBy', 'createdAt'])
+        && isValidEmailId(data.id)
+        && isSameOrg(data)
+        && isValidEmailId(data.email)
+        && data.id == data.email
+        && isNonEmptyStr(data.name, 120)
+        && data.role in ['Manager', 'Accountant', 'Cashier', 'StockManager', 'RecoveryOfficer', 'Receptionist', 'Custom']
+        && data.permissions is map
+        && data.active is bool
+        && data.mfaEnabled is bool
+        && isNonEmptyStr(data.invitedBy, 200)
+        && isNonEmptyStr(data.createdAt, 64)
+        && (!('customRoleName' in data) || isStr(data.customRoleName, 80))
+        && (!('phone' in data) || isStr(data.phone, 40));
+    }
+
+    function hasMatchingStaffInvite(data) {
+      return isEmailVerified()
+        && request.auth.token.email is string
+        && exists(/databases/$(database)/documents/staffInvites/$(request.auth.token.email.lower()))
+        && get(/databases/$(database)/documents/staffInvites/$(request.auth.token.email.lower())).data.orgId == 'al-madina-main'
+        && get(/databases/$(database)/documents/staffInvites/$(request.auth.token.email.lower())).data.active == true
+        && data.email.lower() == request.auth.token.email.lower()
+        && data.role != 'Owner'
+        && data.role == get(/databases/$(database)/documents/staffInvites/$(request.auth.token.email.lower())).data.role
+        && data.permissions == get(/databases/$(database)/documents/staffInvites/$(request.auth.token.email.lower())).data.permissions
+        && data.active == true
+        && data.suspended == false
+        && data.sessionVersion == 1;
     }
 
     function isValidRole(data) {
@@ -677,7 +716,7 @@ service cloud.firestore {
         && isValidAdmin(incoming())
         && isBootstrappedOwner()
         && incoming().uid == adminId
-        && incoming().email == 'clientbridge28@gmail.com';
+        && incoming().email.lower() == request.auth.token.email.lower();
       allow delete: if isValidId(adminId) && isBootstrappedOwner() && adminId != request.auth.uid;
     }
 
@@ -688,13 +727,13 @@ service cloud.firestore {
         && isEmailVerified()
         && isValidUser(incoming())
         && incoming().uid == userId
-        && (incoming().role != 'Owner' || (incoming().email == 'clientbridge28@gmail.com' && request.auth.uid == userId && isBootstrappedOwner()))
-        && (isOwner() || (isBootstrappedOwner() && request.auth.uid == userId && incoming().role == 'Owner'));
+        && (incoming().role != 'Owner' || (incoming().email.lower() == request.auth.token.email.lower() && request.auth.uid == userId && isBootstrappedOwner()))
+        && (isOwner() || (isBootstrappedOwner() && request.auth.uid == userId && incoming().role == 'Owner') || (request.auth.uid == userId && hasMatchingStaffInvite(incoming())));
       allow update: if isValidId(userId) && isEmailVerified() && isValidUser(incoming()) && (
         (isOwner()
           && incoming().uid == existing().uid
           && incoming().orgId == existing().orgId
-          && (incoming().role != 'Owner' || existing().role == 'Owner' || incoming().email == 'clientbridge28@gmail.com')) ||
+          && (incoming().role != 'Owner' || existing().role == 'Owner' || incoming().email.lower() in ['clientbridge28@gmail.com', 'wrelectronicsofficial@gmail.com'])) ||
         (request.auth.uid == userId
           && incoming().uid == existing().uid
           && incoming().orgId == existing().orgId
@@ -709,6 +748,13 @@ service cloud.firestore {
           && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'avatar', 'emailVerified', 'lastLogin', 'updatedAt']))
       );
       allow delete: if isValidId(userId) && isOwner() && userId != request.auth.uid;
+    }
+
+    match /staffInvites/{inviteId} {
+      allow get: if isValidEmailId(inviteId) && isEmailVerified() && (isOwner() || (request.auth.token.email is string && request.auth.token.email.lower() == inviteId));
+      allow list: if isOwner() && isSameOrg(resource.data);
+      allow create, update: if isValidEmailId(inviteId) && isOwner() && isValidStaffInvite(incoming()) && incoming().email == inviteId;
+      allow delete: if isValidEmailId(inviteId) && (isOwner() || (isEmailVerified() && request.auth.token.email is string && request.auth.token.email.lower() == inviteId));
     }
 
     match /users_public/{userId} {

@@ -10,7 +10,7 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
-import { ORG_ID, OWNER_EMAIL, type BackupRecord, type ModulePermissionKey, type PermissionAction, type PermissionsMatrix, type RoleTemplate, type SecurityEvent, type UserSession } from '../types/rbac';
+import { isOwnerEmail, ORG_ID, type BackupRecord, type ModulePermissionKey, type PermissionAction, type PermissionsMatrix, type RoleTemplate, type SecurityEvent, type StaffInvite, type UserSession } from '../types/rbac';
 import type { ShowroomSettings, AccountHead, User } from '../types/erp';
 
 export function stripUndefined<T>(obj: T): T {
@@ -139,7 +139,7 @@ export function attachPermittedCloudListeners(
 
     // Owner watches users & sessions for uid == current or all if bootstrapped owner
     const email = auth?.currentUser?.email?.toLowerCase();
-    if (email === OWNER_EMAIL) {
+    if (isOwnerEmail(email)) {
       const usersUnsub = onSnapshot(
         query(collection(db, 'users'), where('orgId', '==', ORG_ID)),
         snap => callbacks.onCollectionUpdate('users', snap.docs.map(d => d.data())),
@@ -309,4 +309,23 @@ export async function updateStaffMemberDoc(user: User): Promise<void> {
     role: user.role,
     active: Boolean(user.active) && !Boolean(user.suspended),
   });
+}
+
+export async function persistStaffInviteDoc(invite: Omit<StaffInvite, 'id'>): Promise<StaffInvite> {
+  if (!db || !auth?.currentUser) {
+    throw new Error('Cloud Firestore is not connected.');
+  }
+  const normalizedEmail = invite.email.trim().toLowerCase();
+  const payload: StaffInvite = stripUndefined({
+    ...invite,
+    id: normalizedEmail,
+    orgId: ORG_ID,
+    email: normalizedEmail,
+  });
+  try {
+    await setDoc(doc(db, 'staffInvites', normalizedEmail), payload, { merge: true });
+    return payload;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `staffInvites/${normalizedEmail}`);
+  }
 }

@@ -659,6 +659,26 @@
         "notes": { "type": "string", "maxLength": 500 }
       },
       "required": ["id", "orgId", "type", "format", "recordCount", "checksum", "status", "createdAt", "createdBy"]
+    },
+    "StaffInvite": {
+      "title": "StaffInvite",
+      "description": "Owner-issued staff invitation allowing Google or Email login to claim assigned RBAC permissions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "format": "email", "maxLength": 200 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "email": { "type": "string", "format": "email", "maxLength": 200 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "role": { "type": "string", "enum": ["Manager", "Accountant", "Cashier", "StockManager", "RecoveryOfficer", "Receptionist", "Custom"] },
+        "customRoleName": { "type": "string", "maxLength": 80 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "permissions": { "type": "object" },
+        "active": { "type": "boolean" },
+        "mfaEnabled": { "type": "boolean" },
+        "invitedBy": { "type": "string", "maxLength": 200 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "orgId", "email", "name", "role", "permissions", "active", "mfaEnabled", "invitedBy", "createdAt"]
     }
   },
   "firestore": {
@@ -669,6 +689,10 @@
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserAccount" },
       "description": "User profiles, PII, RBAC permissions matrix, and suspension controls."
+    },
+    "/staffInvites/{inviteId}": {
+      "schema": { "$ref": "#/entities/StaffInvite" },
+      "description": "Owner-issued staff invites keyed by lowercase email for Google/Email onboarding."
     },
     "/users_public/{userId}": {
       "schema": { "$ref": "#/entities/UserPublicSummary" },
