@@ -198,7 +198,7 @@ export default function App() {
         />
 
         {/* Viewport Workspace */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full overflow-x-hidden">
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full overflow-x-hidden [font-family:Georgia] italic">
           {!hasViewAccess ? (
             <div className="rounded-2xl bg-white border border-rose-200 p-8 text-center max-w-md mx-auto mt-10 shadow-xs">
               <Lock className="h-9 w-9 text-rose-600 mx-auto mb-3" />
