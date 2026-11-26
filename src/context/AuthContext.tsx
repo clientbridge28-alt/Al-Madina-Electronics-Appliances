@@ -76,6 +76,7 @@ interface AuthContextValue {
   requestMfaOtp: () => Promise<void>;
   verifyMfaOtp: (code: string) => Promise<boolean>;
   reauthenticateOwner: () => Promise<boolean>;
+  recoverFromStalledAuth: () => void;
   logout: () => Promise<void>;
   can: (moduleKey: ModulePermissionKey, action?: PermissionAction) => boolean;
   notifyOwnerSecurityEvent: (payload: {
@@ -87,6 +88,20 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+export async function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(timeoutMessage)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 const SESSION_ID_STORAGE_KEY = 'almadina_active_session_id';
 
@@ -342,31 +357,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updatedAt: now,
     });
     try {
-      await setDoc(
-        doc(db, 'admins', fbUser.uid),
-        {
-          uid: fbUser.uid,
-          email: OWNER_EMAIL,
-          role: 'Owner',
-          createdAt: ownerProfile.createdAt || now,
-        },
-        { merge: true }
-      );
-      await setDoc(
-        doc(db, 'users', fbUser.uid),
-        cleanOwnerUser,
-        { merge: true }
-      );
-      await setDoc(
-        doc(db, 'users_public', fbUser.uid),
-        {
-          uid: fbUser.uid,
-          orgId: ORG_ID,
-          name: cleanOwnerUser.name,
-          role: 'Owner',
-          active: true,
-        },
-        { merge: true }
+      await withTimeout(
+        Promise.allSettled([
+          setDoc(
+            doc(db, 'admins', fbUser.uid),
+            {
+              uid: fbUser.uid,
+              email: OWNER_EMAIL,
+              role: 'Owner',
+              createdAt: ownerProfile.createdAt || now,
+            },
+            { merge: true }
+          ),
+          setDoc(
+            doc(db, 'users', fbUser.uid),
+            cleanOwnerUser,
+            { merge: true }
+          ),
+          setDoc(
+            doc(db, 'users_public', fbUser.uid),
+            {
+              uid: fbUser.uid,
+              orgId: ORG_ID,
+              name: cleanOwnerUser.name,
+              role: 'Owner',
+              active: true,
+            },
+            { merge: true }
+          ),
+        ]),
+        8000,
+        'Owner bootstrap sync timed out.'
       );
     } catch (err) {
       console.warn('Owner Firestore bootstrap warning:', err);
@@ -382,7 +403,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setStaffUser(null);
     setAuthError(message);
     if (auth) {
-      await signOut(auth).catch(() => {});
+      await withTimeout(signOut(auth), 4000, 'Sign out timed out.').catch(() => {});
     }
     setStatus('unauthenticated');
   };
@@ -537,27 +558,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
+    const isCanonicalOwner = (fbUser.email || '').trim().toLowerCase() === OWNER_EMAIL;
     let existingProfile: User | null = null;
     if (db) {
       try {
-        const snap = await getDoc(doc(db, 'users', fbUser.uid));
+        const snap = await withTimeout(
+          getDoc(doc(db, 'users', fbUser.uid)),
+          6000,
+          'Cloud Firestore profile lookup timed out.'
+        );
         if (snap.exists()) {
           existingProfile = snap.data() as User;
         }
       } catch (err: any) {
-        const isCanonicalOwner = (fbUser.email || '').toLowerCase() === OWNER_EMAIL;
         if (!isCanonicalOwner) {
           await forceRevokedSignOut(
             `Access Verification Failed: Could not verify your staff permissions in Cloud Firestore (${err?.message || 'permission denied'}).`
           );
           return;
         }
+        console.warn('Canonical owner profile lookup fallback active:', err?.message || err);
       }
     }
 
     const resolution = resolveAuthenticatedProfile(fbUser, existingProfile);
     if (!resolution.allowed) {
-      await notifyOwnerSecurityEvent({
+      void notifyOwnerSecurityEvent({
         type: resolution.securityEventType,
         severity: 'WARNING',
         title: `Blocked Sign-In: ${fbUser.email || fbUser.uid}`,
@@ -568,7 +594,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     if (resolution.needsOwnerBootstrap) {
-      await ensureOwnerBootstrapDocs(fbUser, resolution.profile);
+      // Run owner doc bootstrap non-blockingly so slow/offline Firestore never locks the loading screen.
+      void ensureOwnerBootstrapDocs(fbUser, resolution.profile);
     }
 
     if (resolution.profile.mfaEnabled && mfaVerifiedForUidRef.current !== fbUser.uid) {
@@ -597,40 +624,87 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
+    let isMounted = true;
+    let authSettled = false;
+
+    const startupWatchdog = setTimeout(() => {
+      if (!isMounted || authSettled) return;
+      authSettled = true;
+      setConnectionStatus({
+        online: false,
+        message: 'Authentication startup timed out. Ready for manual sign-in.',
+      });
+      setAuthError(
+        'Sign-in initialization took longer than expected (network or browser storage blocked). Please sign in below or reload.'
+      );
+      setStatus('unauthenticated');
+    }, 8000);
+
     setPersistence(auth, browserLocalPersistence).catch(err => {
       console.warn('Could not set browserLocalPersistence:', err);
     });
 
     getRedirectResult(auth).catch(err => {
-      if (err) {
+      if (err && isMounted) {
         setAuthError(mapFirebaseAuthError(err, 'google'));
       }
     });
 
-    const unsubAuth = onAuthStateChanged(auth, async fbUser => {
-      cleanupSubscriptions();
-      pendingMfaRef.current = null;
-      setAuthError(null);
+    const unsubAuth = onAuthStateChanged(
+      auth,
+      async fbUser => {
+        authSettled = true;
+        clearTimeout(startupWatchdog);
+        if (!isMounted) return;
 
-      if (!fbUser) {
-        mfaVerifiedForUidRef.current = null;
-        setFirebaseUser(null);
-        setStaffUser(null);
-        clearCloudSession();
-        setConnectionStatus({
-          online: false,
-          message: 'Firebase SDK ready (sign in to connect to Cloud Firestore).',
-        });
+        try {
+          cleanupSubscriptions();
+          pendingMfaRef.current = null;
+          setAuthError(null);
+
+          if (!fbUser) {
+            mfaVerifiedForUidRef.current = null;
+            setFirebaseUser(null);
+            setStaffUser(null);
+            clearCloudSession();
+            setConnectionStatus({
+              online: false,
+              message: 'Firebase SDK ready (sign in to connect to Cloud Firestore).',
+            });
+            setStatus('unauthenticated');
+            return;
+          }
+
+          setFirebaseUser(fbUser);
+          testConnection()
+            .then(res => {
+              if (isMounted) setConnectionStatus(res);
+            })
+            .catch(() => {});
+          await evaluateFirebaseUser(fbUser);
+        } catch (err: any) {
+          console.error('Auth state evaluation error:', err);
+          if (!isMounted) return;
+          cleanupSubscriptions();
+          setStaffUser(null);
+          clearCloudSession();
+          setAuthError(err?.message || 'Unable to verify authentication session. Please sign in again.');
+          setStatus('unauthenticated');
+        }
+      },
+      err => {
+        authSettled = true;
+        clearTimeout(startupWatchdog);
+        if (!isMounted) return;
+        console.error('Firebase onAuthStateChanged error:', err);
+        setAuthError(mapFirebaseAuthError(err, 'email'));
         setStatus('unauthenticated');
-        return;
       }
-
-      setFirebaseUser(fbUser);
-      testConnection().then(setConnectionStatus).catch(() => {});
-      await evaluateFirebaseUser(fbUser);
-    });
+    );
 
     return () => {
+      isMounted = false;
+      clearTimeout(startupWatchdog);
       unsubAuth();
       cleanupSubscriptions();
     };
@@ -795,6 +869,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const recoverFromStalledAuth = () => {
+    cleanupSubscriptions();
+    pendingMfaRef.current = null;
+    setAuthError(null);
+    setStatus('unauthenticated');
+  };
+
   const logout = async () => {
     cleanupSubscriptions();
     pendingMfaRef.current = null;
@@ -805,7 +886,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setFirebaseUser(null);
     setStaffUser(null);
     if (auth) {
-      await signOut(auth);
+      await withTimeout(signOut(auth), 4000, 'Sign out timed out.').catch(() => {});
     }
     setStatus('unauthenticated');
   };
@@ -840,6 +921,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         requestMfaOtp,
         verifyMfaOtp,
         reauthenticateOwner,
+        recoverFromStalledAuth,
         logout,
         can,
         notifyOwnerSecurityEvent,

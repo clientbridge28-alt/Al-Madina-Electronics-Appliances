@@ -96,6 +96,15 @@ export function resolveFirebaseConfig(
   const bundledAppId = isPlaceholderValue(bundledConfig.appId) ? '' : String(bundledConfig.appId || '').trim();
   const bundledDbId = String(bundledConfig.firestoreDatabaseId || '').trim();
 
+  const effectiveDbId = (rawDbId?: string, projectId?: string): string | undefined => {
+    const trimmed = String(rawDbId || '').trim();
+    if (!trimmed) return undefined;
+    if (trimmed.startsWith('ai-studio-') && !String(projectId || '').startsWith('gen-lang-client-')) {
+      return undefined;
+    }
+    return trimmed;
+  };
+
   // If VITE_FIREBASE_PROJECT_ID cleanly points to a different Firebase project than bundled JSON,
   // or bundled JSON was stripped ({}), isolate completely so old project credentials never leak.
   if (cleanEnvProject && cleanEnvProject !== bundledProject) {
@@ -115,7 +124,7 @@ export function resolveFirebaseConfig(
       storageBucket: validEnvStorageBucket,
       messagingSenderId: cleanEnvMessagingSenderId,
       appId: cleanEnvAppId,
-      firestoreDatabaseId: cleanEnvDbId || undefined,
+      firestoreDatabaseId: effectiveDbId(cleanEnvDbId, cleanEnvProject),
       oAuthClientId: undefined,
     };
   }
@@ -131,7 +140,7 @@ export function resolveFirebaseConfig(
       cleanEnvStorageBucket || bundledStorageBucket || (effectiveProject ? `${effectiveProject}.firebasestorage.app` : ''),
     messagingSenderId: cleanEnvMessagingSenderId || bundledSenderId,
     appId: cleanEnvAppId || bundledAppId,
-    firestoreDatabaseId: cleanEnvDbId || bundledDbId || undefined,
+    firestoreDatabaseId: effectiveDbId(cleanEnvDbId || bundledDbId, effectiveProject),
     oAuthClientId: bundledConfig.oAuthClientId,
   };
 }
@@ -347,8 +356,14 @@ export async function testConnection(): Promise<{ online: boolean; message: stri
   if (!db) {
     return { online: false, message: 'Firestore SDK not initialized.' };
   }
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    await Promise.race([
+      getDocFromServer(doc(db, 'test', 'connection')),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Firestore connectivity check timed out.')), 6000);
+      }),
+    ]);
     return { online: true, message: 'Connected to Cloud Firestore server.' };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -361,6 +376,8 @@ export async function testConnection(): Promise<{ online: boolean; message: stri
       return { online: true, message: 'Firestore server reachable (authentication required).' };
     }
     return { online: false, message: msg };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 

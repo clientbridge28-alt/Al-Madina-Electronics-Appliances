@@ -12,7 +12,7 @@ import {
   LogOut,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { isFirebaseConfigured } from '../../services/firebase';
+import { isFirebaseConfigured, getFirebaseRuntimeDiagnostics } from '../../services/firebase';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -50,11 +50,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   if (!isOpen && !requireGate) return null;
 
   const firebaseReady = isFirebaseConfigured();
+  const firebaseDiag = !firebaseReady ? getFirebaseRuntimeDiagnostics() : null;
   const displayError =
     errorMsg ||
     authError ||
     (!firebaseReady
-      ? 'Firebase Configuration Missing: Configure VITE_FIREBASE_* environment variables to sign in.'
+      ? firebaseDiag?.initError ||
+        'Firebase Configuration Missing: Configure VITE_FIREBASE_* environment variables to sign in.'
       : null);
 
   const handleGoogleSignIn = async () => {

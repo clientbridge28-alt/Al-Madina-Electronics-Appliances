@@ -109,7 +109,7 @@ import {
   setActiveUser,
   updateCommitmentStatus,
 } from '../services/storage';
-import { mapFirebaseAuthError } from '../context/AuthContext';
+import { mapFirebaseAuthError, resolveAuthenticatedProfile, withTimeout } from '../context/AuthContext';
 import { buildFullOwnerPermissions, getDefaultPermissionsForRole } from '../types/rbac';
 import type { ChequeRecord, Customer, InstallmentAccount, Product, Supplier } from '../types/erp';
 
@@ -2034,5 +2034,70 @@ describe('Al-Madina Electronics ERP — Core Accounting, Inventory & RBAC Suite'
     expect(logs[0].action).toBe('Update WooCommerce Configuration');
     expect(logs[0].recordId).toBe('WC-1');
     expect(logs.some(l => l.module === 'Sales & POS' && l.action === 'Post Sales Invoice')).toBe(true);
+  });
+
+  it('21. Production startup resilience: strips ai-studio named DB for al-madina-electronics, enforces bounded withTimeout, and resolves canonical Owner immediately when Firestore doc fetch falls back', async () => {
+    const prodConfig = resolveFirebaseConfig(
+      {
+        VITE_FIREBASE_PROJECT_ID: 'al-madina-electronics',
+        VITE_FIREBASE_API_KEY: 'AIzaTestProdKey123456',
+        VITE_FIREBASE_AUTH_DOMAIN: 'al-madina-electronics.firebaseapp.com',
+        VITE_FIREBASE_STORAGE_BUCKET: 'al-madina-electronics.firebasestorage.app',
+        VITE_FIREBASE_MESSAGING_SENDER_ID: '1056981234846',
+        VITE_FIREBASE_APP_ID: '1:1056981234846:web:2b679f5ce8be8db980778f',
+        VITE_FIREBASE_DATABASE_ID: 'ai-studio-06024cb3-013f-4fa5-ab6e-9173e6f63150',
+      },
+      {
+        projectId: 'gen-lang-client-0907755479',
+        firestoreDatabaseId: 'ai-studio-06024cb3-013f-4fa5-ab6e-9173e6f63150',
+      }
+    );
+    expect(prodConfig.projectId).toBe('al-madina-electronics');
+    expect(prodConfig.firestoreDatabaseId).toBeUndefined();
+
+    const sameProjectWithBundledAiStudioDb = resolveFirebaseConfig(
+      {
+        VITE_FIREBASE_PROJECT_ID: 'al-madina-electronics',
+        VITE_FIREBASE_API_KEY: 'AIzaTestProdKey123456',
+      },
+      {
+        projectId: 'al-madina-electronics',
+        firestoreDatabaseId: 'ai-studio-06024cb3-013f-4fa5-ab6e-9173e6f63150',
+      }
+    );
+    expect(sameProjectWithBundledAiStudioDb.firestoreDatabaseId).toBeUndefined();
+
+    await expect(withTimeout(Promise.resolve('fast-ok'), 500, 'timed out')).resolves.toBe('fast-ok');
+    await expect(
+      withTimeout(new Promise<string>(() => {}), 25, 'Firestore request timed out')
+    ).rejects.toThrow('Firestore request timed out');
+
+    const ownerFallback = resolveAuthenticatedProfile(
+      {
+        uid: 'owner-uid-1',
+        email: 'clientbridge28@gmail.com',
+        displayName: 'Showroom Owner',
+        phoneNumber: null,
+        emailVerified: true,
+      },
+      null
+    );
+    expect(ownerFallback.allowed).toBe(true);
+    if (ownerFallback.allowed) {
+      expect(ownerFallback.profile.role).toBe('Owner');
+      expect(ownerFallback.needsOwnerBootstrap).toBe(true);
+    }
+
+    const unprovisionedStaff = resolveAuthenticatedProfile(
+      {
+        uid: 'staff-uid-2',
+        email: 'cashier@almadina.pk',
+        displayName: 'Cashier',
+        phoneNumber: null,
+        emailVerified: true,
+      },
+      null
+    );
+    expect(unprovisionedStaff.allowed).toBe(false);
   });
 });

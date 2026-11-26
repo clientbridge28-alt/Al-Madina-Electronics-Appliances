@@ -712,8 +712,8 @@ service cloud.firestore {
     }
 
     match /users_public/{userId} {
-      allow get: if isValidId(userId) && isActiveStaff();
-      allow list: if isActiveStaff() && isSameOrg(resource.data);
+      allow get: if isValidId(userId) && (isOwner() || isActiveStaff());
+      allow list: if (isOwner() || isActiveStaff()) && isSameOrg(resource.data);
       allow create, update: if isValidId(userId) && isValidUserPublic(incoming()) && isOwner();
       allow delete: if isValidId(userId) && isOwner();
     }
@@ -752,7 +752,7 @@ service cloud.firestore {
 
     match /settings/{settingId} {
       allow get: if isValidId(settingId) && (isOwner() || isActiveStaff());
-      allow list: if isActiveStaff() && isSameOrg(resource.data);
+      allow list: if (isOwner() || isActiveStaff()) && isSameOrg(resource.data);
       allow create, update: if isValidId(settingId) && isValidSettings(incoming()) && (isOwner() || hasPermission('settings', 'EDIT'));
       allow delete: if false;
     }

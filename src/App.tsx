@@ -33,11 +33,12 @@ import { useAuth } from './context/AuthContext';
 import type { ModulePermissionKey } from './types/rbac';
 
 export default function App() {
-  const { status, isOwner, can } = useAuth();
+  const { status, isOwner, can, connectionStatus, recoverFromStalledAuth } = useAuth();
   const [currentModule, setCurrentModule] = useState<string>('dashboard');
   const [showSearchModal, setShowSearchModal] = useState<boolean>(false);
   const [showAiModal, setShowAiModal] = useState<boolean>(false);
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
+  const [slowLoading, setSlowLoading] = useState<boolean>(false);
   const [, setDbVersion] = useState<number>(0);
 
   // Quick Action Modals
@@ -54,6 +55,15 @@ export default function App() {
     });
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (status !== 'loading') {
+      setSlowLoading(false);
+      return;
+    }
+    const timer = setTimeout(() => setSlowLoading(true), 4000);
+    return () => clearTimeout(timer);
+  }, [status]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -80,10 +90,35 @@ export default function App() {
 
   if (status === 'loading') {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 space-y-3">
+      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 space-y-4 text-center">
         <div className="h-10 w-10 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
-        <p className="text-sm font-bold tracking-wide">Loading Al-Madina ERP...</p>
-        <p className="text-xs text-slate-400">Al-Madina Electronics &amp; Appliances ERP</p>
+        <div className="space-y-1">
+          <p className="text-sm font-bold tracking-wide">Loading Al-Madina ERP...</p>
+          <p className="text-xs text-slate-400">Al-Madina Electronics &amp; Appliances ERP</p>
+        </div>
+        {slowLoading && (
+          <div className="max-w-sm w-full rounded-2xl bg-slate-900 border border-slate-800 p-4 space-y-3 mt-2">
+            <p className="text-xs text-slate-300">
+              {connectionStatus?.message || 'Connecting to Firebase Authentication & Cloud Firestore...'}
+            </p>
+            <div className="flex items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={recoverFromStalledAuth}
+                className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-xs font-bold text-white transition"
+              >
+                Continue to Sign In
+              </button>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="px-3.5 py-2 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition"
+              >
+                Reload
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
