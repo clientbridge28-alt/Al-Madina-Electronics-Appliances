@@ -1,9 +1,11 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
   browserLocalPersistence,
+  EmailAuthProvider,
   getRedirectResult,
   GoogleAuthProvider,
   onAuthStateChanged,
+  reauthenticateWithCredential,
   reauthenticateWithPopup,
   sendEmailVerification,
   sendPasswordResetEmail,
@@ -29,7 +31,9 @@ import {
   isOwnerEmail,
   ORG_ID,
   OWNER_EMAIL,
+  requiresMandatorySuperAdmin2FA,
   SECONDARY_ADMIN_EMAIL,
+  type AdminLoginAudit,
   type ModulePermissionKey,
   type PermissionAction,
   type PermissionsMatrix,
@@ -44,6 +48,7 @@ import {
 } from '../services/storage';
 import {
   attachPermittedCloudListeners,
+  persistAdminLoginAudit,
   persistUserSession,
   stripUndefined,
 } from '../services/firestoreSync';
@@ -68,6 +73,8 @@ interface AuthContextValue {
   firebaseUser: FirebaseUser | null;
   staffUser: User | null;
   isOwner: boolean;
+  superAdmin2faRequired: boolean;
+  superAdmin2faVerified: boolean;
   authError: string | null;
   mfaState: MfaState;
   connectionStatus: { online: boolean; message: string };
@@ -78,10 +85,19 @@ interface AuthContextValue {
   refreshVerificationStatus: () => Promise<boolean>;
   requestMfaOtp: () => Promise<void>;
   verifyMfaOtp: (code: string) => Promise<boolean>;
+  verifySuperAdmin2faOtp: (code: string) => Promise<{ ok: boolean; error?: string }>;
+  verifySuperAdmin2faReauth: (password?: string) => Promise<{ ok: boolean; error?: string }>;
+  lockSuperAdmin2fa: () => void;
   reauthenticateOwner: () => Promise<boolean>;
   recoverFromStalledAuth: () => void;
   logout: () => Promise<void>;
   can: (moduleKey: ModulePermissionKey, action?: PermissionAction) => boolean;
+  recordAdminLoginAudit: (payload: {
+    eventType: AdminLoginAudit['eventType'];
+    authMethod: AdminLoginAudit['authMethod'];
+    status: AdminLoginAudit['status'];
+    details: string;
+  }) => Promise<void>;
   notifyOwnerSecurityEvent: (payload: {
     type: string;
     severity?: 'INFO' | 'WARNING' | 'CRITICAL';
@@ -107,6 +123,36 @@ export async function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMes
 }
 
 const SESSION_ID_STORAGE_KEY = 'almadina_active_session_id';
+const PENDING_LOGIN_METHOD_STORAGE_KEY = 'almadina_pending_login_method';
+
+function setPendingLoginMethodStorage(method: 'Google' | 'Email/Password' | null) {
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      if (method) {
+        sessionStorage.setItem(PENDING_LOGIN_METHOD_STORAGE_KEY, method);
+      } else {
+        sessionStorage.removeItem(PENDING_LOGIN_METHOD_STORAGE_KEY);
+      }
+    }
+  } catch {
+    // Ignore sessionStorage restrictions
+  }
+}
+
+function consumePendingLoginMethodStorage(): 'Google' | 'Email/Password' | null {
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      const val = sessionStorage.getItem(PENDING_LOGIN_METHOD_STORAGE_KEY);
+      sessionStorage.removeItem(PENDING_LOGIN_METHOD_STORAGE_KEY);
+      if (val === 'Google' || val === 'Email/Password') {
+        return val;
+      }
+    }
+  } catch {
+    // Ignore sessionStorage restrictions
+  }
+  return null;
+}
 
 function getOrCreateSessionId(uid: string): string {
   const fallback = `SESS-${uid.slice(0, 12)}-${Date.now().toString(36)}`;
@@ -316,6 +362,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const pendingMfaRef = useRef<{ fbUser: FirebaseUser; profile: User } | null>(null);
   const activeSessionVersionRef = useRef<number>(1);
   const mfaVerifiedForUidRef = useRef<string | null>(null);
+  const pendingLoginMethodRef = useRef<'Google' | 'Email/Password' | null>(null);
+  const auditedSessionUidRef = useRef<string | null>(null);
+  const [superAdmin2faVerified, setSuperAdmin2faVerified] = useState(false);
 
   const cleanupSubscriptions = () => {
     cloudListenersUnsubRef.current?.();
@@ -339,6 +388,64 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
     } catch {
       // Non-blocking if backend/network unavailable
+    }
+  };
+
+  const recordAdminLoginAudit = async (
+    payload: {
+      eventType: AdminLoginAudit['eventType'];
+      authMethod: AdminLoginAudit['authMethod'];
+      status: AdminLoginAudit['status'];
+      details: string;
+    },
+    actorOverride?: { uid: string; email: string; name: string; role: string }
+  ) => {
+    const actorUid = actorOverride?.uid || firebaseUser?.uid || staffUser?.uid;
+    const actorEmail = (actorOverride?.email || firebaseUser?.email || staffUser?.email || '').trim().toLowerCase();
+    const actorName = actorOverride?.name || staffUser?.name || firebaseUser?.displayName || actorEmail || 'Admin';
+    const actorRole = actorOverride?.role || staffUser?.role || 'Owner';
+    if (!actorUid || (!isOwnerEmail(actorEmail) && actorRole !== 'Owner')) return;
+
+    let serverPersisted = false;
+    let serverRecord: AdminLoginAudit | null = null;
+    try {
+      const res = await authorizedApiFetch('/api/admin/login-audit', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...payload,
+          userName: actorName,
+          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent.slice(0, 300) : 'Browser',
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        serverPersisted = Boolean(data.persistedByServer);
+        if (data.auditRecord) {
+          serverRecord = data.auditRecord as AdminLoginAudit;
+        }
+      }
+    } catch {
+      // Fall back to direct Firestore client persistence
+    }
+
+    if (!serverPersisted) {
+      const fallbackId = `ADMAUDIT-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const fallbackRecord: AdminLoginAudit = serverRecord || {
+        id: fallbackId,
+        orgId: ORG_ID,
+        uid: actorUid,
+        email: actorEmail,
+        userName: actorName,
+        role: actorRole,
+        eventType: payload.eventType,
+        authMethod: payload.authMethod,
+        ipAddress: 'Static Host (Client Direct)',
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent.slice(0, 300) : 'Browser',
+        status: payload.status,
+        details: payload.details,
+        timestamp: new Date().toISOString(),
+      };
+      await persistAdminLoginAudit(fallbackRecord).catch(() => {});
     }
   };
 
@@ -413,6 +520,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     cleanupSubscriptions();
     pendingMfaRef.current = null;
     mfaVerifiedForUidRef.current = null;
+    pendingLoginMethodRef.current = null;
+    setPendingLoginMethodStorage(null);
+    auditedSessionUidRef.current = null;
+    setSuperAdmin2faVerified(false);
     clearCloudSession();
     setFirebaseUser(null);
     setStaffUser(null);
@@ -529,6 +640,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         onSyncError: err => console.warn('Cloud sync warning:', err),
       }
     );
+
+    if (isOwnerAccount) {
+      const interactiveMethod = pendingLoginMethodRef.current || consumePendingLoginMethodStorage();
+      pendingLoginMethodRef.current = null;
+      if (interactiveMethod || auditedSessionUidRef.current !== fbUser.uid) {
+        auditedSessionUidRef.current = fbUser.uid;
+        void recordAdminLoginAudit(
+          interactiveMethod
+            ? {
+                eventType: 'ADMIN_LOGIN_SUCCESS',
+                authMethod: interactiveMethod,
+                status: 'Success',
+                details: `Admin ${hydratedUser.email} signed in via ${interactiveMethod}.`,
+              }
+            : {
+                eventType: 'ADMIN_SESSION_RESUME',
+                authMethod: 'Session Restore',
+                status: 'Success',
+                details: `Admin ${hydratedUser.email} resumed an active authenticated session.`,
+              },
+          {
+            uid: fbUser.uid,
+            email: hydratedUser.email,
+            name: hydratedUser.name,
+            role: hydratedUser.role,
+          }
+        );
+      }
+    }
 
     setStatus('authenticated');
   };
@@ -722,6 +862,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           if (!fbUser) {
             mfaVerifiedForUidRef.current = null;
+            auditedSessionUidRef.current = null;
+            setSuperAdmin2faVerified(false);
             setFirebaseUser(null);
             setStaffUser(null);
             clearCloudSession();
@@ -731,6 +873,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             });
             setStatus('unauthenticated');
             return;
+          }
+
+          if (auditedSessionUidRef.current && auditedSessionUidRef.current !== fbUser.uid) {
+            setSuperAdmin2faVerified(false);
+            auditedSessionUidRef.current = null;
           }
 
           setFirebaseUser(fbUser);
@@ -775,6 +922,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error(msg);
     }
     setAuthError(null);
+    pendingLoginMethodRef.current = 'Google';
+    setPendingLoginMethodStorage('Google');
     await setPersistence(auth, browserLocalPersistence).catch(() => {});
     const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ prompt: 'select_account' });
@@ -790,11 +939,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           await signInWithRedirect(auth, provider);
           return;
         } catch (redirectErr) {
+          pendingLoginMethodRef.current = null;
+          setPendingLoginMethodStorage(null);
           const formatted = mapFirebaseAuthError(redirectErr, 'google');
           setAuthError(formatted);
           throw new Error(formatted);
         }
       }
+      pendingLoginMethodRef.current = null;
+      setPendingLoginMethodStorage(null);
       const formatted = mapFirebaseAuthError(err, 'google');
       setAuthError(formatted);
       throw new Error(formatted);
@@ -820,10 +973,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     setAuthError(null);
+    pendingLoginMethodRef.current = 'Email/Password';
+    setPendingLoginMethodStorage('Email/Password');
     await setPersistence(auth, browserLocalPersistence).catch(() => {});
     try {
       await signInWithEmailAndPassword(auth, cleanEmail, password);
     } catch (err: unknown) {
+      pendingLoginMethodRef.current = null;
+      setPendingLoginMethodStorage(null);
       const formatted = mapFirebaseAuthError(err, 'email');
       setAuthError(formatted);
       throw new Error(formatted);
@@ -916,6 +1073,101 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const verifySuperAdmin2faOtp = async (code: string): Promise<{ ok: boolean; error?: string }> => {
+    const cleanCode = code.trim();
+    if (!cleanCode) {
+      return { ok: false, error: 'Enter the 6-digit verification code.' };
+    }
+    setMfaState(prev => ({ ...prev, verifying: true, error: null }));
+    try {
+      const res = await authorizedApiFetch('/api/mfa/verify', {
+        method: 'POST',
+        body: JSON.stringify({ code: cleanCode }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.verified) {
+        const errMsg = data.error || 'Invalid or expired OTP code.';
+        setMfaState(prev => ({ ...prev, verifying: false, error: errMsg }));
+        if (!data.auditPersisted) {
+          await recordAdminLoginAudit({
+            eventType: 'ADMIN_2FA_FAILED',
+            authMethod: '2FA Email OTP',
+            status: 'Failed',
+            details: `SuperAdminView 2FA OTP failed: ${errMsg}`,
+          });
+        }
+        return { ok: false, error: errMsg };
+      }
+      setMfaState({ sending: false, sent: false, verifying: false, error: null, info: null });
+      setSuperAdmin2faVerified(true);
+      if (!data.auditPersisted) {
+        await recordAdminLoginAudit({
+          eventType: 'ADMIN_2FA_PASSED',
+          authMethod: '2FA Email OTP',
+          status: 'Verified',
+          details: 'Verified 6-digit email OTP to unlock SuperAdminView.',
+        });
+      }
+      return { ok: true };
+    } catch (err: any) {
+      const errMsg = err?.message || 'OTP verification request failed.';
+      setMfaState(prev => ({ ...prev, verifying: false, error: errMsg }));
+      return { ok: false, error: errMsg };
+    }
+  };
+
+  const verifySuperAdmin2faReauth = async (password?: string): Promise<{ ok: boolean; error?: string }> => {
+    if (!auth?.currentUser) {
+      return { ok: false, error: 'No active Firebase session found.' };
+    }
+    setMfaState(prev => ({ ...prev, verifying: true, error: null }));
+    try {
+      if (password !== undefined) {
+        const email = auth.currentUser.email || '';
+        if (!email || !password) {
+          setMfaState(prev => ({ ...prev, verifying: false, error: 'Account password is required.' }));
+          return { ok: false, error: 'Account password is required.' };
+        }
+        const credential = EmailAuthProvider.credential(email, password);
+        await reauthenticateWithCredential(auth.currentUser, credential);
+      } else {
+        const provider = new GoogleAuthProvider();
+        provider.setCustomParameters({
+          prompt: 'select_account',
+          login_hint: auth.currentUser.email || '',
+        });
+        await reauthenticateWithPopup(auth.currentUser, provider);
+      }
+      setMfaState({ sending: false, sent: false, verifying: false, error: null, info: null });
+      setSuperAdmin2faVerified(true);
+      await recordAdminLoginAudit({
+        eventType: 'ADMIN_2FA_PASSED',
+        authMethod: '2FA Re-Auth',
+        status: 'Verified',
+        details:
+          password !== undefined
+            ? 'Completed mandatory SuperAdminView 2FA via live password re-authentication.'
+            : 'Completed mandatory SuperAdminView 2FA via live Google re-authentication.',
+      });
+      return { ok: true };
+    } catch (err: unknown) {
+      const mapped = mapFirebaseAuthError(err, password !== undefined ? 'email' : 'google');
+      setMfaState(prev => ({ ...prev, verifying: false, error: mapped }));
+      await recordAdminLoginAudit({
+        eventType: 'ADMIN_2FA_FAILED',
+        authMethod: '2FA Re-Auth',
+        status: 'Failed',
+        details: `Mandatory SuperAdminView 2FA re-authentication failed: ${mapped}`,
+      });
+      return { ok: false, error: mapped };
+    }
+  };
+
+  const lockSuperAdmin2fa = () => {
+    setSuperAdmin2faVerified(false);
+    setMfaState({ sending: false, sent: false, verifying: false, error: null, info: null });
+  };
+
   const reauthenticateOwner = async (): Promise<boolean> => {
     if (!auth?.currentUser) return false;
     try {
@@ -938,6 +1190,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     cleanupSubscriptions();
     pendingMfaRef.current = null;
     mfaVerifiedForUidRef.current = null;
+    pendingLoginMethodRef.current = null;
+    setPendingLoginMethodStorage(null);
+    auditedSessionUidRef.current = null;
+    setSuperAdmin2faVerified(false);
     setAuthError(null);
     setMfaState({ sending: false, sent: false, verifying: false, error: null, info: null });
     clearCloudSession();
@@ -952,6 +1208,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isOwner = Boolean(
     staffUser &&
       (staffUser.role === 'Owner' || isOwnerEmail(firebaseUser?.email))
+  );
+  const superAdmin2faRequired = Boolean(
+    isOwner && requiresMandatorySuperAdmin2FA(staffUser?.email || firebaseUser?.email)
   );
 
   const can = (moduleKey: ModulePermissionKey, action: PermissionAction = 'VIEW'): boolean => {
@@ -968,6 +1227,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         firebaseUser,
         staffUser,
         isOwner,
+        superAdmin2faRequired,
+        superAdmin2faVerified,
         authError,
         mfaState,
         connectionStatus,
@@ -978,10 +1239,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         refreshVerificationStatus,
         requestMfaOtp,
         verifyMfaOtp,
+        verifySuperAdmin2faOtp,
+        verifySuperAdmin2faReauth,
+        lockSuperAdmin2fa,
         reauthenticateOwner,
         recoverFromStalledAuth,
         logout,
         can,
+        recordAdminLoginAudit,
         notifyOwnerSecurityEvent,
       }}
     >

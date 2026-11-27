@@ -679,6 +679,27 @@
         "createdAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "orgId", "email", "name", "role", "permissions", "active", "mfaEnabled", "invitedBy", "createdAt"]
+    },
+    "AdminLoginAudit": {
+      "title": "AdminLoginAudit",
+      "description": "Immutable owner/admin login and 2FA verification audit log with timestamp and IP address.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 64 },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "email": { "type": "string", "format": "email", "maxLength": 200 },
+        "userName": { "type": "string", "maxLength": 120 },
+        "role": { "type": "string", "maxLength": 60 },
+        "eventType": { "type": "string", "enum": ["ADMIN_LOGIN_SUCCESS", "ADMIN_SESSION_RESUME", "ADMIN_2FA_PASSED", "ADMIN_2FA_FAILED", "ADMIN_LOGIN_BLOCKED"] },
+        "authMethod": { "type": "string", "enum": ["Google", "Email/Password", "2FA Email OTP", "2FA Re-Auth", "Session Restore"] },
+        "ipAddress": { "type": "string", "maxLength": 120 },
+        "userAgent": { "type": "string", "maxLength": 300 },
+        "status": { "type": "string", "enum": ["Success", "Verified", "Failed", "Blocked"] },
+        "details": { "type": "string", "maxLength": 600 },
+        "timestamp": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "orgId", "uid", "email", "userName", "role", "eventType", "authMethod", "ipAddress", "status", "details", "timestamp"]
     }
   },
   "firestore": {
@@ -709,6 +730,10 @@
     "/securityEvents/{eventId}": {
       "schema": { "$ref": "#/entities/SecurityEvent" },
       "description": "Owner security notification logs."
+    },
+    "/adminLoginAudits/{auditId}": {
+      "schema": { "$ref": "#/entities/AdminLoginAudit" },
+      "description": "Immutable admin login and 2FA verification audit log accessible only in SuperAdminView."
     },
     "/settings/{settingId}": {
       "schema": { "$ref": "#/entities/ShowroomSettings" },

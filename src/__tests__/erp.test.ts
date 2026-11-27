@@ -71,6 +71,7 @@ import {
   deleteSupplier,
   deleteTask,
   getAuditLogs,
+  getAdminLoginAudits,
   getSettings,
   logAuditAction,
   saveSettings,
@@ -110,7 +111,7 @@ import {
   updateCommitmentStatus,
 } from '../services/storage';
 import { mapFirebaseAuthError, resolveAuthenticatedProfile, withTimeout } from '../context/AuthContext';
-import { buildFullOwnerPermissions, ERP_MODULE_DEFINITIONS, getDefaultPermissionsForRole, isOwnerEmail } from '../types/rbac';
+import { buildFullOwnerPermissions, ERP_MODULE_DEFINITIONS, getDefaultPermissionsForRole, isOwnerEmail, requiresMandatorySuperAdmin2FA } from '../types/rbac';
 import type { ChequeRecord, Customer, InstallmentAccount, Product, Supplier } from '../types/erp';
 
 function seedCleanFixtures(): { customer: Customer; supplier: Supplier; product: Product } {
@@ -2128,5 +2129,69 @@ describe('Al-Madina Electronics ERP — Core Accounting, Inventory & RBAC Suite'
         );
       }
     }
+  });
+
+  it('23. Enforces mandatory 2FA for wrelectronicsofficial@gmail.com on SuperAdminView and stores/sorts AdminLoginAudit records with IP & timestamps', () => {
+    expect(requiresMandatorySuperAdmin2FA('wrelectronicsofficial@gmail.com')).toBe(true);
+    expect(requiresMandatorySuperAdmin2FA(' WRElectronicsOfficial@gmail.com ')).toBe(true);
+    expect(requiresMandatorySuperAdmin2FA('clientbridge28@gmail.com')).toBe(false);
+    expect(requiresMandatorySuperAdmin2FA('cashier@almadina.pk')).toBe(false);
+    expect(requiresMandatorySuperAdmin2FA(null)).toBe(false);
+
+    const cloudAuditPayload = buildCloudDocPayload('adminLoginAudits', 'ADMAUDIT-100', {
+      id: 'ADMAUDIT-100',
+      uid: 'admin-uid-wr',
+      email: 'wrelectronicsofficial@gmail.com',
+      userName: 'Al-Madina Showroom Admin',
+      role: 'Owner',
+      eventType: 'ADMIN_2FA_PASSED',
+      authMethod: '2FA Re-Auth',
+      ipAddress: '203.0.113.45',
+      status: 'Verified',
+      details: 'Completed mandatory SuperAdminView 2FA verification.',
+      timestamp: '2026-11-27T09:15:00.000Z',
+    });
+    expect(cloudAuditPayload.id).toBe('ADMAUDIT-100');
+    expect(cloudAuditPayload.orgId).toBe('al-madina-main');
+    expect(cloudAuditPayload.ipAddress).toBe('203.0.113.45');
+
+    applyCloudCollectionSnapshot('adminLoginAudits', [
+      {
+        id: 'ADMAUDIT-OLD',
+        orgId: 'al-madina-main',
+        uid: 'admin-uid-wr',
+        email: 'wrelectronicsofficial@gmail.com',
+        userName: 'Al-Madina Showroom Admin',
+        role: 'Owner',
+        eventType: 'ADMIN_LOGIN_SUCCESS',
+        authMethod: 'Email/Password',
+        ipAddress: '198.51.100.12',
+        status: 'Success',
+        details: 'Signed in via Email/Password.',
+        timestamp: '2026-11-27T08:00:00.000Z',
+      },
+      {
+        id: 'ADMAUDIT-NEW',
+        orgId: 'al-madina-main',
+        uid: 'admin-uid-wr',
+        email: 'wrelectronicsofficial@gmail.com',
+        userName: 'Al-Madina Showroom Admin',
+        role: 'Owner',
+        eventType: 'ADMIN_2FA_PASSED',
+        authMethod: '2FA Email OTP',
+        ipAddress: '203.0.113.45',
+        status: 'Verified',
+        details: 'Verified 6-digit email OTP to unlock SuperAdminView.',
+        timestamp: '2026-11-27T09:30:00.000Z',
+      },
+    ]);
+
+    const sortedAudits = getAdminLoginAudits();
+    expect(sortedAudits).toHaveLength(2);
+    expect(sortedAudits[0].id).toBe('ADMAUDIT-NEW');
+    expect(sortedAudits[0].ipAddress).toBe('203.0.113.45');
+    expect(sortedAudits[0].eventType).toBe('ADMIN_2FA_PASSED');
+    expect(sortedAudits[1].id).toBe('ADMAUDIT-OLD');
+    expect(sortedAudits[1].ipAddress).toBe('198.51.100.12');
   });
 });

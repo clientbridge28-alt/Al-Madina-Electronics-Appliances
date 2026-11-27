@@ -10,7 +10,7 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
-import { isOwnerEmail, ORG_ID, type BackupRecord, type ModulePermissionKey, type PermissionAction, type PermissionsMatrix, type RoleTemplate, type SecurityEvent, type StaffInvite, type UserSession } from '../types/rbac';
+import { isOwnerEmail, ORG_ID, type AdminLoginAudit, type BackupRecord, type ModulePermissionKey, type PermissionAction, type PermissionsMatrix, type RoleTemplate, type SecurityEvent, type StaffInvite, type UserSession } from '../types/rbac';
 import type { ShowroomSettings, AccountHead, User } from '../types/erp';
 
 export function stripUndefined<T>(obj: T): T {
@@ -64,7 +64,8 @@ export type CloudCollectionName =
   | 'users_public'
   | 'roles'
   | 'sessions'
-  | 'securityEvents';
+  | 'securityEvents'
+  | 'adminLoginAudits';
 
 export interface CloudSyncCallbacks {
   onCollectionUpdate: (name: CloudCollectionName, docs: any[]) => void;
@@ -136,6 +137,7 @@ export function attachPermittedCloudListeners(
   if (isOwner) {
     watchOrgCollection('roles', true);
     watchOrgCollection('securityEvents', true);
+    watchOrgCollection('adminLoginAudits', true);
 
     // Owner watches users & sessions for uid == current or all if bootstrapped owner
     const email = auth?.currentUser?.email?.toLowerCase();
@@ -273,6 +275,10 @@ export async function persistUserSession(session: UserSession): Promise<void> {
 
 export async function persistSecurityEvent(event: SecurityEvent): Promise<void> {
   await persistCloudDoc('securityEvents', event.id, event);
+}
+
+export async function persistAdminLoginAudit(audit: AdminLoginAudit): Promise<void> {
+  await persistCloudDoc('adminLoginAudits', audit.id, audit);
 }
 
 export async function updateStaffMemberDoc(user: User): Promise<void> {

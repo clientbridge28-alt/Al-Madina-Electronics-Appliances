@@ -10,6 +10,7 @@ import {
 import {
   ORG_ID,
   getDefaultPermissionsForRole,
+  type AdminLoginAudit,
   type BackupRecord,
   type RoleTemplate,
   type SecurityEvent,
@@ -93,6 +94,7 @@ export interface ErpDatabase {
   roles: RoleTemplate[];
   sessions: UserSession[];
   securityEvents: SecurityEvent[];
+  adminLoginAudits: AdminLoginAudit[];
 }
 
 export interface StockLedgerRow {
@@ -192,6 +194,7 @@ function buildEmptyProductionDatabase(): ErpDatabase {
     roles: [],
     sessions: [],
     securityEvents: [],
+    adminLoginAudits: [],
   };
 }
 
@@ -344,6 +347,10 @@ export function getUserSessions(): UserSession[] {
 
 export function getSecurityEvents(): SecurityEvent[] {
   return [...getDatabase().securityEvents].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export function getAdminLoginAudits(): AdminLoginAudit[] {
+  return [...getDatabase().adminLoginAudits].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 }
 
 // Legacy switchRole disabled — authentication is strictly handled by Firebase Auth

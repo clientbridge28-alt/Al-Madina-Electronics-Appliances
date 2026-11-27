@@ -444,8 +444,20 @@ async function recordServerSecurityEvent(payload: {
   }
 }
 
+function extractClientIp(req: Request): string {
+  const fwd = req.headers['x-forwarded-for'];
+  const raw = Array.isArray(fwd)
+    ? fwd[0]
+    : typeof fwd === 'string'
+    ? fwd.split(',')[0]
+    : (req.headers['x-real-ip'] as string) || req.ip || req.socket?.remoteAddress || 'unknown';
+  const cleaned = String(raw || 'unknown').trim().replace(/^::ffff:/i, '');
+  return cleaned.slice(0, 120) || 'unknown';
+}
+
 async function startServer() {
   const app = express();
+  app.set('trust proxy', true);
   app.use(express.json({ limit: '15mb' }));
 
   // CORS for GitHub Pages static deployment calling Cloud Run API (if VITE_API_BASE_URL is configured)
@@ -816,14 +828,140 @@ async function startServer() {
 
     record.attempts += 1;
     const codeHash = crypto.createHash('sha256').update(`${uid}:${code}`).digest('hex');
+    const clientIp = extractClientIp(req);
+    const nowIso = new Date().toISOString();
     if (codeHash !== record.codeHash) {
       await saveOtpChallenge(uid, record);
-      res.status(401).json({ verified: false, error: 'Invalid OTP code.' });
+      let auditPersisted = false;
+      if (req.isOwnerUser && adminDb) {
+        const auditId = `ADMAUDIT-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+        try {
+          await adminDb.collection('adminLoginAudits').doc(auditId).set({
+            id: auditId,
+            orgId: ORG_ID,
+            uid,
+            email: req.firebaseUser!.email || '',
+            userName: req.staffProfile?.name || req.firebaseUser!.name || 'Admin',
+            role: 'Owner',
+            eventType: 'ADMIN_2FA_FAILED',
+            authMethod: '2FA Email OTP',
+            ipAddress: clientIp,
+            userAgent: String(req.headers['user-agent'] || 'Browser').slice(0, 300),
+            status: 'Failed',
+            details: 'Invalid 2FA OTP entered when unlocking SuperAdminView.',
+            timestamp: nowIso,
+          });
+          auditPersisted = true;
+        } catch {
+          auditPersisted = false;
+        }
+      }
+      res.status(401).json({ verified: false, error: 'Invalid OTP code.', auditPersisted, ipAddress: clientIp, timestamp: nowIso });
       return;
     }
 
     await clearOtpChallenge(uid);
-    res.json({ verified: true });
+    let auditPersisted = false;
+    if (req.isOwnerUser && adminDb) {
+      const auditId = `ADMAUDIT-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+      try {
+        await adminDb.collection('adminLoginAudits').doc(auditId).set({
+          id: auditId,
+          orgId: ORG_ID,
+          uid,
+          email: req.firebaseUser!.email || '',
+          userName: req.staffProfile?.name || req.firebaseUser!.name || 'Admin',
+          role: 'Owner',
+          eventType: 'ADMIN_2FA_PASSED',
+          authMethod: '2FA Email OTP',
+          ipAddress: clientIp,
+          userAgent: String(req.headers['user-agent'] || 'Browser').slice(0, 300),
+          status: 'Verified',
+          details: 'Verified 6-digit email OTP to unlock SuperAdminView.',
+          timestamp: nowIso,
+        });
+        auditPersisted = true;
+      } catch {
+        auditPersisted = false;
+      }
+    }
+    res.json({ verified: true, auditPersisted, ipAddress: clientIp, timestamp: nowIso });
+  });
+
+  // ---------------- ADMIN LOGIN AUDIT LOG APIs ----------------
+  app.post('/api/admin/login-audit', requireFirebaseAuth, requireOwner, async (req: AuthedRequest, res: Response) => {
+    const allowedEventTypes = ['ADMIN_LOGIN_SUCCESS', 'ADMIN_SESSION_RESUME', 'ADMIN_2FA_PASSED', 'ADMIN_2FA_FAILED', 'ADMIN_LOGIN_BLOCKED'];
+    const allowedAuthMethods = ['Google', 'Email/Password', '2FA Email OTP', '2FA Re-Auth', 'Session Restore'];
+    const allowedStatuses = ['Success', 'Verified', 'Failed', 'Blocked'];
+
+    const eventType = allowedEventTypes.includes(String(req.body?.eventType || ''))
+      ? String(req.body.eventType)
+      : 'ADMIN_LOGIN_SUCCESS';
+    const authMethod = allowedAuthMethods.includes(String(req.body?.authMethod || ''))
+      ? String(req.body.authMethod)
+      : 'Session Restore';
+    const status = allowedStatuses.includes(String(req.body?.status || ''))
+      ? String(req.body.status)
+      : 'Success';
+    const details = String(req.body?.details || `Admin authentication activity (${authMethod})`).trim().slice(0, 600);
+    const userName = String(req.body?.userName || req.staffProfile?.name || req.firebaseUser?.name || req.firebaseUser?.email || 'Admin').trim().slice(0, 120);
+
+    const id = `ADMAUDIT-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const timestamp = new Date().toISOString();
+    const ipAddress = extractClientIp(req);
+    const userAgent = String(req.headers['user-agent'] || req.body?.userAgent || 'Browser').slice(0, 300);
+
+    const auditRecord = {
+      id,
+      orgId: ORG_ID,
+      uid: req.firebaseUser!.uid,
+      email: String(req.firebaseUser!.email || '').toLowerCase(),
+      userName,
+      role: req.staffProfile?.role || 'Owner',
+      eventType,
+      authMethod,
+      ipAddress,
+      userAgent,
+      status,
+      details,
+      timestamp,
+    };
+
+    let persistedByServer = false;
+    if (adminDb) {
+      try {
+        await adminDb.collection('adminLoginAudits').doc(id).set(auditRecord);
+        persistedByServer = true;
+      } catch (err) {
+        console.warn('Could not persist adminLoginAudits via Admin SDK:', err);
+      }
+    }
+
+    res.status(201).json({
+      recorded: true,
+      persistedByServer,
+      auditRecord,
+    });
+  });
+
+  app.get('/api/admin/login-audit', requireFirebaseAuth, requireOwner, async (_req: AuthedRequest, res: Response) => {
+    if (!adminDb) {
+      res.json({ logs: [], source: 'client-firestore' });
+      return;
+    }
+    try {
+      const snap = await adminDb
+        .collection('adminLoginAudits')
+        .where('orgId', '==', ORG_ID)
+        .get();
+      const logs = snap.docs
+        .map(d => d.data())
+        .sort((a: any, b: any) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')))
+        .slice(0, 250);
+      res.json({ logs, source: 'admin-sdk' });
+    } catch (err: any) {
+      res.json({ logs: [], source: 'client-firestore', warning: err?.message });
+    }
   });
 
   // ---------------- OWNER SUPER ADMIN USER & SESSION APIs ----------------

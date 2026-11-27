@@ -1,14 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import {
-  ShieldCheck, Users, KeyRound, Activity, Mail, RotateCcw,
+  ShieldCheck, ShieldAlert, Users, KeyRound, Activity, Mail, RotateCcw,
   Plus, UserX, UserCheck, Ban, CheckCircle2, AlertTriangle,
-  Upload, Lock, RefreshCw, Server, X
+  Upload, Lock, RefreshCw, Server, X, Search, Globe, Clock
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import {
   getUsers,
   getUserSessions,
   getSecurityEvents,
+  getAdminLoginAudits,
   logAuditAction,
   subscribeToDatabase,
 } from '../../services/storage';
@@ -20,6 +21,7 @@ import {
   isOwnerEmail,
   ORG_ID,
   OWNER_EMAIL,
+  type AdminLoginAudit,
   type ExtendedUserRole,
   type ModulePermissionKey,
   type PermissionAction,
@@ -30,7 +32,7 @@ import { authorizedApiFetch } from '../../services/firebase';
 import { persistStaffInviteDoc, persistUserSession, updateStaffMemberDoc } from '../../services/firestoreSync';
 import { computeCanonicalSnapshotChecksum, parseBackupWorkbookForRestore } from '../../services/excelService';
 
-type AdminTab = 'users' | 'permissions' | 'sessions' | 'events' | 'recovery';
+type AdminTab = 'users' | 'permissions' | 'sessions' | 'adminLogins' | 'events' | 'recovery';
 
 interface ServerHealth {
   firebaseAdminReady: boolean;
@@ -44,6 +46,13 @@ export const SuperAdminView: React.FC = () => {
   const {
     isOwner,
     staffUser,
+    superAdmin2faRequired,
+    superAdmin2faVerified,
+    mfaState,
+    requestMfaOtp,
+    verifySuperAdmin2faOtp,
+    verifySuperAdmin2faReauth,
+    lockSuperAdmin2fa,
     requestPasswordReset,
     reauthenticateOwner,
     notifyOwnerSecurityEvent,
@@ -54,6 +63,17 @@ export const SuperAdminView: React.FC = () => {
   const [health, setHealth] = useState<ServerHealth | null>(null);
   const [banner, setBanner] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Mandatory SuperAdmin 2FA gate state
+  const [otpCode, setOtpCode] = useState('');
+  const [reauthPassword, setReauthPassword] = useState('');
+  const [twoFaFeedback, setTwoFaFeedback] = useState<{ type: 'error' | 'info' | 'success'; text: string } | null>(null);
+
+  // Admin Login Audit Logs filter & server fetch state
+  const [auditSearch, setAuditSearch] = useState('');
+  const [auditEventFilter, setAuditEventFilter] = useState<string>('ALL');
+  const [serverAuditLogs, setServerAuditLogs] = useState<AdminLoginAudit[] | null>(null);
+  const [loadingServerAudits, setLoadingServerAudits] = useState(false);
 
   // Provision Staff Modal state
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -91,9 +111,68 @@ export const SuperAdminView: React.FC = () => {
       .catch(() => setHealth(null));
   }, []);
 
+  const canRenderAdminConsole = isOwner && (!superAdmin2faRequired || superAdmin2faVerified);
+
+  const fetchServerAdminAudits = async () => {
+    if (!canRenderAdminConsole) return;
+    setLoadingServerAudits(true);
+    try {
+      const res = await authorizedApiFetch('/api/admin/login-audit');
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (Array.isArray(data.logs)) {
+          setServerAuditLogs(data.logs as AdminLoginAudit[]);
+        }
+      }
+    } catch {
+      // Fall back cleanly to Firestore listener records
+    } finally {
+      setLoadingServerAudits(false);
+    }
+  };
+
+  useEffect(() => {
+    if (canRenderAdminConsole && activeTab === 'adminLogins') {
+      void fetchServerAdminAudits();
+    }
+  }, [canRenderAdminConsole, activeTab]);
+
   const users = getUsers();
   const sessions = getUserSessions();
   const events = getSecurityEvents();
+  const firestoreAdminAudits = getAdminLoginAudits();
+
+  const mergedAdminAudits = React.useMemo(() => {
+    const byId = new Map<string, AdminLoginAudit>();
+    for (const item of firestoreAdminAudits) {
+      byId.set(item.id, item);
+    }
+    if (serverAuditLogs) {
+      for (const item of serverAuditLogs) {
+        if (item?.id) byId.set(item.id, item);
+      }
+    }
+    return Array.from(byId.values()).sort((a, b) =>
+      String(b.timestamp || '').localeCompare(String(a.timestamp || ''))
+    );
+  }, [firestoreAdminAudits, serverAuditLogs]);
+
+  const filteredAdminAudits = React.useMemo(() => {
+    const q = auditSearch.trim().toLowerCase();
+    return mergedAdminAudits.filter(log => {
+      if (auditEventFilter !== 'ALL' && log.eventType !== auditEventFilter) {
+        return false;
+      }
+      if (!q) return true;
+      return (
+        log.email.toLowerCase().includes(q) ||
+        log.userName.toLowerCase().includes(q) ||
+        log.ipAddress.toLowerCase().includes(q) ||
+        log.authMethod.toLowerCase().includes(q) ||
+        log.details.toLowerCase().includes(q)
+      );
+    });
+  }, [mergedAdminAudits, auditSearch, auditEventFilter]);
 
   const editableUsers = users.filter(u => !isOwnerEmail(u.email) && u.role !== 'Owner');
 
@@ -120,6 +199,152 @@ export const SuperAdminView: React.FC = () => {
         <p className="text-xs text-rose-800 mt-1">
           Only a verified Showroom Owner ({ADMIN_OWNER_EMAILS.join(', ')}) can manage staff accounts, RBAC permissions, sessions, or disaster recovery restores.
         </p>
+      </div>
+    );
+  }
+
+  if (superAdmin2faRequired && !superAdmin2faVerified) {
+    return (
+      <div className="max-w-xl mx-auto mt-8 rounded-2xl bg-white border border-slate-200 shadow-lg overflow-hidden">
+        <div className="bg-slate-900 text-white p-6 flex items-start gap-3.5">
+          <div className="p-2.5 rounded-xl bg-amber-500/20 border border-amber-400/40 text-amber-300 shrink-0">
+            <ShieldAlert className="h-6 w-6" />
+          </div>
+          <div>
+            <h2 className="text-base font-bold">Mandatory Second-Factor Authentication (2FA)</h2>
+            <p className="text-xs text-slate-300 mt-1">
+              SuperAdminView access for <span className="font-semibold text-white">{staffUser?.email}</span> is protected by mandatory 2FA. Verify your identity before accessing staff RBAC, admin login audits, sessions, or disaster recovery.
+            </p>
+          </div>
+        </div>
+
+        <div className="p-6 space-y-5 text-xs">
+          {(twoFaFeedback || mfaState.error || mfaState.info) && (
+            <div
+              className={`rounded-xl p-3 border flex items-start gap-2 ${
+                twoFaFeedback?.type === 'success'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                  : twoFaFeedback?.type === 'error' || mfaState.error
+                  ? 'bg-rose-50 border-rose-200 text-rose-900'
+                  : 'bg-blue-50 border-blue-200 text-blue-900'
+              }`}
+            >
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>{twoFaFeedback?.text || mfaState.error || mfaState.info}</span>
+            </div>
+          )}
+
+          {/* Method 1: Live Server Email 6-Digit OTP */}
+          <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <h3 className="font-bold text-slate-900">1. Email 6-Digit Verification Code</h3>
+                <p className="text-[11px] text-slate-500">
+                  {health?.smtpConfigured
+                    ? `Dispatches a cryptographic one-time code to ${staffUser?.email}.`
+                    : 'Requires server SMTP credentials (use Live Firebase Re-Authentication below when offline/static).'}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={mfaState.sending || mfaState.verifying}
+                onClick={async () => {
+                  setTwoFaFeedback(null);
+                  await requestMfaOtp();
+                }}
+                className="shrink-0 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold disabled:opacity-50"
+              >
+                {mfaState.sending ? 'Sending...' : 'Send 6-Digit OTP'}
+              </button>
+            </div>
+
+            <form
+              onSubmit={async e => {
+                e.preventDefault();
+                setTwoFaFeedback(null);
+                const res = await verifySuperAdmin2faOtp(otpCode);
+                if (!res.ok) {
+                  setTwoFaFeedback({ type: 'error', text: res.error || 'OTP verification failed.' });
+                } else {
+                  setOtpCode('');
+                }
+              }}
+              className="flex gap-2"
+            >
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
+                value={otpCode}
+                onChange={e => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="Enter 6-digit OTP"
+                className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-sm tracking-widest focus:border-blue-600 focus:outline-none"
+              />
+              <button
+                type="submit"
+                disabled={mfaState.verifying || otpCode.length < 6}
+                className="px-4 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-bold disabled:opacity-50"
+              >
+                {mfaState.verifying ? 'Verifying...' : 'Verify OTP'}
+              </button>
+            </form>
+          </div>
+
+          {/* Method 2: Live Firebase Second-Factor Re-Authentication */}
+          <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+            <div>
+              <h3 className="font-bold text-slate-900">2. Live Firebase Account Re-Authentication</h3>
+              <p className="text-[11px] text-slate-500">
+                Complete a fresh Google 2-Step Verification popup or re-confirm your account password to unlock SuperAdminView.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              disabled={mfaState.verifying}
+              onClick={async () => {
+                setTwoFaFeedback(null);
+                const res = await verifySuperAdmin2faReauth();
+                if (!res.ok) {
+                  setTwoFaFeedback({ type: 'error', text: res.error || 'Google re-authentication failed.' });
+                }
+              }}
+              className="w-full py-2.5 px-4 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-900 font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <ShieldCheck className="h-4 w-4 text-blue-700" />
+              <span>{mfaState.verifying ? 'Verifying...' : 'Verify with Google 2-Step Re-Authentication'}</span>
+            </button>
+
+            <form
+              onSubmit={async e => {
+                e.preventDefault();
+                setTwoFaFeedback(null);
+                const res = await verifySuperAdmin2faReauth(reauthPassword);
+                if (!res.ok) {
+                  setTwoFaFeedback({ type: 'error', text: res.error || 'Password re-authentication failed.' });
+                } else {
+                  setReauthPassword('');
+                }
+              }}
+              className="flex gap-2 pt-1"
+            >
+              <input
+                type="password"
+                value={reauthPassword}
+                onChange={e => setReauthPassword(e.target.value)}
+                placeholder="Re-enter admin password to verify"
+                className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs focus:border-blue-600 focus:outline-none"
+              />
+              <button
+                type="submit"
+                disabled={mfaState.verifying || !reauthPassword}
+                className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold disabled:opacity-50"
+              >
+                Verify Password
+              </button>
+            </form>
+          </div>
+        </div>
       </div>
     );
   }
@@ -411,6 +636,16 @@ export const SuperAdminView: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap gap-2 text-[11px]">
+          {superAdmin2faRequired && superAdmin2faVerified && (
+            <button
+              type="button"
+              onClick={lockSuperAdmin2fa}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-900 font-semibold"
+            >
+              <Lock className="h-3.5 w-3.5" />
+              <span>Lock Admin 2FA</span>
+            </button>
+          )}
           <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border font-semibold ${
             health?.firebaseAdminReady ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'
           }`}>
@@ -450,6 +685,7 @@ export const SuperAdminView: React.FC = () => {
           { id: 'users', label: `Staff & Users (${users.length})`, icon: Users },
           { id: 'permissions', label: 'Permissions Matrix (21 × 7)', icon: KeyRound },
           { id: 'sessions', label: `Active Sessions (${sessions.filter(s => !s.revoked).length})`, icon: Activity },
+          { id: 'adminLogins', label: `Admin Login Audits (${mergedAdminAudits.length})`, icon: ShieldAlert },
           { id: 'events', label: `Security Events (${events.length})`, icon: Mail },
           { id: 'recovery', label: 'Disaster Recovery Restore', icon: RotateCcw },
         ].map(t => {
@@ -737,7 +973,157 @@ export const SuperAdminView: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 4: SECURITY EVENTS */}
+      {/* TAB 4: ADMIN LOGIN AUDITS (SUPERADMIN EXCLUSIVE) */}
+      {activeTab === 'adminLogins' && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs">
+              <p className="text-[11px] font-semibold text-slate-500">Total Admin Events</p>
+              <p className="text-xl font-bold text-slate-900 mt-1">{mergedAdminAudits.length}</p>
+            </div>
+            <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs">
+              <p className="text-[11px] font-semibold text-slate-500">Distinct IP Addresses</p>
+              <p className="text-xl font-bold text-blue-700 mt-1">
+                {new Set(mergedAdminAudits.map(l => l.ipAddress).filter(Boolean)).size}
+              </p>
+            </div>
+            <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs">
+              <p className="text-[11px] font-semibold text-slate-500">Verified 2FA Unlocks</p>
+              <p className="text-xl font-bold text-emerald-700 mt-1">
+                {mergedAdminAudits.filter(l => l.eventType === 'ADMIN_2FA_PASSED').length}
+              </p>
+            </div>
+            <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs">
+              <p className="text-[11px] font-semibold text-slate-500">Failed / Blocked Attempts</p>
+              <p className="text-xl font-bold text-rose-700 mt-1">
+                {mergedAdminAudits.filter(l => l.eventType === 'ADMIN_2FA_FAILED' || l.eventType === 'ADMIN_LOGIN_BLOCKED').length}
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4 text-blue-700" />
+                  <span>Immutable Admin Login & 2FA Audit Trail</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Accessible exclusively inside SuperAdminView. Logs every admin login, session restore, 2FA verification, IP address, and timestamp.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative">
+                  <Search className="h-3.5 w-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={auditSearch}
+                    onChange={e => setAuditSearch(e.target.value)}
+                    placeholder="Filter email, IP address, details..."
+                    className="pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 text-xs focus:border-blue-600 focus:outline-none w-56"
+                  />
+                </div>
+                <select
+                  value={auditEventFilter}
+                  onChange={e => setAuditEventFilter(e.target.value)}
+                  className="rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700"
+                >
+                  <option value="ALL">All Events</option>
+                  <option value="ADMIN_LOGIN_SUCCESS">Login Success</option>
+                  <option value="ADMIN_SESSION_RESUME">Session Resume</option>
+                  <option value="ADMIN_2FA_PASSED">2FA Passed</option>
+                  <option value="ADMIN_2FA_FAILED">2FA Failed</option>
+                  <option value="ADMIN_LOGIN_BLOCKED">Login Blocked</option>
+                </select>
+                <button
+                  type="button"
+                  disabled={loadingServerAudits}
+                  onClick={fetchServerAdminAudits}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${loadingServerAudits ? 'animate-spin' : ''}`} />
+                  <span>Refresh</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
+                  <tr>
+                    <th className="p-3">Timestamp</th>
+                    <th className="p-3">Admin Account</th>
+                    <th className="p-3">Event & Status</th>
+                    <th className="p-3">Auth Method</th>
+                    <th className="p-3">IP Address</th>
+                    <th className="p-3">Details & Device</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredAdminAudits.map(log => {
+                    const isFail = log.status === 'Failed' || log.status === 'Blocked';
+                    const isVerified = log.status === 'Verified';
+                    return (
+                      <tr key={log.id} className="hover:bg-slate-50/70">
+                        <td className="p-3 font-mono text-[11px] text-slate-600 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <Clock className="h-3.5 w-3.5 text-slate-400" />
+                            <span>{log.timestamp?.slice(0, 19).replace('T', ' ')}</span>
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <p className="font-bold text-slate-900">{log.userName}</p>
+                          <p className="text-[11px] text-slate-500">{log.email}</p>
+                        </td>
+                        <td className="p-3">
+                          <div className="flex flex-col gap-1 items-start">
+                            <span
+                              className={`px-2 py-0.5 rounded font-bold text-[10px] ${
+                                isFail
+                                  ? 'bg-rose-100 text-rose-800'
+                                  : isVerified
+                                  ? 'bg-indigo-100 text-indigo-800'
+                                  : 'bg-emerald-100 text-emerald-800'
+                              }`}
+                            >
+                              {log.eventType}
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-semibold">Status: {log.status}</span>
+                          </div>
+                        </td>
+                        <td className="p-3 font-semibold text-slate-700 whitespace-nowrap">{log.authMethod}</td>
+                        <td className="p-3">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 border border-slate-200 font-mono text-[11px] text-slate-800">
+                            <Globe className="h-3 w-3 text-slate-500" />
+                            <span>{log.ipAddress || 'Unknown'}</span>
+                          </span>
+                        </td>
+                        <td className="p-3 max-w-xs">
+                          <p className="text-slate-700">{log.details}</p>
+                          {log.userAgent && (
+                            <p className="text-[10px] text-slate-400 truncate mt-0.5" title={log.userAgent}>
+                              {log.userAgent}
+                            </p>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filteredAdminAudits.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center text-slate-400">
+                        No matching admin login or 2FA audit entries recorded yet.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: SECURITY EVENTS */}
       {activeTab === 'events' && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
           <div className="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">

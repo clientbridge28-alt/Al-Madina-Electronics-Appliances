@@ -151,16 +151,40 @@ export interface StaffInvite {
   createdAt: string;
 }
 
+export interface AdminLoginAudit {
+  id: string;
+  orgId: string;
+  uid: string;
+  email: string;
+  userName: string;
+  role: string;
+  eventType: 'ADMIN_LOGIN_SUCCESS' | 'ADMIN_SESSION_RESUME' | 'ADMIN_2FA_PASSED' | 'ADMIN_2FA_FAILED' | 'ADMIN_LOGIN_BLOCKED';
+  authMethod: 'Google' | 'Email/Password' | '2FA Email OTP' | '2FA Re-Auth' | 'Session Restore';
+  ipAddress: string;
+  userAgent?: string;
+  status: 'Success' | 'Verified' | 'Failed' | 'Blocked';
+  details: string;
+  timestamp: string;
+}
+
 export const OWNER_EMAIL = 'clientbridge28@gmail.com';
 export const SECONDARY_ADMIN_EMAIL = 'wrelectronicsofficial@gmail.com';
 export const ADMIN_OWNER_EMAILS: readonly string[] = [
   OWNER_EMAIL,
   SECONDARY_ADMIN_EMAIL,
 ];
+export const MANDATORY_SUPERADMIN_2FA_EMAILS: readonly string[] = [
+  SECONDARY_ADMIN_EMAIL,
+];
 
 export function isOwnerEmail(email?: string | null): boolean {
   const normalized = String(email || '').trim().toLowerCase();
   return Boolean(normalized && ADMIN_OWNER_EMAILS.includes(normalized));
+}
+
+export function requiresMandatorySuperAdmin2FA(email?: string | null): boolean {
+  const normalized = String(email || '').trim().toLowerCase();
+  return Boolean(normalized && MANDATORY_SUPERADMIN_2FA_EMAILS.includes(normalized));
 }
 
 export const ORG_ID = 'al-madina-main';

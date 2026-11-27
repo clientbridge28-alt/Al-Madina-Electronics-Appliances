@@ -212,6 +212,24 @@ service cloud.firestore {
         && (!('emailStatus' in data) || isStr(data.emailStatus, 80));
     }
 
+    function isValidAdminLoginAudit(data) {
+      return data.keys().hasAll(['id', 'orgId', 'uid', 'email', 'userName', 'role', 'eventType', 'authMethod', 'ipAddress', 'status', 'details', 'timestamp'])
+        && data.keys().hasOnly(['id', 'orgId', 'uid', 'email', 'userName', 'role', 'eventType', 'authMethod', 'ipAddress', 'userAgent', 'status', 'details', 'timestamp'])
+        && isValidId(data.id)
+        && isSameOrg(data)
+        && isValidId(data.uid)
+        && isNonEmptyStr(data.email, 200)
+        && isNonEmptyStr(data.userName, 120)
+        && isNonEmptyStr(data.role, 60)
+        && data.eventType in ['ADMIN_LOGIN_SUCCESS', 'ADMIN_SESSION_RESUME', 'ADMIN_2FA_PASSED', 'ADMIN_2FA_FAILED', 'ADMIN_LOGIN_BLOCKED']
+        && data.authMethod in ['Google', 'Email/Password', '2FA Email OTP', '2FA Re-Auth', 'Session Restore']
+        && isNonEmptyStr(data.ipAddress, 120)
+        && data.status in ['Success', 'Verified', 'Failed', 'Blocked']
+        && isNonEmptyStr(data.details, 600)
+        && isNonEmptyStr(data.timestamp, 64)
+        && (!('userAgent' in data) || isStr(data.userAgent, 300));
+    }
+
     function isValidSettings(data) {
       return data.keys().hasAll(['orgId', 'showroomName', 'ownerName', 'currency', 'printFormat'])
         && data.keys().hasOnly(['orgId', 'showroomName', 'ownerName', 'phone', 'whatsapp', 'email', 'address', 'city', 'currency', 'currencySymbol', 'ntn', 'strn', 'invoicePrefix', 'purchasePrefix', 'receiptPrefix', 'defaultTaxRate', 'defaultMarkupRate', 'printFormat', 'invoiceFooterNote', 'updatedAt'])
@@ -793,6 +811,17 @@ service cloud.firestore {
       allow create: if isValidId(eventId) && isEmailVerified() && isValidSecurityEvent(incoming()) && (
         incoming().actorUid == request.auth.uid || isOwner()
       );
+      allow update, delete: if false;
+    }
+
+    match /adminLoginAudits/{auditId} {
+      allow get: if isValidId(auditId) && isOwner();
+      allow list: if isOwner() && isSameOrg(resource.data);
+      allow create: if isValidId(auditId)
+        && isEmailVerified()
+        && isOwner()
+        && isValidAdminLoginAudit(incoming())
+        && incoming().uid == request.auth.uid;
       allow update, delete: if false;
     }
 
